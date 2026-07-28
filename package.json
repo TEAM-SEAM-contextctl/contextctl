@@ -1,0 +1,26 @@
+{
+  "name": "contextctl",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.11.0 <25",
+    "npm": ">=11 <13"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "clean": "tsc -b --clean",
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.check.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3",
+    "vitest": "4.1.9"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "paths": {
+      "@contextctl/contracts": ["./packages/contracts/src/index.ts"],
+      "@contextctl/ingestion-indexing": ["./packages/ingestion-indexing/src/index.ts"],
+      "@contextctl/registry-lifecycle": ["./packages/registry-lifecycle/src/index.ts"],
+      "@contextctl/selection-delivery": ["./packages/selection-delivery/src/index.ts"]
+    }
+  },
+  "include": [
+    "apps/*/src/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "test/**/*.ts"
+  ]
+}

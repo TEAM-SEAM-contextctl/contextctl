@@ -1,0 +1,6 @@
+/packages/ingestion-indexing/ @lazypl82
+/packages/registry-lifecycle/ @dayomi02
+/packages/selection-delivery/ @kimjongha99
+/packages/contracts/ @lazypl82 @dayomi02 @kimjongha99
+/apps/contextctl-daemon/ @lazypl82 @dayomi02 @kimjongha99
+/.github/ @lazypl82
