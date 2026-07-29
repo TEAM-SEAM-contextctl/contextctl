@@ -13,7 +13,7 @@
     "packages/*"
   ],
   "scripts": {
-    "clean": "tsc -b --clean",
+    "clean": "tsc -b --clean && node scripts/clean-workspace-dist.mjs",
     "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.check.json --noEmit",
     "test": "vitest run"
