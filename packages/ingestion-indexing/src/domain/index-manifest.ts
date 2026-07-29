@@ -13,6 +13,7 @@ import {
   type ModelValidationIssue,
 } from "./model-validation.js";
 
+/** Reproducibility contract for vectors written under one index version. */
 export interface EmbeddingProfile {
   readonly id: string;
   readonly version: string;
@@ -20,6 +21,11 @@ export interface EmbeddingProfile {
   readonly distance: "cosine" | "dot" | "euclid";
 }
 
+/**
+ * Immutable receipt for a completely published document index. It pins every
+ * policy and model revision needed to audit the record set without leaking the
+ * vector store's physical collection layout.
+ */
 export interface IndexManifest {
   readonly documentIndexId: string;
   readonly indexVersion: string;
@@ -49,6 +55,7 @@ export interface ScopeRevision {
   readonly scopeVersion: string;
 }
 
+/** One vector payload for one immutable Managed Chunk revision. */
 export interface VectorIndexRecord {
   readonly recordId: string;
   readonly chunkRevisionId: string;
@@ -76,6 +83,10 @@ export interface IndexManifestValidationInput {
   readonly manifest: IndexManifest;
 }
 
+/**
+ * Verifies that a manifest describes exactly one normalized document snapshot
+ * and the complete Unit and Chunk revision sets produced from it.
+ */
 export function validateIndexManifest(
   input: IndexManifestValidationInput,
 ): readonly ModelValidationIssue[] {
@@ -277,6 +288,10 @@ export function assertValidIndexManifest(
   assertNoModelIssues("IndexManifest", validateIndexManifest(input));
 }
 
+/**
+ * Verifies a one-to-one correspondence between manifest Chunk revisions and
+ * vector records, including embedding shape and immutable lineage metadata.
+ */
 export function validateVectorIndexRecords(
   manifest: IndexManifest,
   chunks: readonly ManagedChunk[],

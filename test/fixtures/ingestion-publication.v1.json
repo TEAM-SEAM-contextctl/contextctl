@@ -20,7 +20,7 @@
           "value": "Failed payments are retried after five minutes."
         }
       ],
-      "retrievalScopes": [
+      "publishedScopes": [
         {
           "scopeId": "scope_payment_failures",
           "scopeVersion": "scpv_aaaa",

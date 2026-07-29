@@ -12,6 +12,11 @@ export type DocumentMediaType =
   | "text/plain"
   | "application/pdf";
 
+/**
+ * Structure-preserving representation of one observed document. It retains
+ * physical source coordinates for lineage while insulating later stages from
+ * parser-specific AST shapes.
+ */
 export interface NormalizedDocument {
   readonly schemaVersion: 1;
   readonly documentId: string;
@@ -33,6 +38,10 @@ export interface NormalizedDocument {
   readonly blocks: readonly DocumentBlock[];
 }
 
+/**
+ * Smallest parser-owned structural element. Blocks preserve source order and
+ * coordinates; they are ingredients for meaning boundaries, not search scopes.
+ */
 export type DocumentBlock =
   | BlockBase<"heading", HeadingStructure>
   | BlockBase<"paragraph", ParagraphStructure>
@@ -48,6 +57,8 @@ interface BlockBase<
   TStructure extends BlockStructure,
 > {
   readonly id: string;
+  // The logical ID survives revisions; the revision ID pins this exact
+  // representation for lineage and incremental processing.
   readonly revisionId: string;
   readonly kind: TKind;
   readonly order: number;
@@ -141,6 +152,11 @@ export interface ParserDiagnostic {
   readonly detail?: string;
 }
 
+/**
+ * Searchable unit of meaning assembled from directly owned Blocks. Units form
+ * a rooted tree so semantic boundaries can cross parser structure without
+ * losing the original document identity or Block lineage.
+ */
 export interface DocumentSemanticUnit {
   readonly id: string;
   readonly revisionId: string;
@@ -158,6 +174,7 @@ export interface DocumentSemanticUnit {
   readonly diagnostics: readonly SegmentationDiagnostic[];
 }
 
+/** Records whether meaning was found structurally, lexically, or by fallback. */
 export type SemanticBoundary =
   | { readonly kind: "document_root" }
   | { readonly kind: "explicit_heading" }
@@ -170,6 +187,10 @@ export interface SegmentationDiagnostic {
   readonly detail?: string;
 }
 
+/**
+ * Embedding-sized material derived from exactly one Semantic Unit. Chunking may
+ * split a Unit for index limits, but it cannot redefine the allowed meaning.
+ */
 export interface ManagedChunk {
   readonly id: string;
   readonly revisionId: string;
@@ -194,6 +215,7 @@ export interface ManagedChunk {
   readonly nextChunkId?: string;
 }
 
+/** Reversible reference used to reconstruct Chunk text from normalized Blocks. */
 export interface ChunkSourceSlice {
   readonly blockId: string;
   readonly startOffset: number;
@@ -201,6 +223,7 @@ export interface ChunkSourceSlice {
   readonly separatorBefore: "" | "\n" | "\n\n";
 }
 
+/** Validates structural order, parentage, source spans, and snapshot identity. */
 export function validateNormalizedDocument(
   document: NormalizedDocument,
 ): readonly ModelValidationIssue[] {
@@ -326,6 +349,10 @@ export function assertValidNormalizedDocument(
   );
 }
 
+/**
+ * Enforces one reachable root, reciprocal Unit links, and exactly one direct
+ * Semantic Unit owner for every Block.
+ */
 export function validateDocumentSemanticUnits(
   document: NormalizedDocument,
   units: readonly DocumentSemanticUnit[],
@@ -582,6 +609,10 @@ export function assertValidDocumentSemanticUnits(
   );
 }
 
+/**
+ * Ensures every content-bearing Unit is chunked and every Chunk remains
+ * reconstructable from ordered slices owned by that Unit.
+ */
 export function validateManagedChunks(
   document: NormalizedDocument,
   units: readonly DocumentSemanticUnit[],
@@ -671,6 +702,8 @@ export function validateManagedChunks(
       );
     }
 
+    // Reconstruction makes Chunk text auditable and prevents transformations
+    // from silently severing its lineage to normalized source content.
     let reconstructed = "";
     chunk.sourceSlices.forEach((slice, sliceIndex) => {
       const slicePath = `${path}.sourceSlices[${sliceIndex}]`;

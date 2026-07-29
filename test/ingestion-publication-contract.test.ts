@@ -8,7 +8,7 @@ import {
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
-async function loadProducerFixture(): Promise<unknown> {
+async function loadIngestionProducerFixture(): Promise<unknown> {
   return JSON.parse(
     await readFile(
       new URL("./fixtures/ingestion-publication.v1.json", import.meta.url),
@@ -17,10 +17,10 @@ async function loadProducerFixture(): Promise<unknown> {
   ) as unknown;
 }
 
-function consumePublication(publication: IngestionPublication) {
+function consumeAsRegistry(publication: IngestionPublication) {
   return publication.knowledgeUnits.map((unit) => ({
     unitId: unit.id,
-    scopeRefs: unit.retrievalScopes.map((scope) => ({
+    scopeRefs: unit.publishedScopes.map((scope) => ({
       scopeId: scope.scopeId,
       scopeVersion: scope.scopeVersion,
     })),
@@ -28,13 +28,15 @@ function consumePublication(publication: IngestionPublication) {
 }
 
 describe("IngestionPublication contract", () => {
-  it("round-trips the producer fixture through the public consumer API", async () => {
-    const publication = parseIngestionPublication(await loadProducerFixture());
+  it("round-trips the Ingestion fixture through the Registry consumer API", async () => {
+    const publication = parseIngestionPublication(
+      await loadIngestionProducerFixture(),
+    );
     const roundTripped = parseIngestionPublication(
       JSON.parse(JSON.stringify(publication)),
     );
 
-    expect(consumePublication(roundTripped)).toEqual([
+    expect(consumeAsRegistry(roundTripped)).toEqual([
       {
         unitId: "unit_payment_failures",
         scopeRefs: [
@@ -48,10 +50,10 @@ describe("IngestionPublication contract", () => {
   });
 
   it("rejects unknown scope discriminators and reports a stable path", async () => {
-    const fixture = (await loadProducerFixture()) as {
-      knowledgeUnits: Array<{ retrievalScopes: Array<Record<string, unknown>> }>;
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{ publishedScopes: Array<Record<string, unknown>> }>;
     };
-    const scope = fixture.knowledgeUnits[0]?.retrievalScopes[0];
+    const scope = fixture.knowledgeUnits[0]?.publishedScopes[0];
     expect(scope).toBeDefined();
     if (scope === undefined) {
       return;
@@ -70,7 +72,7 @@ describe("IngestionPublication contract", () => {
         expect(error.issues[0]?.path).toEqual([
           "knowledgeUnits",
           0,
-          "retrievalScopes",
+          "publishedScopes",
           0,
           "kind",
         ]);
@@ -79,14 +81,14 @@ describe("IngestionPublication contract", () => {
   });
 
   it("rejects unsorted semantic selectors instead of broadening the scope", async () => {
-    const fixture = (await loadProducerFixture()) as {
+    const fixture = (await loadIngestionProducerFixture()) as {
       knowledgeUnits: Array<{
-        retrievalScopes: Array<{
+        publishedScopes: Array<{
           selector: { semanticUnitIds: string[] };
         }>;
       }>;
     };
-    const selector = fixture.knowledgeUnits[0]?.retrievalScopes[0]?.selector;
+    const selector = fixture.knowledgeUnits[0]?.publishedScopes[0]?.selector;
     expect(selector).toBeDefined();
     if (selector === undefined) {
       return;
@@ -99,15 +101,15 @@ describe("IngestionPublication contract", () => {
   });
 
   it("rejects a managed index from another source", async () => {
-    const fixture = (await loadProducerFixture()) as {
+    const fixture = (await loadIngestionProducerFixture()) as {
       knowledgeUnits: Array<{
-        retrievalScopes: Array<{
+        publishedScopes: Array<{
           documentIndex: { sourceId: string };
         }>;
       }>;
     };
     const documentIndex =
-      fixture.knowledgeUnits[0]?.retrievalScopes[0]?.documentIndex;
+      fixture.knowledgeUnits[0]?.publishedScopes[0]?.documentIndex;
     expect(documentIndex).toBeDefined();
     if (documentIndex === undefined) {
       return;
@@ -120,10 +122,30 @@ describe("IngestionPublication contract", () => {
   });
 
   it("rejects unknown contract versions", async () => {
-    const fixture = (await loadProducerFixture()) as {
+    const fixture = (await loadIngestionProducerFixture()) as {
       schemaVersion: number;
     };
     fixture.schemaVersion = 2;
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects the obsolete Selection-shaped scope field", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{
+        publishedScopes?: unknown;
+        retrievalScopes?: unknown;
+      }>;
+    };
+    const unit = fixture.knowledgeUnits[0];
+    expect(unit).toBeDefined();
+    if (unit === undefined) {
+      return;
+    }
+    unit.retrievalScopes = unit.publishedScopes;
+    delete unit.publishedScopes;
 
     expect(() => parseIngestionPublication(fixture)).toThrow(
       ContractValidationError,
