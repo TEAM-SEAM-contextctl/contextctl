@@ -19,3 +19,13 @@ export {
 } from "./domain/card-version.js";
 export { CardVersionInvariantError } from "./domain/errors.js";
 export type { CardLineage } from "./domain/lineage.js";
+export {
+  claimPublication,
+  type ClaimPublicationPorts,
+  type ClaimPublicationResult,
+} from "./application/claim-publication.js";
+export { PublicationNotFoundError } from "./application/errors.js";
+export type { Clock } from "./ports/clock.js";
+export type { ConsumerCheckpointStore } from "./ports/consumer-checkpoint-store.js";
+export type { IdGenerator } from "./ports/id-generator.js";
+export type { PublicationRepository } from "./ports/publication-repository.js";
