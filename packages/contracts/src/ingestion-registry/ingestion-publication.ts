@@ -13,7 +13,11 @@ import {
   PublicationIdSchema,
   SourceIdSchema,
 } from "../identifiers.js";
-import { PublishedKnowledgeUnitSchema } from "./published-knowledge-unit.js";
+import {
+  PublishedKnowledgeUnitSchema,
+  type PublishedKnowledgeUnit,
+} from "./published-knowledge-unit.js";
+import type { PublishedScope } from "./publication-scope.js";
 
 const ContractSchemaVersion = z.literal(1);
 
@@ -108,6 +112,7 @@ function validatePublication(
   }
 
   const units = new Map<string, (typeof publication.knowledgeUnits)[number]>();
+  const documentUnits = new Map<string, string>();
   const scopeDefinitions = new Map<string, string>();
 
   publication.knowledgeUnits.forEach((unit, unitIndex) => {
@@ -119,6 +124,29 @@ function validatePublication(
       });
     }
     units.set(unit.id, unit);
+    if (unit.sourceCoordinate.kind === "document") {
+      const previousDocumentId = documentUnits.get(
+        unit.sourceCoordinate.semanticUnitId,
+      );
+      if (previousDocumentId !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: [
+            "knowledgeUnits",
+            unitIndex,
+            "sourceCoordinate",
+            "semanticUnitId",
+          ],
+          message:
+            "semantic unit coordinate must be unique within the publication",
+        });
+      } else {
+        documentUnits.set(
+          unit.sourceCoordinate.semanticUnitId,
+          unit.sourceCoordinate.documentId,
+        );
+      }
+    }
 
     if (
       unit.sourceCoordinate.sourceId !== publication.sourceId ||
@@ -131,24 +159,20 @@ function validatePublication(
       });
     }
 
+    validateCoordinateKind(unit, unitIndex, context);
+  });
+
+  publication.knowledgeUnits.forEach((unit, unitIndex) => {
     unit.publishedScopes.forEach((scope, scopeIndex) => {
-      if (
-        scope.kind === "managed_document" &&
-        scope.documentIndex.sourceId !== publication.sourceId
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: [
-            "knowledgeUnits",
-            unitIndex,
-            "publishedScopes",
-            scopeIndex,
-            "documentIndex",
-            "sourceId",
-          ],
-          message: "document index must belong to the publication source",
-        });
-      }
+      validateScopeCoordinate(
+        publication.sourceId,
+        unit,
+        scope,
+        unitIndex,
+        scopeIndex,
+        documentUnits,
+        context,
+      );
 
       const reference = `${scope.scopeId}:${scope.scopeVersion}`;
       const definition = JSON.stringify(scope);
@@ -168,6 +192,121 @@ function validatePublication(
   });
 
   validateChanges(publication, units, context);
+}
+
+function validateCoordinateKind(
+  unit: PublishedKnowledgeUnit,
+  unitIndex: number,
+  context: z.RefinementCtx,
+): void {
+  const coordinateKind = unit.sourceCoordinate.kind;
+  const valid =
+    ((unit.kind === "document" || unit.kind === "section") &&
+      coordinateKind === "document") ||
+    (unit.kind === "table" && coordinateKind === "sql_table") ||
+    (unit.kind === "operation" && coordinateKind === "http_operation");
+
+  if (!valid) {
+    context.addIssue({
+      code: "custom",
+      path: ["knowledgeUnits", unitIndex, "sourceCoordinate", "kind"],
+      message: `knowledge unit kind ${unit.kind} is incompatible with ${coordinateKind} coordinate`,
+    });
+  }
+}
+
+function validateScopeCoordinate(
+  publicationSourceId: string,
+  unit: PublishedKnowledgeUnit,
+  scope: PublishedScope,
+  unitIndex: number,
+  scopeIndex: number,
+  documentUnits: ReadonlyMap<string, string>,
+  context: z.RefinementCtx,
+): void {
+  const path = ["knowledgeUnits", unitIndex, "publishedScopes", scopeIndex];
+  const coordinate = unit.sourceCoordinate;
+
+  if (coordinate.kind === "document" && scope.kind === "managed_document") {
+    if (scope.documentIndex.sourceId !== publicationSourceId) {
+      addScopeIssue(
+        context,
+        [...path, "documentIndex", "sourceId"],
+        "document index must belong to the publication source",
+      );
+    }
+    if (scope.documentIndex.documentId !== coordinate.documentId) {
+      addScopeIssue(
+        context,
+        [...path, "documentIndex", "documentId"],
+        "document scope must use the knowledge unit document",
+      );
+    }
+    if (scope.selector.kind === "semantic_units") {
+      if (!scope.selector.semanticUnitIds.includes(coordinate.semanticUnitId)) {
+        addScopeIssue(
+          context,
+          [...path, "selector", "semanticUnitIds"],
+          "semantic scope must include the knowledge unit coordinate",
+        );
+      }
+      scope.selector.semanticUnitIds.forEach((semanticUnitId, selectorIndex) => {
+        if (documentUnits.get(semanticUnitId) !== coordinate.documentId) {
+          addScopeIssue(
+            context,
+            [...path, "selector", "semanticUnitIds", selectorIndex],
+            "semantic scope may reference only published units from the same document",
+          );
+        }
+      });
+    }
+    return;
+  }
+
+  if (coordinate.kind === "sql_table" && scope.kind === "sql_source") {
+    if (scope.table !== coordinate.table) {
+      addScopeIssue(
+        context,
+        [...path, "table"],
+        "SQL scope must use the knowledge unit table",
+      );
+    }
+    scope.columns.forEach((column, columnIndex) => {
+      if (!coordinate.columns.includes(column)) {
+        addScopeIssue(
+          context,
+          [...path, "columns", columnIndex],
+          "SQL scope column must exist in the knowledge unit coordinate",
+        );
+      }
+    });
+    return;
+  }
+
+  if (coordinate.kind === "http_operation" && scope.kind === "http_source") {
+    if (scope.method !== coordinate.method || scope.path !== coordinate.path) {
+      addScopeIssue(
+        context,
+        path,
+        "HTTP scope must use the knowledge unit method and path",
+      );
+    }
+    return;
+  }
+
+  addScopeIssue(
+    context,
+    [...path, "kind"],
+    `scope kind ${scope.kind} is incompatible with ${coordinate.kind} coordinate`,
+  );
+}
+
+function addScopeIssue(
+  context: z.RefinementCtx,
+  path: PropertyKey[],
+  message: string,
+): void {
+  context.addIssue({ code: "custom", path, message });
 }
 
 function validateChanges(

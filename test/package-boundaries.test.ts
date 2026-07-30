@@ -12,33 +12,51 @@ interface PackageManifest {
   readonly peerDependencies?: Readonly<Record<string, string>>;
 }
 
-interface DomainPackage {
+interface Workspace {
   readonly name: string;
   readonly root: string;
+  readonly kind: "app" | "contracts" | "domain";
+}
+
+interface WorkspaceImport {
+  readonly workspace: Workspace;
+  readonly internal: boolean;
 }
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
-const domainPackages: readonly DomainPackage[] = [
+const workspaces: readonly Workspace[] = [
+  {
+    name: "@contextctl/daemon",
+    root: resolve(repositoryRoot, "apps/contextctl-daemon"),
+    kind: "app",
+  },
+  {
+    name: "@contextctl/contracts",
+    root: resolve(repositoryRoot, "packages/contracts"),
+    kind: "contracts",
+  },
   {
     name: "@contextctl/ingestion-indexing",
     root: resolve(repositoryRoot, "packages/ingestion-indexing"),
+    kind: "domain",
   },
   {
     name: "@contextctl/registry-lifecycle",
     root: resolve(repositoryRoot, "packages/registry-lifecycle"),
+    kind: "domain",
   },
   {
     name: "@contextctl/selection-delivery",
     root: resolve(repositoryRoot, "packages/selection-delivery"),
+    kind: "domain",
   },
 ];
-
-describe("domain package boundaries", () => {
-  it.each(domainPackages)(
-    "$name does not declare another domain package as a dependency",
-    async (domainPackage) => {
+describe("Workspace package boundaries", () => {
+  it.each(workspaces)(
+    "$name declares only allowed Workspace dependencies",
+    async (workspace) => {
       const manifest = JSON.parse(
-        await readFile(resolve(domainPackage.root, "package.json"), "utf8"),
+        await readFile(resolve(workspace.root, "package.json"), "utf8"),
       ) as PackageManifest;
       const dependencyNames = new Set(
         [
@@ -50,20 +68,29 @@ describe("domain package boundaries", () => {
       );
 
       expect(
-        domainPackages
-          .filter((candidate) => candidate.name !== domainPackage.name)
+        workspaces
+          .filter((candidate) => candidate.name !== workspace.name)
           .map((candidate) => candidate.name)
-          .filter((name) => dependencyNames.has(name)),
+          .filter((name) => {
+            const target = workspaces.find(
+              (candidate) => candidate.name === name,
+            );
+            return (
+              dependencyNames.has(name) &&
+              target !== undefined &&
+              !isAllowedWorkspaceDependency(workspace, target)
+            );
+          }),
       ).toEqual([]);
     },
   );
 
-  it.each(domainPackages)(
-    "$name source does not import another domain package",
-    async (domainPackage) => {
+  it.each(workspaces)(
+    "$name imports other Workspaces only through allowed package roots",
+    async (workspace) => {
       const violations: string[] = [];
       const sourceFiles = await listTypeScriptFiles(
-        resolve(domainPackage.root, "src"),
+        resolve(workspace.root, "src"),
       );
 
       for (const sourceFile of sourceFiles) {
@@ -77,8 +104,13 @@ describe("domain package boundaries", () => {
         );
 
         for (const specifier of collectModuleSpecifiers(syntaxTree)) {
-          const target = resolveDomainImport(sourceFile, specifier);
-          if (target !== undefined && target.name !== domainPackage.name) {
+          const target = resolveWorkspaceImport(sourceFile, specifier);
+          if (
+            target !== undefined &&
+            target.workspace.name !== workspace.name &&
+            (target.internal ||
+              !isAllowedWorkspaceDependency(workspace, target.workspace))
+          ) {
             violations.push(
               `${relative(repositoryRoot, sourceFile)} -> ${specifier}`,
             );
@@ -89,6 +121,51 @@ describe("domain package boundaries", () => {
       expect(violations).toEqual([]);
     },
   );
+
+  it("recognizes package subpaths and relative cross-Workspace imports as internal", () => {
+    const sourceFile = resolve(
+      repositoryRoot,
+      "packages/ingestion-indexing/src/example.ts",
+    );
+
+    expect(
+      resolveWorkspaceImport(
+        sourceFile,
+        "@contextctl/contracts/src/identifiers.js",
+      ),
+    ).toMatchObject({
+      workspace: { name: "@contextctl/contracts" },
+      internal: true,
+    });
+    expect(
+      resolveWorkspaceImport(
+        sourceFile,
+        "../../contracts",
+      ),
+    ).toMatchObject({
+      workspace: { name: "@contextctl/contracts" },
+      internal: true,
+    });
+    expect(
+      resolveWorkspaceImport(sourceFile, "@contextctl/contracts"),
+    ).toMatchObject({
+      workspace: { name: "@contextctl/contracts" },
+      internal: false,
+    });
+  });
+
+  it("enforces the Composition Root dependency direction", () => {
+    const daemon = getWorkspace("@contextctl/daemon");
+    const contracts = getWorkspace("@contextctl/contracts");
+    const ingestion = getWorkspace("@contextctl/ingestion-indexing");
+    const registry = getWorkspace("@contextctl/registry-lifecycle");
+
+    expect(isAllowedWorkspaceDependency(daemon, ingestion)).toBe(true);
+    expect(isAllowedWorkspaceDependency(ingestion, contracts)).toBe(true);
+    expect(isAllowedWorkspaceDependency(ingestion, registry)).toBe(false);
+    expect(isAllowedWorkspaceDependency(ingestion, daemon)).toBe(false);
+    expect(isAllowedWorkspaceDependency(contracts, ingestion)).toBe(false);
+  });
 });
 
 async function listTypeScriptFiles(directory: string): Promise<string[]> {
@@ -141,27 +218,48 @@ function collectModuleSpecifiers(sourceFile: ts.SourceFile): string[] {
   return specifiers;
 }
 
-function resolveDomainImport(
+function resolveWorkspaceImport(
   sourceFile: string,
   specifier: string,
-): DomainPackage | undefined {
-  const packageImport = domainPackages.find(
+): WorkspaceImport | undefined {
+  const packageImport = workspaces.find(
     (candidate) =>
       specifier === candidate.name || specifier.startsWith(`${candidate.name}/`),
   );
   if (packageImport !== undefined) {
-    return packageImport;
+    return {
+      workspace: packageImport,
+      internal: specifier !== packageImport.name,
+    };
   }
   if (!specifier.startsWith(".")) {
     return undefined;
   }
 
   const resolvedImport = resolve(dirname(sourceFile), specifier);
-  return domainPackages.find((candidate) => {
-    const sourceRoot = resolve(candidate.root, "src");
+  const workspace = workspaces.find((candidate) => {
     return (
-      resolvedImport === sourceRoot ||
-      resolvedImport.startsWith(`${sourceRoot}${sep}`)
+      resolvedImport === candidate.root ||
+      resolvedImport.startsWith(`${candidate.root}${sep}`)
     );
   });
+  return workspace === undefined ? undefined : { workspace, internal: true };
+}
+
+function isAllowedWorkspaceDependency(
+  source: Workspace,
+  target: Workspace,
+): boolean {
+  if (source.name === target.name || source.kind === "app") {
+    return true;
+  }
+  return target.kind === "contracts";
+}
+
+function getWorkspace(name: string): Workspace {
+  const workspace = workspaces.find((candidate) => candidate.name === name);
+  if (workspace === undefined) {
+    throw new Error(`unknown test Workspace: ${name}`);
+  }
+  return workspace;
 }

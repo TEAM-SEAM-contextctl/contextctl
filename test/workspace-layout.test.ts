@@ -67,4 +67,13 @@ describe("workspace scaffold", () => {
       expect(manifest.exports?.["."]?.types).toMatch(/\.\/dist\/.+\.d\.ts$/);
     },
   );
+
+  it("assigns root files to all domain owners before specific overrides", async () => {
+    const codeowners = await readFile(
+      new URL("../.github/CODEOWNERS", import.meta.url),
+      "utf8",
+    );
+
+    expect(codeowners).toContain("* @lazypl82 @dayomi02 @kimjongha99");
+  });
 });

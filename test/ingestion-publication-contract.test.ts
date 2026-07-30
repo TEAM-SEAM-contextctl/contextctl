@@ -121,6 +121,147 @@ describe("IngestionPublication contract", () => {
     );
   });
 
+  it("rejects a managed index and semantic selector from another document", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{
+        publishedScopes: Array<{
+          documentIndex: { documentId: string };
+          selector: { semanticUnitIds: string[] };
+        }>;
+      }>;
+    };
+    const scope = fixture.knowledgeUnits[0]?.publishedScopes[0];
+    expect(scope).toBeDefined();
+    if (scope === undefined) {
+      return;
+    }
+    scope.documentIndex.documentId = "doc_other";
+    scope.selector.semanticUnitIds = ["unit_other"];
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects duplicate semantic unit coordinates", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<Record<string, unknown>>;
+      changes: Array<Record<string, unknown>>;
+    };
+    const originalUnit = fixture.knowledgeUnits[0];
+    const originalChange = fixture.changes[0];
+    expect(originalUnit).toBeDefined();
+    expect(originalChange).toBeDefined();
+    if (originalUnit === undefined || originalChange === undefined) {
+      return;
+    }
+
+    fixture.knowledgeUnits.push({
+      ...structuredClone(originalUnit),
+      id: "unit_payment_failures_duplicate",
+    });
+    fixture.changes.push({
+      ...structuredClone(originalChange),
+      knowledgeUnitId: "unit_payment_failures_duplicate",
+    });
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects a scope kind that does not match the source coordinate", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{
+        publishedScopes: unknown[];
+      }>;
+    };
+    const unit = fixture.knowledgeUnits[0];
+    expect(unit).toBeDefined();
+    if (unit === undefined) {
+      return;
+    }
+    unit.publishedScopes = [
+      {
+        scopeId: "scope_payment_failures",
+        scopeVersion: "scpv_aaaa",
+        kind: "http_source",
+        connector: "http.main",
+        method: "GET",
+        path: "/payments",
+      },
+    ];
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects SQL scopes outside the published table coordinate", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<Record<string, unknown>>;
+    };
+    const unit = fixture.knowledgeUnits[0];
+    expect(unit).toBeDefined();
+    if (unit === undefined) {
+      return;
+    }
+    unit.kind = "table";
+    unit.sourceCoordinate = {
+      kind: "sql_table",
+      sourceId: "src_payments",
+      schema: "public",
+      table: "payments",
+      columns: ["id"],
+    };
+    unit.publishedScopes = [
+      {
+        scopeId: "scope_payment_failures",
+        scopeVersion: "scpv_aaaa",
+        kind: "sql_source",
+        connector: "postgres.main",
+        table: "unrelated",
+        columns: ["secret"],
+      },
+    ];
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects HTTP scopes outside the published operation coordinate", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<Record<string, unknown>>;
+    };
+    const unit = fixture.knowledgeUnits[0];
+    expect(unit).toBeDefined();
+    if (unit === undefined) {
+      return;
+    }
+    unit.kind = "operation";
+    unit.sourceCoordinate = {
+      kind: "http_operation",
+      sourceId: "src_payments",
+      method: "GET",
+      path: "/payments",
+    };
+    unit.publishedScopes = [
+      {
+        scopeId: "scope_payment_failures",
+        scopeVersion: "scpv_aaaa",
+        kind: "http_source",
+        connector: "http.main",
+        method: "DELETE",
+        path: "/unrelated",
+      },
+    ];
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
   it("rejects unknown contract versions", async () => {
     const fixture = (await loadIngestionProducerFixture()) as {
       schemaVersion: number;
