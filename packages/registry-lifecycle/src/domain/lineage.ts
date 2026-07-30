@@ -1,14 +1,9 @@
-// Mirrors the identifier shapes @contextctl/contracts publishes for
-// IngestionPublication. Reused as plain strings here because slice 1 only
-// needs domain invariants; the real contracts dependency arrives with slice 2
-// once this package actually parses an IngestionPublication.
-export type PublicationId = string;
-export type ObservationId = string;
-export type KnowledgeUnitId = string;
-export interface PublishedScopeRef {
-  readonly scopeId: string;
-  readonly scopeVersion: string;
-}
+import type {
+  KnowledgeUnitId,
+  ObservationId,
+  PublicationId,
+  PublishedScopeRef,
+} from "@contextctl/contracts";
 
 /**
  * Pins a Card Version to the specific Publication, Observation, and
@@ -21,3 +16,5 @@ export interface CardLineage {
   readonly knowledgeUnitId: KnowledgeUnitId;
   readonly scopeRef: PublishedScopeRef;
 }
+
+export type { KnowledgeUnitId, ObservationId, PublicationId, PublishedScopeRef };
