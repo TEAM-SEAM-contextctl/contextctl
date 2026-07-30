@@ -68,12 +68,21 @@ describe("workspace scaffold", () => {
     },
   );
 
-  it("assigns root files to all domain owners before specific overrides", async () => {
+  it("assigns shared and domain paths to their owner teams", async () => {
     const codeowners = await readFile(
       new URL("../.github/CODEOWNERS", import.meta.url),
       "utf8",
     );
 
-    expect(codeowners).toContain("* @lazypl82 @dayomi02 @kimjongha99");
+    expect(codeowners.trimEnd().split("\n")).toEqual([
+      "* @TEAM-SEAM-contextctl/contextctl-shared-owners",
+      "",
+      "/packages/ingestion-indexing/ @TEAM-SEAM-contextctl/contextctl-ingestion-owners",
+      "/packages/registry-lifecycle/ @TEAM-SEAM-contextctl/contextctl-registry-owners",
+      "/packages/selection-delivery/ @TEAM-SEAM-contextctl/contextctl-selection-owners",
+      "/packages/contracts/ @TEAM-SEAM-contextctl/contextctl-shared-owners",
+      "/apps/contextctl-daemon/ @TEAM-SEAM-contextctl/contextctl-shared-owners",
+      "/.github/ @TEAM-SEAM-contextctl/contextctl-shared-owners",
+    ]);
   });
 });

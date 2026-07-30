@@ -1,8 +1,8 @@
-* @lazypl82 @dayomi02 @kimjongha99
+* @TEAM-SEAM-contextctl/contextctl-shared-owners
 
-/packages/ingestion-indexing/ @lazypl82
-/packages/registry-lifecycle/ @dayomi02
-/packages/selection-delivery/ @kimjongha99
-/packages/contracts/ @lazypl82 @dayomi02 @kimjongha99
-/apps/contextctl-daemon/ @lazypl82 @dayomi02 @kimjongha99
-/.github/ @lazypl82
+/packages/ingestion-indexing/ @TEAM-SEAM-contextctl/contextctl-ingestion-owners
+/packages/registry-lifecycle/ @TEAM-SEAM-contextctl/contextctl-registry-owners
+/packages/selection-delivery/ @TEAM-SEAM-contextctl/contextctl-selection-owners
+/packages/contracts/ @TEAM-SEAM-contextctl/contextctl-shared-owners
+/apps/contextctl-daemon/ @TEAM-SEAM-contextctl/contextctl-shared-owners
+/.github/ @TEAM-SEAM-contextctl/contextctl-shared-owners
