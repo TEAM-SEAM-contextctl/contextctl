@@ -8,8 +8,8 @@ context lifecycle, and retrieval scope selection.
 
 ## Requirements
 
-- Node.js 24 LTS (`>=24.11.0 <25`)
-- npm 11 or 12
+- Node.js `24.18.0`
+- npm `11.16.0`
 
 ## Development
 
