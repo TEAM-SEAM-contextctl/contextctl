@@ -6,6 +6,11 @@ interface PackageManifest {
   readonly name?: string;
   readonly private?: boolean;
   readonly type?: string;
+  readonly packageManager?: string;
+  readonly engines?: {
+    readonly node?: string;
+    readonly npm?: string;
+  };
   readonly exports?: {
     readonly "."?: {
       readonly import?: string;
@@ -43,6 +48,28 @@ const workspaces = [
 ] as const;
 
 describe("workspace scaffold", () => {
+  it("pins the agreed Node.js and npm runtime versions", async () => {
+    const [nodeVersion, manifestText, lockfileText] = await Promise.all([
+      readFile(new URL("../.nvmrc", import.meta.url), "utf8"),
+      readFile(new URL("../package.json", import.meta.url), "utf8"),
+      readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
+    ]);
+    const manifest = JSON.parse(manifestText) as PackageManifest;
+    const lockfile = JSON.parse(lockfileText) as {
+      readonly packages?: {
+        readonly ""?: PackageManifest;
+      };
+    };
+
+    expect(nodeVersion.trim()).toBe("24.18.0");
+    expect(manifest.packageManager).toBe("npm@11.16.0");
+    expect(manifest.engines).toEqual({
+      node: "24.18.0",
+      npm: "11.16.0",
+    });
+    expect(lockfile.packages?.[""]?.engines).toEqual(manifest.engines);
+  });
+
   it("declares only the app and package workspace roots", async () => {
     const manifest = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
