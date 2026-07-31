@@ -1,5 +1,6 @@
 import { CardVersionInvariantError } from "./errors.js";
 import type { CardLineage } from "./lineage.js";
+import type { RetrievalScope } from "./retrieval-scope.js";
 
 export type CardId = string;
 export type CardVersionId = string;
@@ -11,6 +12,7 @@ export interface CardVersion {
   readonly id: CardVersionId;
   readonly cardId: CardId;
   readonly lineage: CardLineage;
+  readonly scopes: readonly RetrievalScope[];
   readonly validationState: CardValidationState;
   readonly createdAt: string;
 }

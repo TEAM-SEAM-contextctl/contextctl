@@ -2,19 +2,18 @@ import type {
   KnowledgeUnitId,
   ObservationId,
   PublicationId,
-  PublishedScopeRef,
 } from "@contextctl/contracts";
 
 /**
- * Pins a Card Version to the specific Publication, Observation, and
- * versioned Retrieval Scope Reference it was created from. Registry never
- * evaluates a Card independently of this lineage.
+ * Pins a Card Version to the Publication and Observation it was created from.
+ * Scope revisions are pinned separately by each `RetrievalScope.reference`, so
+ * a Card Version stays version-consistent even while newer Publications are
+ * being processed.
  */
 export interface CardLineage {
   readonly publicationId: PublicationId;
   readonly observationId: ObservationId;
   readonly knowledgeUnitId: KnowledgeUnitId;
-  readonly scopeRef: PublishedScopeRef;
 }
 
-export type { KnowledgeUnitId, ObservationId, PublicationId, PublishedScopeRef };
+export type { KnowledgeUnitId, ObservationId, PublicationId };

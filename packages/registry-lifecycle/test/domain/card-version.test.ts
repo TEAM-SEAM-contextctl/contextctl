@@ -9,13 +9,23 @@ import {
   type CardVersion,
 } from "../../src/domain/card-version.js";
 import { CardVersionInvariantError } from "../../src/domain/errors.js";
+import type { RetrievalScope } from "../../src/domain/retrieval-scope.js";
 
 const lineage: CardLineage = {
   publicationId: "pub_1",
   observationId: "obs_1",
   knowledgeUnitId: "unit_1",
-  scopeRef: { scopeId: "scope_1", scopeVersion: "scpv_a" },
 };
+
+const scopes: readonly RetrievalScope[] = [
+  {
+    kind: "sql_source",
+    reference: { scopeId: "scope_1", scopeVersion: "scpv_a" },
+    connector: "postgres.main",
+    table: "payments",
+    columns: ["status"],
+  },
+];
 
 function buildVersion(
   cardId: string,
@@ -26,6 +36,7 @@ function buildVersion(
     id,
     cardId,
     lineage,
+    scopes,
     validationState,
     createdAt: "2026-07-30T00:00:00.000Z",
   };
