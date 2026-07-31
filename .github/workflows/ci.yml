@@ -19,6 +19,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - run: test "$(node --version)" = "v24.18.0"
+      - run: test "$(npm --version)" = "11.16.0"
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
