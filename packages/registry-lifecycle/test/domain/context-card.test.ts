@@ -29,8 +29,16 @@ const version: CardVersion = {
     publicationId: "pub_1",
     observationId: "obs_1",
     knowledgeUnitId: "unit_1",
-    scopeRef: { scopeId: "scope_1", scopeVersion: "scpv_a" },
   },
+  scopes: [
+    {
+      kind: "http_source",
+      reference: { scopeId: "scope_1", scopeVersion: "scpv_a" },
+      connector: "payments.api",
+      method: "GET",
+      path: "/payments/{id}",
+    },
+  ],
   validationState: "validated",
   createdAt: "2026-07-30T00:00:00.000Z",
 };

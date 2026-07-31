@@ -20,11 +20,31 @@ export {
 export { CardVersionInvariantError } from "./domain/errors.js";
 export type { CardLineage } from "./domain/lineage.js";
 export {
+  translatePublishedScope,
+  type DocumentIndexRef,
+  type HttpSourceScope,
+  type ManagedDocumentScope,
+  type ManagedDocumentSelection,
+  type RetrievalScope,
+  type RetrievalScopeReference,
+  type SqlSourceScope,
+} from "./domain/retrieval-scope.js";
+export {
+  groundCardVersion,
+  type GroundingFinding,
+  type GroundingResult,
+} from "./domain/evidence-grounding.js";
+export {
   claimPublication,
+  type ClaimedCardVersion,
   type ClaimPublicationPorts,
   type ClaimPublicationResult,
 } from "./application/claim-publication.js";
 export { PublicationNotFoundError } from "./application/errors.js";
+export type {
+  CardMeaningGenerator,
+  CardMeaningRequest,
+} from "./ports/card-meaning-generator.js";
 export type { Clock } from "./ports/clock.js";
 export type { ConsumerCheckpointStore } from "./ports/consumer-checkpoint-store.js";
 export type { IdGenerator } from "./ports/id-generator.js";

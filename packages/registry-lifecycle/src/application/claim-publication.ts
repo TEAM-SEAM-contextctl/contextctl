@@ -5,7 +5,13 @@ import type {
 } from "@contextctl/contracts";
 
 import type { CardVersion } from "../domain/card-version.js";
+import {
+  groundCardVersion,
+  type GroundingFinding,
+} from "../domain/evidence-grounding.js";
+import { translatePublishedScope } from "../domain/retrieval-scope.js";
 import { PublicationNotFoundError } from "./errors.js";
+import type { CardMeaningGenerator } from "../ports/card-meaning-generator.js";
 import type { Clock } from "../ports/clock.js";
 import type { ConsumerCheckpointStore } from "../ports/consumer-checkpoint-store.js";
 import type { IdGenerator } from "../ports/id-generator.js";
@@ -14,8 +20,15 @@ import type { PublicationRepository } from "../ports/publication-repository.js";
 export interface ClaimPublicationPorts {
   readonly publications: PublicationRepository;
   readonly checkpoints: ConsumerCheckpointStore;
+  readonly meanings: CardMeaningGenerator;
   readonly clock: Clock;
   readonly ids: IdGenerator;
+}
+
+/** One Card Version produced by a claim, with why grounding rejected it. */
+export interface ClaimedCardVersion {
+  readonly version: CardVersion;
+  readonly findings: readonly GroundingFinding[];
 }
 
 export type ClaimPublicationResult =
@@ -23,7 +36,7 @@ export type ClaimPublicationResult =
   | {
       readonly status: "claimed";
       readonly publicationId: PublicationId;
-      readonly draftVersions: readonly CardVersion[];
+      readonly cardVersions: readonly ClaimedCardVersion[];
     };
 
 /**
@@ -45,37 +58,47 @@ export async function claimPublication(
   }
 
   const createdAt = ports.clock.now();
-  const draftVersions = publication.knowledgeUnits.map((unit) =>
-    toDraftCardVersion(publication, unit, ports.ids.nextId(), createdAt),
-  );
+  const cardVersions: ClaimedCardVersion[] = [];
+  for (const unit of publication.knowledgeUnits) {
+    cardVersions.push(
+      await toCardVersion(ports, publication, unit, createdAt),
+    );
+  }
 
   await ports.checkpoints.markProcessed(publicationId);
 
-  return { status: "claimed", publicationId, draftVersions };
+  return { status: "claimed", publicationId, cardVersions };
 }
 
-function toDraftCardVersion(
+async function toCardVersion(
+  ports: ClaimPublicationPorts,
   publication: IngestionPublication,
   unit: PublishedKnowledgeUnit,
-  versionId: string,
   createdAt: string,
-): CardVersion {
-  const [scope] = unit.publishedScopes;
-  if (scope === undefined) {
-    throw new Error(
-      `knowledge unit ${unit.id} was published without a retrieval scope`,
-    );
-  }
+): Promise<ClaimedCardVersion> {
+  // Every published scope is translated: dropping one would silently narrow the
+  // search range a Card claims to cover.
+  const scopes = unit.publishedScopes.map(translatePublishedScope);
+  const meaning = await ports.meanings.generate({
+    coordinate: unit.sourceCoordinate,
+    evidence: unit.evidence,
+  });
+  const grounding = groundCardVersion(unit.sourceCoordinate, scopes, meaning);
+
   return {
-    id: versionId,
-    cardId: unit.id,
-    lineage: {
-      publicationId: publication.publicationId,
-      observationId: publication.observationId,
-      knowledgeUnitId: unit.id,
-      scopeRef: { scopeId: scope.scopeId, scopeVersion: scope.scopeVersion },
+    version: {
+      id: ports.ids.nextId(),
+      cardId: unit.id,
+      lineage: {
+        publicationId: publication.publicationId,
+        observationId: publication.observationId,
+        knowledgeUnitId: unit.id,
+      },
+      scopes,
+      validationState:
+        grounding.outcome === "validated" ? "validated" : "rejected",
+      createdAt,
     },
-    validationState: "draft",
-    createdAt,
+    findings: grounding.outcome === "validated" ? [] : grounding.findings,
   };
 }
