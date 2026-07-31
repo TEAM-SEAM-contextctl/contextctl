@@ -29,6 +29,11 @@ export interface SourceChangeSignal {
   readonly token?: string;
 }
 
+export interface ObservedSourceChangeSignal {
+  readonly status: "changed";
+  readonly token: string;
+}
+
 export interface ProbedObservationCapability {
   readonly name: string;
   readonly status: "available" | "unavailable";
@@ -36,7 +41,11 @@ export interface ProbedObservationCapability {
 }
 
 export type SourceObservationAttempt =
-  | { readonly status: "changed"; readonly payload: unknown }
+  | {
+      readonly status: "changed";
+      readonly payload: unknown;
+      readonly changeSignal: ObservedSourceChangeSignal;
+    }
   | { readonly status: "unchanged" };
 
 export interface SourceAdapter {
