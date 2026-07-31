@@ -59,6 +59,7 @@ describe("Source Management", () => {
     expect(observation.attempt).toEqual({
       status: "changed",
       payload: { title: "Payments" },
+      changeSignal: { status: "changed", token: "etag-2" },
     });
     expect(observation.source.executionStatus).toEqual({
       state: "succeeded",
@@ -444,6 +445,7 @@ describe("Source Management", () => {
     completeObservation?.({
       status: "changed",
       payload: { title: "Payments" },
+      changeSignal: { status: "changed", token: "etag-2" },
     });
     await expect(first).resolves.toMatchObject({
       attempt: { status: "changed" },
@@ -560,6 +562,7 @@ class FakeSourceAdapter implements SourceAdapter {
   ) => Promise<SourceObservationAttempt> = async () => ({
     status: "changed",
     payload: { title: "Payments" },
+    changeSignal: { status: "changed", token: "etag-2" },
   });
 
   constructor(readonly sourceType: string) {}

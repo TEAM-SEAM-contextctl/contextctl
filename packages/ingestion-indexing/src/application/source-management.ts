@@ -206,9 +206,16 @@ export class SourceManagement {
         }
 
         const attempt = await adapter.observe({ ...context, signal });
+        if (
+          attempt.status !== "changed" ||
+          attempt.changeSignal.status !== "changed" ||
+          attempt.changeSignal.token.trim().length === 0
+        ) {
+          throw new SourceManagementError("adapter_failure", source.id);
+        }
         return {
-          source: completeSourceObservation(runningSource, attempt.status),
-          changeSignal: change,
+          source: completeSourceObservation(runningSource, "changed"),
+          changeSignal: attempt.changeSignal,
           attempt,
         };
       }, timeoutMs, options.signal);

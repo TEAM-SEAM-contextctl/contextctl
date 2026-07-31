@@ -65,6 +65,7 @@ interface BlockBase<
   readonly parentBlockId?: string;
   readonly sectionPath: readonly string[];
   readonly text: string;
+  readonly analysisText: string;
   readonly contentDigest: string;
   readonly sourceSpan: TextSourceSpan | PdfSourceSpan;
   readonly structure: TStructure;
@@ -279,6 +280,7 @@ export function validateNormalizedDocument(
     if (
       block.text.length === 0 &&
       block.kind !== "divider" &&
+      block.kind !== "code" &&
       block.kind !== "page_break"
     ) {
       issues.push(
@@ -286,6 +288,15 @@ export function validateNormalizedDocument(
           "invalid_value",
           `${path}.text`,
           "content blocks must not be empty",
+        ),
+      );
+    }
+    if (block.text.length > 0 && block.analysisText.length === 0) {
+      issues.push(
+        issue(
+          "invalid_value",
+          `${path}.analysisText`,
+          "content blocks require non-empty analysis text",
         ),
       );
     }
@@ -305,7 +316,10 @@ export function validateNormalizedDocument(
     validateBlockStructure(block, path, issues);
 
     for (const [sectionIndex, headingId] of block.sectionPath.entries()) {
-      if (!headings.has(headingId) && headingId !== block.id) {
+      if (
+        !headings.has(headingId) &&
+        !(block.kind === "heading" && headingId === block.id)
+      ) {
         issues.push(
           issue(
             "invalid_reference",
@@ -314,6 +328,18 @@ export function validateNormalizedDocument(
           ),
         );
       }
+    }
+    if (
+      block.kind === "heading" &&
+      block.sectionPath.at(-1) !== block.id
+    ) {
+      issues.push(
+        issue(
+          "invalid_reference",
+          `${path}.sectionPath`,
+          "heading section path must end with the heading itself",
+        ),
+      );
     }
     if (block.parentBlockId !== undefined && !blockIds.has(block.parentBlockId)) {
       issues.push(

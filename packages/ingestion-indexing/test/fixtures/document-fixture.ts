@@ -36,6 +36,7 @@ export function createDocumentFixture(): NormalizedDocument {
         order: 0,
         sectionPath: ["blk_payment_failures"],
         text: heading,
+        analysisText: heading.toLowerCase(),
         contentDigest: digestB,
         sourceSpan: {
           kind: "text",
@@ -53,6 +54,7 @@ export function createDocumentFixture(): NormalizedDocument {
         order: 1,
         sectionPath: ["blk_payment_failures"],
         text: paragraph,
+        analysisText: paragraph.toLowerCase(),
         contentDigest: digestC,
         sourceSpan: {
           kind: "text",

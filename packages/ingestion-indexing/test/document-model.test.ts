@@ -56,6 +56,25 @@ describe("ingestion document model", () => {
     expect(codes).toContain("cycle_detected");
   });
 
+  it("rejects a non-heading block that references itself as a section", () => {
+    const document = createDocumentFixture();
+    const invalid = {
+      ...document,
+      blocks: document.blocks.map((block) =>
+        block.id === "blk_retry_policy"
+          ? { ...block, sectionPath: [block.id] }
+          : block,
+      ),
+    };
+
+    expect(validateNormalizedDocument(invalid)).toContainEqual(
+      expect.objectContaining({
+        code: "invalid_reference",
+        path: "blocks[1].sectionPath[0]",
+      }),
+    );
+  });
+
   it("rejects chunks that cannot be reconstructed from their source blocks", () => {
     const document = createDocumentFixture();
     const units = createSemanticUnitFixture();
