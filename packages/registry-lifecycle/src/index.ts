@@ -35,11 +35,31 @@ export {
   type GroundingResult,
 } from "./domain/evidence-grounding.js";
 export {
+  analyzeCardImpact,
+  type CardImpact,
+  type CardImpactDecision,
+  type CardImpactReason,
+} from "./domain/card-impact.js";
+export {
+  lifecycleEventsForCard,
+  recordLifecycleEvent,
+  type CardImpactAssessedEvent,
+  type CardVersionAddedEvent,
+  type CardVersionPromotedEvent,
+  type LifecycleEvent,
+  type LifecycleEventId,
+} from "./domain/lifecycle-event.js";
+export {
   claimPublication,
   type ClaimedCardVersion,
   type ClaimPublicationPorts,
   type ClaimPublicationResult,
 } from "./application/claim-publication.js";
+export {
+  assessPublicationImpact,
+  type AssessPublicationImpactPorts,
+  type PublicationImpactAssessment,
+} from "./application/assess-publication-impact.js";
 export { PublicationNotFoundError } from "./application/errors.js";
 export type {
   CardMeaningGenerator,
