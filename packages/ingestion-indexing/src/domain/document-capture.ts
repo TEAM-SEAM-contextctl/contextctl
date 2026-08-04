@@ -8,9 +8,13 @@ import {
   type ParserDiagnostic,
   type TextSourceSpan,
 } from "./document-model.js";
+import {
+  DEFAULT_LINEAGE_POLICY,
+  LINEAGE_POLICY_VERSION,
+} from "./document-indexing-policy.js";
 
 export const MARKDOWN_NORMALIZATION_POLICY_VERSION = "document-normalization-v1";
-export const BLOCK_LINEAGE_POLICY_VERSION = "lineage-policy-v1";
+export const BLOCK_LINEAGE_POLICY_VERSION = LINEAGE_POLICY_VERSION;
 
 export interface CandidateDocument {
   readonly title?: string;
@@ -498,8 +502,9 @@ function matchFuzzy(
     const best = scored[0];
     const second = scored[1];
     return best !== undefined &&
-      best.score >= 0.85 &&
-      best.score - (second?.score ?? 0) >= 0.1
+      best.score >= DEFAULT_LINEAGE_POLICY.blockMinTokenJaccard &&
+      best.score - (second?.score ?? 0) >=
+        DEFAULT_LINEAGE_POLICY.blockMinRunnerUpMargin
       ? [{ candidate, previous: best.previous, score: best.score }]
       : [];
   });
@@ -526,7 +531,8 @@ function matchFuzzy(
     const second = competingCandidates[1];
     if (
       best?.candidate.index !== proposal.candidate.index ||
-      proposal.score - (second?.score ?? 0) < 0.1
+      proposal.score - (second?.score ?? 0) <
+        DEFAULT_LINEAGE_POLICY.blockMinRunnerUpMargin
     ) {
       continue;
     }
