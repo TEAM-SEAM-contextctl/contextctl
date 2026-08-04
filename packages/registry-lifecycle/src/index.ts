@@ -65,7 +65,13 @@ export type {
   CardMeaningGenerator,
   CardMeaningRequest,
 } from "./ports/card-meaning-generator.js";
+export type { CardStore } from "./ports/card-store.js";
 export type { Clock } from "./ports/clock.js";
 export type { ConsumerCheckpointStore } from "./ports/consumer-checkpoint-store.js";
 export type { IdGenerator } from "./ports/id-generator.js";
+export type { LifecycleEventStore } from "./ports/lifecycle-event-store.js";
 export type { PublicationRepository } from "./ports/publication-repository.js";
+export { openRegistryDatabase } from "./infrastructure/sqlite/registry-database.js";
+export { SqliteCardStore } from "./infrastructure/sqlite/sqlite-card-store.js";
+export { SqliteConsumerCheckpointStore } from "./infrastructure/sqlite/sqlite-consumer-checkpoint-store.js";
+export { SqliteLifecycleEventStore } from "./infrastructure/sqlite/sqlite-lifecycle-event-store.js";
