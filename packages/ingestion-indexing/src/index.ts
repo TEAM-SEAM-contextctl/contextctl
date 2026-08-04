@@ -27,6 +27,9 @@ export {
   type CandidateSourceCoverage,
 } from "./domain/document-capture.js";
 export {
+  type DocumentSemanticUnit,
+  type SegmentationDiagnostic,
+  type SemanticBoundary,
   type BlockStructure,
   type CodeStructure,
   type DividerStructure,
@@ -44,6 +47,13 @@ export {
   type TableStructure,
   type TextSourceSpan,
 } from "./domain/document-model.js";
+export {
+  DocumentSegmentationError,
+  segmentNormalizedDocument,
+  type DocumentSegmentationErrorCode,
+  type SegmentNormalizedDocumentInput,
+  type SemanticUnitIdSource,
+} from "./domain/document-segmentation.js";
 export {
   canonicalizeDocumentIndexingPolicy,
   CHUNK_POLICY_VERSION,
