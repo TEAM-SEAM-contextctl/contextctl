@@ -13,3 +13,19 @@ export class SelectionCandidateInvariantError extends Error {
     this.name = "SelectionCandidateInvariantError";
   }
 }
+
+/** Thrown when an evidence budget cannot be satisfied without violating its own limits. */
+export class EvidenceBudgetInvariantError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EvidenceBudgetInvariantError";
+  }
+}
+
+/** Thrown when a selected Scope cannot be resolved into a retrievable target. */
+export class SelectionScopeInvariantError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SelectionScopeInvariantError";
+  }
+}
