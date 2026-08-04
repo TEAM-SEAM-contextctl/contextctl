@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   assertValidDocumentSemanticUnits,
   type DocumentBlock,
@@ -20,6 +18,10 @@ import {
 import { type ModelValidationIssue } from "./model-validation.js";
 import { sha256Digest } from "./document-capture.js";
 import { findLexicalBoundaries } from "./lexical-cohesion.js";
+import {
+  createSemanticUnitRevisionContext,
+  type SemanticUnitRevisionContext,
+} from "./semantic-unit-revision.js";
 
 const UNIT_ID_PATTERN = /^unit_[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/;
 
@@ -79,8 +81,12 @@ export function segmentNormalizedDocument(
 
   const plans = orderPlans(root);
   const idByPlan = allocateUnitIds(plans, input.ids);
+  const revisionContext = createSemanticUnitRevisionContext(
+    input.document,
+    policy.textMeasureProfile.version,
+  );
   const units = plans.map((plan) =>
-    materializeUnit(plan, input.document, policy, idByPlan),
+    materializeUnit(plan, input.document, policy, idByPlan, revisionContext),
   );
   assertValidDocumentSemanticUnits(input.document, units);
   return units;
@@ -391,6 +397,7 @@ function materializeUnit(
   document: NormalizedDocument,
   policy: DocumentIndexingPolicySet,
   idByPlan: ReadonlyMap<UnitPlan, string>,
+  revisionContext: SemanticUnitRevisionContext,
 ): DocumentSemanticUnit {
   const id = requiredMapValue(idByPlan, plan);
   const parentId =
@@ -403,7 +410,7 @@ function materializeUnit(
     plan.kind === "document"
       ? document.contentDigest
       : sha256Digest(plan.blocks.map((block) => block.text).join("\n\n"));
-  const revisionInput = {
+  const unit = {
     id,
     sourceId: document.sourceId,
     documentId: document.documentId,
@@ -412,29 +419,14 @@ function materializeUnit(
     ...(parentId === undefined ? {} : { parentId }),
     childIds,
     blockIds,
-    blockRevisions: plan.blocks.map((block) => ({
-      id: block.id,
-      revisionId: block.revisionId,
-    })),
     boundary: plan.boundary,
     contentDigest,
     segmentationPolicyVersion: policy.segmentation.version,
-    textMeasureProfileVersion: policy.textMeasureProfile.version,
   };
   return {
-    id,
-    revisionId: revisionId("urv", revisionInput),
-    sourceId: document.sourceId,
+    ...unit,
+    revisionId: revisionContext.revisionId(unit),
     observationId: document.observationId,
-    documentId: document.documentId,
-    kind: plan.kind,
-    ...(plan.title === undefined ? {} : { title: plan.title }),
-    ...(parentId === undefined ? {} : { parentId }),
-    childIds,
-    blockIds,
-    boundary: plan.boundary,
-    contentDigest,
-    segmentationPolicyVersion: policy.segmentation.version,
     diagnostics: plan.diagnostics,
   };
 }
@@ -449,45 +441,6 @@ function measureBlocks(
   );
 }
 
-function revisionId(prefix: "urv", value: unknown): string {
-  const digest = createHash("sha256")
-    .update(canonicalJson(value), "utf8")
-    .digest();
-  return `${prefix}_${toBase32(digest)}`;
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    const record = value as Readonly<Record<string, unknown>>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-function toBase32(input: Uint8Array): string {
-  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
-  let output = "";
-  let bits = 0;
-  let value = 0;
-  for (const byte of input) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      output += alphabet[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) {
-    output += alphabet[(value << (5 - bits)) & 31];
-  }
-  return output;
-}
 
 function requiredMapValue<K, V>(values: ReadonlyMap<K, V>, key: K): V {
   const value = values.get(key);
