@@ -55,6 +55,14 @@ export {
   type SemanticUnitIdSource,
 } from "./domain/document-segmentation.js";
 export {
+  reconcileSemanticUnitLineage,
+  SemanticUnitLineageError,
+  type ReconcileSemanticUnitLineageInput,
+  type SemanticUnitLineageDecision,
+  type SemanticUnitLineageErrorCode,
+  type SemanticUnitLineageResult,
+} from "./domain/semantic-unit-lineage.js";
+export {
   canonicalizeDocumentIndexingPolicy,
   CHUNK_POLICY_VERSION,
   DEFAULT_CHUNK_POLICY,
