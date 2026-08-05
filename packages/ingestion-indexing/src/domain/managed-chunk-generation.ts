@@ -94,16 +94,26 @@ export function generateManagedChunks(
         firstBlockOrder(left, blockById) - firstBlockOrder(right, blockById),
     );
   const chunks: ManagedChunk[] = [];
+  const allocatedChunkIds = new Set<string>();
 
   for (const unit of orderedUnits) {
     const blocks = unit.blockIds.map((id) => requiredBlock(blockById, id));
     const plans = addWholeBlockOverlap(
-      createChunkPlans(blocks, policy.chunk, policy.textMeasureProfile),
+      createChunkPlans(
+        blocks,
+        blockById,
+        policy.chunk,
+        policy.textMeasureProfile,
+      ),
       blockById,
       policy.chunk,
       policy.textMeasureProfile,
     );
-    const ids = allocateChunkIds(plans.length, input.ids);
+    const ids = allocateChunkIds(
+      plans.length,
+      input.ids,
+      allocatedChunkIds,
+    );
     for (const [ordinal, plan] of plans.entries()) {
       const id = requiredAt(ids, ordinal);
       const text = reconstruct(plan.sourceSlices, blockById);
@@ -162,6 +172,7 @@ function validateInput(input: GenerateManagedChunksInput): void {
 
 function createChunkPlans(
   blocks: readonly DocumentBlock[],
+  blockById: ReadonlyMap<string, DocumentBlock>,
   policy: ChunkPolicy,
   profile: TextMeasureProfile,
 ): readonly ChunkPlan[] {
@@ -169,8 +180,11 @@ function createChunkPlans(
   let packed: ChunkSourceSlice[] = [];
 
   const flushPacked = (): void => {
-    if (measureSlices(packed, blocks, profile) > 0) {
-      plans.push({ splitKind: "block_pack", sourceSlices: normalizeSeparators(packed) });
+    if (measureSlices(packed, blockById, profile) > 0) {
+      plans.push({
+        splitKind: "block_pack",
+        sourceSlices: normalizeSeparators(packed),
+      });
     }
     packed = [];
   };
@@ -182,17 +196,17 @@ function createChunkPlans(
     const blockTokens = measureText(block.text, profile);
     if (blockTokens > policy.maxChunkTokens) {
       flushPacked();
-      plans.push(...splitOversizedBlock(block, policy, profile));
+      plans.push(...splitOversizedBlock(block, blockById, policy, profile));
       continue;
     }
 
     const slice = wholeBlockSlice(block);
     const candidate = normalizeSeparators([...packed, slice]);
-    const currentTokens = measureSlices(packed, blocks, profile);
+    const currentTokens = measureSlices(packed, blockById, profile);
     if (
       packed.length > 0 &&
       (currentTokens >= policy.targetChunkTokens ||
-        measureSlices(candidate, blocks, profile) > policy.maxChunkTokens)
+        measureSlices(candidate, blockById, profile) > policy.maxChunkTokens)
     ) {
       flushPacked();
     }
@@ -204,11 +218,12 @@ function createChunkPlans(
 
 function splitOversizedBlock(
   block: DocumentBlock,
+  blockById: ReadonlyMap<string, DocumentBlock>,
   policy: ChunkPolicy,
   profile: TextMeasureProfile,
 ): readonly ChunkPlan[] {
   if (block.kind === "table") {
-    return splitTable(block, policy, profile);
+    return splitTable(block, blockById, policy, profile);
   }
 
   const structural = structuralSpans(block);
@@ -254,6 +269,7 @@ function structuralSpans(block: DocumentBlock): readonly TextSpan[] {
 
 function splitTable(
   block: Extract<DocumentBlock, { readonly kind: "table" }>,
+  blockById: ReadonlyMap<string, DocumentBlock>,
   policy: ChunkPolicy,
   profile: TextMeasureProfile,
 ): readonly ChunkPlan[] {
@@ -262,7 +278,7 @@ function splitTable(
   const headers = rows.slice(0, headerCount);
   const body = rows.slice(headerCount);
   const headerSlices = headers.map((span) => sliceFromSpan(block, span));
-  const headerTokens = measureSlices(headerSlices, [block], profile);
+  const headerTokens = measureSlices(headerSlices, blockById, profile);
 
   if (
     body.length === 0 ||
@@ -330,8 +346,9 @@ function splitTable(
       const current = normalizeSeparators([...headerSlices, ...rowSlices]);
       if (
         rowSlices.length > 0 &&
-        (measureSlices(current, [block], profile) >= policy.targetChunkTokens ||
-          measureSlices(candidate, [block], profile) > policy.maxChunkTokens)
+        (measureSlices(current, blockById, profile) >=
+          policy.targetChunkTokens ||
+          measureSlices(candidate, blockById, profile) > policy.maxChunkTokens)
       ) {
         flush();
       }
@@ -419,7 +436,7 @@ function addWholeBlockOverlap(
       continue;
     }
     const candidate = normalizeSeparators([...overlap, ...current.sourceSlices]);
-    if (measureSlices(candidate, blockById.values(), profile) <= policy.maxChunkTokens) {
+    if (measureSlices(candidate, blockById, profile) <= policy.maxChunkTokens) {
       current.sourceSlices = candidate;
     }
   }
@@ -543,9 +560,9 @@ function utf16Boundaries(
 function allocateChunkIds(
   count: number,
   source: ManagedChunkIdSource,
+  allocated: Set<string>,
 ): readonly string[] {
   const ids: string[] = [];
-  const allocated = new Set<string>();
   for (let index = 0; index < count; index += 1) {
     let id: string | undefined;
     for (let attempt = 0; attempt < 1_024; attempt += 1) {
@@ -634,14 +651,13 @@ function reconstruct(
 
 function measureSlices(
   slices: readonly ChunkSourceSlice[],
-  blocks: Iterable<DocumentBlock>,
+  blockById: ReadonlyMap<string, DocumentBlock>,
   profile: TextMeasureProfile,
 ): number {
-  const blockById =
-    blocks instanceof Map
-      ? blocks
-      : new Map([...blocks].map((block) => [block.id, block]));
-  return measureText(reconstruct(normalizeSeparators(slices), blockById), profile);
+  return measureText(
+    reconstruct(normalizeSeparators(slices), blockById),
+    profile,
+  );
 }
 
 function spansText(text: string, spans: readonly TextSpan[]): string {

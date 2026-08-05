@@ -2,14 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   generateManagedChunks,
+  MarkdownCapture,
   measureText,
+  RemarkMarkdownParser,
+  segmentNormalizedDocument,
   sha256Digest,
   toAnalysisText,
+  type BlockIdSource,
   type DocumentBlock,
   type DocumentSemanticUnit,
   type ManagedChunk,
   type ManagedChunkIdSource,
   type NormalizedDocument,
+  type SemanticUnitIdSource,
 } from "../src/index.js";
 import { validateManagedChunks } from "../src/domain/document-model.js";
 
@@ -280,6 +285,58 @@ describe("Managed Chunk generation", () => {
       }),
     ).toThrowError(expect.objectContaining({ code: "invalid_chunk_id" }));
   });
+
+  it("preserves structure and source coverage through the Markdown pipeline", () => {
+    const source = [
+      "# Payment operations",
+      "",
+      "Payment failures require a status check.",
+      "",
+      "## Retry policy",
+      "",
+      "Retry only transient failures.",
+    ].join("\n");
+    const document = captureMarkdown(source);
+    const units = segmentNormalizedDocument({
+      document,
+      ids: sequentialUnitIds(),
+    });
+
+    const chunks = generateManagedChunks({
+      document,
+      semanticUnits: units,
+      ids: sequentialChunkIds(),
+    });
+
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(
+      new Set(chunks.map((chunk) => chunk.semanticUnitId)).size,
+    ).toBeGreaterThan(1);
+    expect(validateManagedChunks(document, units, chunks)).toEqual([]);
+    for (const block of document.blocks.filter(
+      (candidate) => candidate.text.length > 0,
+    )) {
+      expect(reconstructUniqueBlockText(chunks, block.id, block.text)).toBe(
+        block.text,
+      );
+    }
+  });
+
+  it("rejects duplicate allocated Chunk IDs across Semantic Units", () => {
+    const document = captureMarkdown("# First\n\nAlpha.\n\n# Second\n\nBeta.");
+    const units = segmentNormalizedDocument({
+      document,
+      ids: sequentialUnitIds(),
+    });
+
+    expect(() =>
+      generateManagedChunks({
+        document,
+        semanticUnits: units,
+        ids: { nextChunkId: () => "chk_duplicate" },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "duplicate_chunk_id" }));
+  });
 });
 
 type FixtureBlock =
@@ -388,6 +445,38 @@ function sequentialChunkIds(): ManagedChunkIdSource {
       sequence += 1;
       return `chk_${sequence.toString().padStart(4, "0")}`;
     },
+  };
+}
+
+function captureMarkdown(source: string): NormalizedDocument {
+  return new MarkdownCapture({
+    parser: new RemarkMarkdownParser(),
+    ids: sequentialBlockIds(),
+  }).capture({
+    source: { id: "src_markdown", targetKey: "file:/fixture.md" },
+    observationId: "obs_markdown",
+    documentId: "doc_markdown",
+    snapshot: {
+      kind: "markdown",
+      targetKey: "file:/fixture.md",
+      capturedAt: "2026-08-05T00:00:00.000Z",
+      content: source,
+      contentDigest: sha256Digest(source),
+    },
+  });
+}
+
+function sequentialBlockIds(): BlockIdSource {
+  let sequence = 0;
+  return {
+    nextBlockId: () => `blk_pipeline_${++sequence}`,
+  };
+}
+
+function sequentialUnitIds(): SemanticUnitIdSource {
+  let sequence = 0;
+  return {
+    nextUnitId: () => `unit_pipeline_${++sequence}`,
   };
 }
 
