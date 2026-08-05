@@ -134,6 +134,41 @@ describe("ingestion index manifest", () => {
     expect(codes).toContain("relationship_mismatch");
   });
 
+  it("rejects an embedding profile incompatible with the manifest chunks", () => {
+    const document = createDocumentFixture();
+    const units = createSemanticUnitFixture();
+    const chunks = createManagedChunkFixture();
+    const base = createIndexManifestFixture();
+    const manifest = {
+      ...base,
+      embeddingProfile: {
+        ...base.embeddingProfile,
+        maxInputTokens: 1,
+        textMeasureProfileVersion: "other-measure",
+      },
+    };
+
+    const issues = validateIndexManifest({
+      document,
+      semanticUnits: units,
+      chunks,
+      manifest,
+    });
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: "relationship_mismatch",
+        path: "embeddingProfile.textMeasureProfileVersion",
+      }),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: "invalid_value",
+        path: "chunks[0].tokenCount",
+      }),
+    );
+  });
+
   it("rejects vector records that leak across an index version", () => {
     const manifest = createIndexManifestFixture();
     const chunks = createManagedChunkFixture();

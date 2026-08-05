@@ -158,8 +158,11 @@ export function createIndexManifestFixture(): IndexManifest {
     embeddingProfile: {
       id: "deterministic-test",
       version: "1.0.0",
+      model: "deterministic-test-v1",
       dimensions: 3,
       distance: "cosine",
+      maxInputTokens: 480,
+      textMeasureProfileVersion: "unicode-estimate-v1",
     },
     payloadSchemaVersion: 1,
     semanticUnitRevisions: {
