@@ -3,6 +3,7 @@ import type {
   ManagedChunk,
   NormalizedDocument,
 } from "../../src/domain/document-model.js";
+import { sha256Digest } from "../../src/domain/document-capture.js";
 import type {
   IndexManifest,
   VectorIndexRecord,
@@ -10,6 +11,7 @@ import type {
 
 const heading = "Payment failures";
 const paragraph = "Retry failed payments after five minutes.";
+const chunkText = `${heading}\n\n${paragraph}`;
 const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
 const digestC = `sha256:${"c".repeat(64)}`;
@@ -129,10 +131,10 @@ export function createManagedChunkFixture(): readonly ManagedChunk[] {
           separatorBefore: "\n\n",
         },
       ],
-      text: `${heading}\n\n${paragraph}`,
-      contentDigest: digestD,
-      tokenCount: 9,
-      textMeasureProfileVersion: "unicode-v1",
+      text: chunkText,
+      contentDigest: sha256Digest(chunkText),
+      tokenCount: 16,
+      textMeasureProfileVersion: "unicode-estimate-v1",
       chunkPolicyVersion: "managed-chunk-v1",
       splitKind: "block_pack",
     },
@@ -152,7 +154,7 @@ export function createIndexManifestFixture(): IndexManifest {
     lineagePolicyVersion: "lineage-v1",
     segmentationPolicyVersion: "semantic-unit-v1",
     chunkPolicyVersion: "managed-chunk-v1",
-    textMeasureProfileVersion: "unicode-v1",
+    textMeasureProfileVersion: "unicode-estimate-v1",
     embeddingProfile: {
       id: "deterministic-test",
       version: "1.0.0",
@@ -193,7 +195,7 @@ export function createVectorRecordFixture(): readonly VectorIndexRecord[] {
         semanticUnitId: "unit_payment_failures",
         chunkId: "chk_payment_failures",
         chunkRevisionId: "crv_aaaa",
-        contentDigest: digestD,
+        contentDigest: sha256Digest(chunkText),
       },
     },
   ];
