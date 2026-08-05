@@ -17,10 +17,26 @@ export interface CardVersionAddedEvent extends LifecycleEventBase {
   readonly publicationId: PublicationId;
 }
 
-export interface CardVersionPromotedEvent extends LifecycleEventBase {
+/** Fields present on events an operator caused, so the trail names the actor. */
+interface OperatorDecidedEvent extends LifecycleEventBase {
+  readonly decidedBy: string;
+  readonly note: string | undefined;
+}
+
+export interface CardVersionPromotedEvent extends OperatorDecidedEvent {
   readonly kind: "card_version_promoted";
   readonly versionId: CardVersionId;
   readonly previousVersionId: CardVersionId | undefined;
+}
+
+export interface CardVersionRefusedEvent extends OperatorDecidedEvent {
+  readonly kind: "card_version_refused";
+  readonly versionId: CardVersionId;
+}
+
+export interface CardWithdrawnEvent extends OperatorDecidedEvent {
+  readonly kind: "card_withdrawn";
+  readonly withdrawnVersionId: CardVersionId | undefined;
 }
 
 export interface CardImpactAssessedEvent extends LifecycleEventBase {
@@ -38,6 +54,8 @@ export interface CardImpactAssessedEvent extends LifecycleEventBase {
 export type LifecycleEvent =
   | CardVersionAddedEvent
   | CardVersionPromotedEvent
+  | CardVersionRefusedEvent
+  | CardWithdrawnEvent
   | CardImpactAssessedEvent;
 
 export function recordLifecycleEvent(
