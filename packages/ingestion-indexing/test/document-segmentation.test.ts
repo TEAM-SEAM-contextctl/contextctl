@@ -267,19 +267,70 @@ describe("document semantic segmentation", () => {
     );
   });
 
-  it("meets the lexical boundary quality gate on the labeled fixture", () => {
-    const document = topicShiftDocument();
-    const units = segmentNormalizedDocument({
-      document,
-      ids: sequentialUnitIds(),
-    });
-    const predicted = lexicalBoundaryOrders(document, units);
-    const metrics = evaluateBoundaries([3, 6], predicted, document.blocks.length);
+  it.each([
+    {
+      name: "three abrupt topics",
+      document: topicShiftDocument(),
+      expectedBoundaries: [3, 6],
+    },
+    {
+      name: "one homogeneous topic",
+      document: createSegmentationDocument(
+        Array.from({ length: 4 }, () => ({
+          kind: "paragraph" as const,
+          text: repeatedTopic(["payment", "retry", "invoice", "failure"]),
+        })),
+      ),
+      expectedBoundaries: [],
+    },
+  ])(
+    "reports every boundary metric for $name",
+    ({ document, expectedBoundaries }) => {
+      const units = segmentNormalizedDocument({
+        document,
+        ids: sequentialUnitIds(),
+      });
+      const predicted = lexicalBoundaryOrders(document, units);
 
-    expect(metrics).toMatchObject({ pk: 0, windowDiff: 0 });
-    expect(metrics.precision).toBeGreaterThanOrEqual(0.75);
-    expect(metrics.recall).toBeGreaterThanOrEqual(0.8);
-    expect(metrics.f1).toBeGreaterThanOrEqual(0.75);
+      expect(
+        evaluateBoundaries(
+          expectedBoundaries,
+          predicted,
+          document.blocks.length,
+        ),
+      ).toEqual({
+        precision: 1,
+        recall: 1,
+        f1: 1,
+        pk: 0,
+        windowDiff: 0,
+      });
+    },
+  );
+
+  it("distinguishes Pk from WindowDiff when a prediction adds a boundary", () => {
+    expect(evaluateBoundaries([4], [3, 4], 8)).toEqual({
+      precision: 0.5,
+      recall: 1,
+      f1: 2 / 3,
+      pk: 1 / 6,
+      windowDiff: 2 / 6,
+    });
+  });
+
+  it.each([
+    { expected: [0], predicted: [], blockCount: 4 },
+    { expected: [2, 2], predicted: [], blockCount: 4 },
+    { expected: [], predicted: [4], blockCount: 4 },
+    { expected: [], predicted: [], blockCount: 0 },
+  ])("rejects malformed boundary fixture %#", (fixture) => {
+    expect(() =>
+      evaluateBoundaries(
+        fixture.expected,
+        fixture.predicted,
+        fixture.blockCount,
+      ),
+    ).toThrow(RangeError);
   });
 });
 

@@ -123,6 +123,8 @@ export function evaluateBoundaries(
   predicted: readonly number[],
   blockCount: number,
 ): BoundaryMetrics {
+  assertValidBoundaryFixture(expected, blockCount, "expected");
+  assertValidBoundaryFixture(predicted, blockCount, "predicted");
   const expectedSet = new Set(expected);
   const predictedSet = new Set(predicted);
   const truePositive = predicted.filter((value) => expectedSet.has(value)).length;
@@ -164,6 +166,29 @@ export function evaluateBoundaries(
     pk: comparisons === 0 ? 0 : pkErrors / comparisons,
     windowDiff: comparisons === 0 ? 0 : windowDiffErrors / comparisons,
   };
+}
+
+function assertValidBoundaryFixture(
+  boundaries: readonly number[],
+  blockCount: number,
+  label: "expected" | "predicted",
+): void {
+  if (!Number.isInteger(blockCount) || blockCount < 1) {
+    throw new RangeError("blockCount must be a positive integer");
+  }
+  let previous = 0;
+  for (const boundary of boundaries) {
+    if (
+      !Number.isInteger(boundary) ||
+      boundary <= previous ||
+      boundary >= blockCount
+    ) {
+      throw new RangeError(
+        `${label} boundaries must be strictly increasing integers within the document`,
+      );
+    }
+    previous = boundary;
+  }
 }
 
 function boundarySegmentLengths(
