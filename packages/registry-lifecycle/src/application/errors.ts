@@ -5,3 +5,11 @@ export class PublicationNotFoundError extends Error {
     this.name = "PublicationNotFoundError";
   }
 }
+
+/** Thrown when an operator decision names a Card or version that does not exist. */
+export class CardNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CardNotFoundError";
+  }
+}

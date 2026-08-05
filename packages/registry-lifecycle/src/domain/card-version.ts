@@ -69,6 +69,17 @@ export function promoteCardVersion(
   return { ...history, currentVersionId: target.id };
 }
 
+/**
+ * Clears the current pointer so the Card stops serving. The version history is
+ * left intact: withdrawing is a pointer move, not a deletion, so the trail of
+ * what was once current stays auditable and can be promoted again later.
+ */
+export function withdrawCurrentVersion(
+  history: CardVersionHistory,
+): CardVersionHistory {
+  return { ...history, currentVersionId: undefined };
+}
+
 export function getCurrentCardVersion(
   history: CardVersionHistory,
 ): CardVersion | undefined {

@@ -11,6 +11,7 @@ export {
   createCardVersionHistory,
   getCurrentCardVersion,
   promoteCardVersion,
+  withdrawCurrentVersion,
   type CardId,
   type CardValidationState,
   type CardVersion,
@@ -46,6 +47,8 @@ export {
   type CardImpactAssessedEvent,
   type CardVersionAddedEvent,
   type CardVersionPromotedEvent,
+  type CardVersionRefusedEvent,
+  type CardWithdrawnEvent,
   type LifecycleEvent,
   type LifecycleEventId,
 } from "./domain/lifecycle-event.js";
@@ -60,7 +63,17 @@ export {
   type AssessPublicationImpactPorts,
   type PublicationImpactAssessment,
 } from "./application/assess-publication-impact.js";
-export { PublicationNotFoundError } from "./application/errors.js";
+export {
+  approveCardVersion,
+  disableCard,
+  rejectCardVersion,
+  type CardDecisionPorts,
+  type OperatorDecision,
+} from "./application/approve-card-version.js";
+export {
+  CardNotFoundError,
+  PublicationNotFoundError,
+} from "./application/errors.js";
 export type {
   CardMeaningGenerator,
   CardMeaningRequest,

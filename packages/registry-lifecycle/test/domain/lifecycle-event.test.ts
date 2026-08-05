@@ -22,6 +22,8 @@ const promoted: LifecycleEvent = {
   occurredAt: "2026-08-03T00:00:01.000Z",
   versionId: "cv_1",
   previousVersionId: undefined,
+  decidedBy: "operator@example.test",
+  note: undefined,
 };
 
 const otherCard: LifecycleEvent = {
