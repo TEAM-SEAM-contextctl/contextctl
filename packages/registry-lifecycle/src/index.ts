@@ -18,6 +18,10 @@ export {
   type CardVersionHistory,
   type CardVersionId,
 } from "./domain/card-version.js";
+export {
+  toCardCatalogEntry,
+  type CardCatalogEntry,
+} from "./domain/card-catalog.js";
 export { CardVersionInvariantError } from "./domain/errors.js";
 export type { CardLineage } from "./domain/lineage.js";
 export {

@@ -1,11 +1,16 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import type { CardCatalogEntry } from "../../domain/card-catalog.js";
 import type {
   CardId,
   CardValidationState,
   CardVersion,
 } from "../../domain/card-version.js";
-import type { ContextCard } from "../../domain/context-card.js";
+import type {
+  CardMeaning,
+  CardPolicy,
+  ContextCard,
+} from "../../domain/context-card.js";
 import type { LifecycleEvent } from "../../domain/lifecycle-event.js";
 import type { RetrievalScope } from "../../domain/retrieval-scope.js";
 import type { CardStore } from "../../ports/card-store.js";
@@ -44,19 +49,8 @@ export class SqliteCardStore implements CardStore {
 
     return {
       id: storedCardId,
-      meaning: {
-        description: readText(card, "description"),
-        representativeQuestions: readJson<readonly string[]>(
-          card,
-          "representative_questions",
-        ),
-        aliases: readJson<readonly string[]>(card, "aliases"),
-        keywords: readJson<readonly string[]>(card, "keywords"),
-      },
-      policy: {
-        sensitive: readInteger(card, "sensitive") === 1,
-        allowedUsage: readJson<readonly string[]>(card, "allowed_usage"),
-      },
+      meaning: readMeaning(card),
+      policy: readPolicy(card),
       versions: {
         cardId: storedCardId,
         versions: versions.map(toCardVersion),
@@ -74,6 +68,30 @@ export class SqliteCardStore implements CardStore {
       )
       .all() as SqlRow[];
     return rows.map(toCardVersion);
+  }
+
+  async listApprovedCards(): Promise<readonly CardCatalogEntry[]> {
+    // One join, not one query per Card: the join to current_version_id both
+    // pulls the meaning alongside the scopes and drops unapproved Cards.
+    const rows = this.#database
+      .prepare(
+        `SELECT
+           c.card_id, c.description, c.representative_questions, c.aliases,
+           c.keywords, c.sensitive, c.allowed_usage,
+           v.version_id, v.scopes
+         FROM cards c
+         JOIN card_versions v ON v.version_id = c.current_version_id
+         ORDER BY v.append_order`,
+      )
+      .all() as SqlRow[];
+
+    return rows.map((row) => ({
+      cardId: readText(row, "card_id"),
+      versionId: readText(row, "version_id"),
+      meaning: readMeaning(row),
+      policy: readPolicy(row),
+      scopes: readJson<readonly RetrievalScope[]>(row, "scopes"),
+    }));
   }
 
   async saveCard(
@@ -135,6 +153,25 @@ export class SqliteCardStore implements CardStore {
       appendLifecycleEvents(this.#database, events);
     });
   }
+}
+
+function readMeaning(row: SqlRow): CardMeaning {
+  return {
+    description: readText(row, "description"),
+    representativeQuestions: readJson<readonly string[]>(
+      row,
+      "representative_questions",
+    ),
+    aliases: readJson<readonly string[]>(row, "aliases"),
+    keywords: readJson<readonly string[]>(row, "keywords"),
+  };
+}
+
+function readPolicy(row: SqlRow): CardPolicy {
+  return {
+    sensitive: readInteger(row, "sensitive") === 1,
+    allowedUsage: readJson<readonly string[]>(row, "allowed_usage"),
+  };
 }
 
 function toCardVersion(row: SqlRow): CardVersion {

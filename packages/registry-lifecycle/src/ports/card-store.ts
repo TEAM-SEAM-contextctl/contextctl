@@ -1,3 +1,4 @@
+import type { CardCatalogEntry } from "../domain/card-catalog.js";
 import type { CardId, CardVersion } from "../domain/card-version.js";
 import type { ContextCard } from "../domain/context-card.js";
 import type { LifecycleEvent } from "../domain/lifecycle-event.js";
@@ -16,6 +17,16 @@ export interface CardStore {
 
   /** Current version of every Card that has one, for impact assessment. */
   listCurrentVersions(): Promise<readonly CardVersion[]>;
+
+  /**
+   * The approved Card catalog, with meaning, policy, and scopes all inline.
+   *
+   * Returning them together is the point: a caller that had to fetch meaning
+   * per Card would issue one query per Card, and the catalog is read on every
+   * query. Cards with no current version are absent, so a withdrawn Card stops
+   * being served without any extra filtering by the caller.
+   */
+  listApprovedCards(): Promise<readonly CardCatalogEntry[]>;
 
   /**
    * Writes the Card, any version it gained, and the given events as one unit.
