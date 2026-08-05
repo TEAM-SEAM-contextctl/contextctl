@@ -660,6 +660,10 @@ export function validateManagedChunks(
   );
   const chunkById = new Map<string, ManagedChunk>();
   const ordinalsByUnit = new Map<string, number[]>();
+  const chunksByUnit = new Map<
+    string,
+    Array<{ readonly chunk: ManagedChunk; readonly index: number }>
+  >();
   const slicesByBlock = new Map<string, Array<{ start: number; end: number }>>();
 
   chunks.forEach((chunk, index) => {
@@ -735,6 +739,9 @@ export function validateManagedChunks(
     const ordinals = ordinalsByUnit.get(chunk.semanticUnitId) ?? [];
     ordinals.push(chunk.ordinal);
     ordinalsByUnit.set(chunk.semanticUnitId, ordinals);
+    const unitChunks = chunksByUnit.get(chunk.semanticUnitId) ?? [];
+    unitChunks.push({ chunk, index });
+    chunksByUnit.set(chunk.semanticUnitId, unitChunks);
 
     if (!Number.isInteger(chunk.tokenCount) || chunk.tokenCount <= 0) {
       issues.push(
@@ -811,9 +818,6 @@ export function validateManagedChunks(
           ),
         );
       }
-      const ranges = slicesByBlock.get(slice.blockId) ?? [];
-      ranges.push({ start: slice.startOffset, end: slice.endOffset });
-      slicesByBlock.set(slice.blockId, ranges);
       if (
         !Number.isInteger(slice.startOffset) ||
         !Number.isInteger(slice.endOffset) ||
@@ -830,20 +834,10 @@ export function validateManagedChunks(
         );
         return;
       }
+      const ranges = slicesByBlock.get(slice.blockId) ?? [];
+      ranges.push({ start: slice.startOffset, end: slice.endOffset });
+      slicesByBlock.set(slice.blockId, ranges);
       const previousSlice = chunk.sourceSlices[sliceIndex - 1];
-      if (
-        previousSlice !== undefined &&
-        previousSlice.blockId === slice.blockId &&
-        previousSlice.endOffset > slice.startOffset
-      ) {
-        issues.push(
-          issue(
-            "invalid_order",
-            slicePath,
-            "source slices from the same block must be ordered and non-overlapping",
-          ),
-        );
-      }
       if (previousSlice !== undefined) {
         const previousBlock = blockById.get(previousSlice.blockId);
         if (
@@ -949,15 +943,17 @@ export function validateManagedChunks(
   }
 
   for (const unit of units) {
-    const unitChunks = chunks
-      .filter((chunk) => chunk.semanticUnitId === unit.id)
-      .sort((left, right) => left.ordinal - right.ordinal);
+    const unitChunks = [...(chunksByUnit.get(unit.id) ?? [])].sort(
+      (left, right) => left.chunk.ordinal - right.chunk.ordinal,
+    );
     for (let index = 1; index < unitChunks.length; index += 1) {
-      const previous = unitChunks[index - 1];
-      const current = unitChunks[index];
-      if (previous === undefined || current === undefined) {
+      const previousEntry = unitChunks[index - 1];
+      const currentEntry = unitChunks[index];
+      if (previousEntry === undefined || currentEntry === undefined) {
         continue;
       }
+      const previous = previousEntry.chunk;
+      const current = currentEntry.chunk;
       const overlapTokens = measureChunkOverlap(
         previous,
         current,
@@ -968,7 +964,7 @@ export function validateManagedChunks(
         issues.push(
           issue(
             "invalid_value",
-            `chunks[${chunks.indexOf(current)}].sourceSlices`,
+            `chunks[${currentEntry.index}].sourceSlices`,
             "adjacent chunk overlap must not exceed the active policy",
           ),
         );
