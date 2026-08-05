@@ -1,3 +1,10 @@
+import { createHash } from "node:crypto";
+
+import {
+  DEFAULT_DOCUMENT_INDEXING_POLICY,
+  measureText,
+  type DocumentIndexingPolicySet,
+} from "./document-indexing-policy.js";
 import {
   assertNoModelIssues,
   isDigest,
@@ -643,6 +650,7 @@ export function validateManagedChunks(
   document: NormalizedDocument,
   units: readonly DocumentSemanticUnit[],
   chunks: readonly ManagedChunk[],
+  policy: DocumentIndexingPolicySet = DEFAULT_DOCUMENT_INDEXING_POLICY,
 ): readonly ModelValidationIssue[] {
   const issues: ModelValidationIssue[] = [];
   const blockById = new Map(document.blocks.map((block) => [block.id, block]));
@@ -652,6 +660,7 @@ export function validateManagedChunks(
   );
   const chunkById = new Map<string, ManagedChunk>();
   const ordinalsByUnit = new Map<string, number[]>();
+  const slicesByBlock = new Map<string, Array<{ start: number; end: number }>>();
 
   chunks.forEach((chunk, index) => {
     const path = `chunks[${index}]`;
@@ -663,6 +672,24 @@ export function validateManagedChunks(
       `${path}.textMeasureProfileVersion`,
       issues,
     );
+    if (chunk.textMeasureProfileVersion !== policy.textMeasureProfile.version) {
+      issues.push(
+        issue(
+          "relationship_mismatch",
+          `${path}.textMeasureProfileVersion`,
+          "chunk text measurement profile must match the active policy",
+        ),
+      );
+    }
+    if (chunk.chunkPolicyVersion !== policy.chunk.version) {
+      issues.push(
+        issue(
+          "relationship_mismatch",
+          `${path}.chunkPolicyVersion`,
+          "chunk policy version must match the active policy",
+        ),
+      );
+    }
     validateNonEmpty(
       chunk.chunkPolicyVersion,
       `${path}.chunkPolicyVersion`,
@@ -718,6 +745,37 @@ export function validateManagedChunks(
         ),
       );
     }
+    const measuredTokens = measureText(chunk.text, policy.textMeasureProfile);
+    if (chunk.tokenCount !== measuredTokens) {
+      issues.push(
+        issue(
+          "count_mismatch",
+          `${path}.tokenCount`,
+          "chunk token count must match the active text measurement profile",
+        ),
+      );
+    }
+    if (measuredTokens > policy.chunk.maxChunkTokens) {
+      issues.push(
+        issue(
+          "invalid_value",
+          `${path}.tokenCount`,
+          "chunk token count must not exceed the active maximum",
+        ),
+      );
+    }
+    const expectedDigest = `sha256:${createHash("sha256")
+      .update(chunk.text, "utf8")
+      .digest("hex")}`;
+    if (chunk.contentDigest !== expectedDigest) {
+      issues.push(
+        issue(
+          "invalid_digest",
+          `${path}.contentDigest`,
+          "chunk content digest must match its canonical text",
+        ),
+      );
+    }
     if (chunk.sourceSlices.length === 0) {
       issues.push(
         issue(
@@ -753,6 +811,9 @@ export function validateManagedChunks(
           ),
         );
       }
+      const ranges = slicesByBlock.get(slice.blockId) ?? [];
+      ranges.push({ start: slice.startOffset, end: slice.endOffset });
+      slicesByBlock.set(slice.blockId, ranges);
       if (
         !Number.isInteger(slice.startOffset) ||
         !Number.isInteger(slice.endOffset) ||
@@ -782,6 +843,23 @@ export function validateManagedChunks(
             "source slices from the same block must be ordered and non-overlapping",
           ),
         );
+      }
+      if (previousSlice !== undefined) {
+        const previousBlock = blockById.get(previousSlice.blockId);
+        if (
+          previousBlock !== undefined &&
+          (previousBlock.order > block.order ||
+            (previousBlock.order === block.order &&
+              previousSlice.endOffset > slice.startOffset))
+        ) {
+          issues.push(
+            issue(
+              "invalid_order",
+              slicePath,
+              "source slices must follow document and Block offset order",
+            ),
+          );
+        }
       }
       if (sliceIndex === 0 && slice.separatorBefore !== "") {
         issues.push(
@@ -823,7 +901,15 @@ export function validateManagedChunks(
   }
 
   for (const unit of units) {
-    if (unit.blockIds.length > 0 && !ordinalsByUnit.has(unit.id)) {
+    const hasSearchableBlock = unit.blockIds.some((blockId) => {
+      const block = blockById.get(blockId);
+      return (
+        block !== undefined &&
+        block.text.length > 0 &&
+        measureText(block.text, policy.textMeasureProfile) > 0
+      );
+    });
+    if (hasSearchableBlock && !ordinalsByUnit.has(unit.id)) {
       issues.push(
         issue(
           "missing_reference",
@@ -831,6 +917,62 @@ export function validateManagedChunks(
           `unit ${unit.id} owns blocks but has no managed chunk`,
         ),
       );
+    }
+  }
+
+  for (const block of document.blocks) {
+    if (
+      block.text.length === 0 ||
+      measureText(block.text, policy.textMeasureProfile) === 0
+    ) {
+      continue;
+    }
+    const ranges = [...(slicesByBlock.get(block.id) ?? [])].sort(
+      (left, right) => left.start - right.start || left.end - right.end,
+    );
+    let coveredUntil = 0;
+    for (const range of ranges) {
+      if (range.start > coveredUntil) {
+        break;
+      }
+      coveredUntil = Math.max(coveredUntil, range.end);
+    }
+    if (coveredUntil !== block.text.length) {
+      issues.push(
+        issue(
+          "missing_reference",
+          "chunks",
+          `searchable block ${block.id} is not fully covered by managed chunks`,
+        ),
+      );
+    }
+  }
+
+  for (const unit of units) {
+    const unitChunks = chunks
+      .filter((chunk) => chunk.semanticUnitId === unit.id)
+      .sort((left, right) => left.ordinal - right.ordinal);
+    for (let index = 1; index < unitChunks.length; index += 1) {
+      const previous = unitChunks[index - 1];
+      const current = unitChunks[index];
+      if (previous === undefined || current === undefined) {
+        continue;
+      }
+      const overlapTokens = measureChunkOverlap(
+        previous,
+        current,
+        blockById,
+        policy,
+      );
+      if (overlapTokens > policy.chunk.overlapTokens) {
+        issues.push(
+          issue(
+            "invalid_value",
+            `chunks[${chunks.indexOf(current)}].sourceSlices`,
+            "adjacent chunk overlap must not exceed the active policy",
+          ),
+        );
+      }
     }
   }
 
@@ -861,11 +1003,38 @@ export function assertValidManagedChunks(
   document: NormalizedDocument,
   units: readonly DocumentSemanticUnit[],
   chunks: readonly ManagedChunk[],
+  policy: DocumentIndexingPolicySet = DEFAULT_DOCUMENT_INDEXING_POLICY,
 ): void {
   assertNoModelIssues(
     "ManagedChunk",
-    validateManagedChunks(document, units, chunks),
+    validateManagedChunks(document, units, chunks, policy),
   );
+}
+
+function measureChunkOverlap(
+  previous: ManagedChunk,
+  current: ManagedChunk,
+  blockById: ReadonlyMap<string, DocumentBlock>,
+  policy: DocumentIndexingPolicySet,
+): number {
+  let tokens = 0;
+  for (const left of previous.sourceSlices) {
+    for (const right of current.sourceSlices) {
+      if (left.blockId !== right.blockId) {
+        continue;
+      }
+      const start = Math.max(left.startOffset, right.startOffset);
+      const end = Math.min(left.endOffset, right.endOffset);
+      const block = blockById.get(left.blockId);
+      if (block !== undefined && start < end) {
+        tokens += measureText(
+          block.text.slice(start, end),
+          policy.textMeasureProfile,
+        );
+      }
+    }
+  }
+  return tokens;
 }
 
 function validateIdentity(

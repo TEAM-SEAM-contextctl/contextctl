@@ -27,7 +27,16 @@ export {
   type CandidateSourceCoverage,
 } from "./domain/document-capture.js";
 export {
+  generateManagedChunks,
+  ManagedChunkGenerationError,
+  type GenerateManagedChunksInput,
+  type ManagedChunkGenerationErrorCode,
+  type ManagedChunkIdSource,
+} from "./domain/managed-chunk-generation.js";
+export {
+  type ChunkSourceSlice,
   type DocumentSemanticUnit,
+  type ManagedChunk,
   type SegmentationDiagnostic,
   type SemanticBoundary,
   type BlockStructure,
