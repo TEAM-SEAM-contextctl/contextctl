@@ -4,6 +4,10 @@ import type {
   NormalizedDocument,
 } from "./document-model.js";
 import {
+  validateEmbeddingProfile,
+  type EmbeddingProfile,
+} from "./embedding-profile.js";
+import {
   assertNoModelIssues,
   isDigest,
   isId,
@@ -12,14 +16,6 @@ import {
   issue,
   type ModelValidationIssue,
 } from "./model-validation.js";
-
-/** Reproducibility contract for vectors written under one index version. */
-export interface EmbeddingProfile {
-  readonly id: string;
-  readonly version: string;
-  readonly dimensions: number;
-  readonly distance: "cosine" | "dot" | "euclid";
-}
 
 /**
  * Immutable receipt for a completely published document index. It pins every
@@ -121,22 +117,16 @@ export function validateIndexManifest(
     "textMeasureProfileVersion",
     issues,
   );
-  validateNonEmpty(manifest.embeddingProfile.id, "embeddingProfile.id", issues);
-  validateNonEmpty(
-    manifest.embeddingProfile.version,
-    "embeddingProfile.version",
-    issues,
-  );
-
+  issues.push(...validateEmbeddingProfile(manifest.embeddingProfile));
   if (
-    !Number.isInteger(manifest.embeddingProfile.dimensions) ||
-    manifest.embeddingProfile.dimensions <= 0
+    manifest.embeddingProfile.textMeasureProfileVersion !==
+    manifest.textMeasureProfileVersion
   ) {
     issues.push(
       issue(
-        "invalid_value",
-        "embeddingProfile.dimensions",
-        "embedding dimensions must be a positive integer",
+        "relationship_mismatch",
+        "embeddingProfile.textMeasureProfileVersion",
+        "embedding and manifest text measure profiles must match",
       ),
     );
   }
@@ -216,6 +206,15 @@ export function validateIndexManifest(
           "relationship_mismatch",
           `chunks[${index}]`,
           "chunk policy and text measure versions must match the manifest",
+        ),
+      );
+    }
+    if (chunk.tokenCount > manifest.embeddingProfile.maxInputTokens) {
+      issues.push(
+        issue(
+          "invalid_value",
+          `chunks[${index}].tokenCount`,
+          "chunk exceeds the embedding profile input limit",
         ),
       );
     }

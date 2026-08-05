@@ -34,6 +34,25 @@ export {
   type ManagedChunkIdSource,
 } from "./domain/managed-chunk-generation.js";
 export {
+  EmbeddingPipeline,
+  EmbeddingPipelineError,
+  DEFAULT_EMBEDDING_PIPELINE_POLICY,
+  type ChunkEmbedding,
+  type EmbeddingPipelineDependencies,
+  type EmbeddingPipelineErrorCode,
+  type EmbeddingPipelinePolicy,
+  type EmbedManagedChunksCommand,
+  type EmbedManagedChunksResult,
+  type ReusableChunkEmbedding,
+} from "./application/embed-managed-chunks.js";
+export {
+  assertValidEmbeddingProfile,
+  embeddingProfilesMatch,
+  validateEmbeddingProfile,
+  type EmbeddingDistance,
+  type EmbeddingProfile,
+} from "./domain/embedding-profile.js";
+export {
   type ChunkSourceSlice,
   type DocumentSemanticUnit,
   type ManagedChunk,
@@ -100,6 +119,13 @@ export {
   MarkdownFileSourceAdapter,
   type MarkdownFileSourceAdapterOptions,
 } from "./infrastructure/markdown-file-source-adapter.js";
+export {
+  DeterministicEmbeddingAdapter,
+} from "./infrastructure/deterministic-embedding-adapter.js";
+export {
+  OpenAiCompatibleEmbeddingAdapter,
+  type OpenAiCompatibleEmbeddingAdapterOptions,
+} from "./infrastructure/openai-compatible-embedding-adapter.js";
 export { RemarkMarkdownParser } from "./infrastructure/remark-markdown-parser.js";
 export {
   SourceAdapterRegistry,
@@ -122,6 +148,14 @@ export {
   type MarkdownDocumentParser,
   type MarkdownSourceSnapshot,
 } from "./ports/document-capture.js";
+export {
+  EmbeddingProviderFault,
+  type EmbeddingPort,
+  type EmbeddingProviderFaultCode,
+  type EmbeddingProviderInput,
+  type EmbeddingProviderOutput,
+  type EmbeddingProviderRequest,
+} from "./ports/embedding.js";
 export {
   SourceAdapterFault,
   type CredentialResolver,
