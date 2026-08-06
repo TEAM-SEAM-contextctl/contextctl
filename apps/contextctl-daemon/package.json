@@ -9,5 +9,9 @@
       "import": "./dist/main.js"
     }
   },
-  "files": ["dist"]
+  "files": ["dist"],
+  "dependencies": {
+    "@contextctl/registry-lifecycle": "0.0.0",
+    "@contextctl/selection-delivery": "0.0.0"
+  }
 }
