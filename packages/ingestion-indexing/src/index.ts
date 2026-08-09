@@ -123,9 +123,16 @@ export {
   DeterministicEmbeddingAdapter,
 } from "./infrastructure/deterministic-embedding-adapter.js";
 export {
+  InMemoryVectorIndexAdapter,
+} from "./infrastructure/in-memory-vector-index-adapter.js";
+export {
   OpenAiCompatibleEmbeddingAdapter,
   type OpenAiCompatibleEmbeddingAdapterOptions,
 } from "./infrastructure/openai-compatible-embedding-adapter.js";
+export {
+  QdrantVectorIndexAdapter,
+  type QdrantVectorIndexAdapterOptions,
+} from "./infrastructure/qdrant-vector-index-adapter.js";
 export { RemarkMarkdownParser } from "./infrastructure/remark-markdown-parser.js";
 export {
   SourceAdapterRegistry,
@@ -156,6 +163,24 @@ export {
   type EmbeddingProviderOutput,
   type EmbeddingProviderRequest,
 } from "./ports/embedding.js";
+export {
+  MAX_VECTOR_SEARCH_LIMIT,
+  VectorIndexFault,
+  type PreparedVectorIndex,
+  type VectorIndexCompatibility,
+  type VectorIndexFaultCode,
+  type VectorIndexPort,
+  type VectorIndexRetentionLease,
+  type VectorIndexScope,
+  type VectorIndexSearchHit,
+} from "./ports/vector-index.js";
+export {
+  createVectorRecordId,
+} from "./domain/vector-index.js";
+export type {
+  VectorIndexRecord,
+  VectorIndexRecordMetadata,
+} from "./domain/index-manifest.js";
 export {
   SourceAdapterFault,
   type CredentialResolver,
