@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export function revisionIdentity(
-  prefix: "crv" | "urv",
+  prefix: "crv" | "urv" | "vrec",
   value: unknown,
 ): string {
   const digest = createHash("sha256")
