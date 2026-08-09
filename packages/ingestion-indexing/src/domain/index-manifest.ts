@@ -16,6 +16,11 @@ import {
   issue,
   type ModelValidationIssue,
 } from "./model-validation.js";
+import {
+  canonicalDigest,
+  revisionIdentity,
+  stableIdentity,
+} from "./revision-identity.js";
 
 /**
  * Immutable receipt for a completely published document index. It pins every
@@ -79,6 +84,65 @@ export interface IndexManifestValidationInput {
   readonly manifest: IndexManifest;
 }
 
+export interface IndexVersionInput {
+  readonly document: NormalizedDocument;
+  readonly semanticUnits: readonly DocumentSemanticUnit[];
+  readonly chunks: readonly ManagedChunk[];
+  readonly embeddingProfile: EmbeddingProfile;
+  readonly segmentationPolicyVersion: string;
+  readonly chunkPolicyVersion: string;
+  readonly textMeasureProfileVersion: string;
+  readonly payloadSchemaVersion: 1;
+}
+
+/** Stable logical index identity for one Source document resource. */
+export function createDocumentIndexId(
+  sourceId: string,
+  documentId: string,
+): string {
+  return stableIdentity("didx", { sourceId, documentId });
+}
+
+/** Immutable build identity for one complete searchable document snapshot. */
+export function createIndexVersion(input: IndexVersionInput): string {
+  return revisionIdentity("idxv", {
+    sourceId: input.document.sourceId,
+    observationId: input.document.observationId,
+    documentId: input.document.documentId,
+    documentContentDigest: input.document.contentDigest,
+    documentSchemaVersion: input.document.schemaVersion,
+    parser: input.document.parser,
+    normalizationPolicyVersion: input.document.normalizationPolicyVersion,
+    lineagePolicyVersion: input.document.lineagePolicyVersion,
+    segmentationPolicyVersion: input.segmentationPolicyVersion,
+    chunkPolicyVersion: input.chunkPolicyVersion,
+    textMeasureProfileVersion: input.textMeasureProfileVersion,
+    embeddingProfile: input.embeddingProfile,
+    payloadSchemaVersion: input.payloadSchemaVersion,
+    semanticUnitRevisions: revisionEntries(
+      input.semanticUnits.map((unit) => [unit.id, unit.revisionId]),
+    ),
+    chunkRevisions: revisionEntries(
+      input.chunks.map((chunk) => [chunk.id, chunk.revisionId]),
+    ),
+  });
+}
+
+/** Canonical checksum required by the Index Manifest design contract. */
+export function computeRecordSetDigest(
+  records: readonly Pick<VectorIndexRecord, "chunkRevisionId" | "metadata">[],
+): string {
+  return canonicalDigest(
+    records
+      .map((record) => [
+        record.metadata.chunkId,
+        record.chunkRevisionId,
+        record.metadata.contentDigest,
+      ])
+      .sort(compareTriples),
+  );
+}
+
 /**
  * Verifies that a manifest describes exactly one normalized document snapshot
  * and the complete Unit and Chunk revision sets produced from it.
@@ -127,6 +191,21 @@ export function validateIndexManifest(
         "relationship_mismatch",
         "embeddingProfile.textMeasureProfileVersion",
         "embedding and manifest text measure profiles must match",
+      ),
+    );
+  }
+
+  const expectedRecordSetDigest = canonicalDigest(
+    chunks
+      .map((chunk) => [chunk.id, chunk.revisionId, chunk.contentDigest])
+      .sort(compareTriples),
+  );
+  if (manifest.recordSetDigest !== expectedRecordSetDigest) {
+    issues.push(
+      issue(
+        "relationship_mismatch",
+        "recordSetDigest",
+        "record set digest must match the canonical managed chunk set",
       ),
     );
   }
@@ -312,6 +391,15 @@ export function validateVectorIndexRecords(
       ),
     );
   }
+  if (computeRecordSetDigest(records) !== manifest.recordSetDigest) {
+    issues.push(
+      issue(
+        "relationship_mismatch",
+        "records",
+        "vector record checksum must match the manifest",
+      ),
+    );
+  }
 
   records.forEach((record, index) => {
     const path = `records[${index}]`;
@@ -400,6 +488,23 @@ export function validateVectorIndexRecords(
   }
 
   return issues;
+}
+
+function revisionEntries(
+  entries: readonly (readonly [string, string])[],
+): readonly (readonly [string, string])[] {
+  return [...entries].sort(([left], [right]) => left.localeCompare(right));
+}
+
+function compareTriples(
+  left: readonly string[],
+  right: readonly string[],
+): number {
+  return (
+    (left[0] ?? "").localeCompare(right[0] ?? "") ||
+    (left[1] ?? "").localeCompare(right[1] ?? "") ||
+    (left[2] ?? "").localeCompare(right[2] ?? "")
+  );
 }
 
 export function assertValidVectorIndexRecords(

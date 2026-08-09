@@ -134,6 +134,25 @@ describe("ingestion index manifest", () => {
     expect(codes).toContain("relationship_mismatch");
   });
 
+  it("rejects a manifest checksum that does not match its canonical chunk set", () => {
+    const issues = validateIndexManifest({
+      document: createDocumentFixture(),
+      semanticUnits: createSemanticUnitFixture(),
+      chunks: createManagedChunkFixture(),
+      manifest: {
+        ...createIndexManifestFixture(),
+        recordSetDigest: `sha256:${"f".repeat(64)}`,
+      },
+    });
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: "relationship_mismatch",
+        path: "recordSetDigest",
+      }),
+    );
+  });
+
   it("rejects an embedding profile incompatible with the manifest chunks", () => {
     const document = createDocumentFixture();
     const units = createSemanticUnitFixture();

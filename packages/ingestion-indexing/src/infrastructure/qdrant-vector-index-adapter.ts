@@ -16,6 +16,7 @@ import {
   assertValidVectorIndexScope,
   assertValidVectorRecordMetadata,
   assertValidVectorRecordBatch,
+  assertValidVectorVersion,
 } from "../domain/vector-index.js";
 import {
   MAX_VECTOR_SEARCH_LIMIT,
@@ -26,6 +27,7 @@ import {
   type VectorIndexRetentionLease,
   type VectorIndexScope,
   type VectorIndexSearchHit,
+  type VectorIndexStoredRecord,
 } from "../ports/vector-index.js";
 
 const REQUIRED_PAYLOAD_INDEXES = {
@@ -51,6 +53,7 @@ interface QdrantClientApi {
   createPayloadIndex(name: string, request: object): Promise<unknown>;
   upsert(name: string, request: object): Promise<unknown>;
   query(name: string, request: object): Promise<unknown>;
+  scroll(name: string, request: object): Promise<unknown>;
   count(name: string, request: object): Promise<unknown>;
   delete(name: string, request: object): Promise<unknown>;
 }
@@ -84,7 +87,7 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
   ): Promise<PreparedVectorIndex> {
     assertInput(() => assertCompatibility(compatibility));
     const collection = collectionName(compatibility);
-    const handle = `qdrant:v1:${collection}`;
+    const handle = `qdrant:v1:${compatibilityDigest(compatibility).slice(0, 32)}`;
     try {
       const existence = await this.#client.collectionExists(collection);
       if (!existence.exists) {
@@ -171,6 +174,52 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
         with_vector: false,
       });
       return parseSearchHits(result, input.scope);
+    } catch (error) {
+      throw translateQdrantFault(error);
+    }
+  }
+
+  async listVersionRecords(input: {
+    readonly accessHandle: string;
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+  }): Promise<readonly VectorIndexStoredRecord[]> {
+    const collection = parseAccessHandle(input.accessHandle);
+    assertInput(() => assertValidVectorVersion(input));
+    if (!this.#profiles.has(input.accessHandle)) {
+      throw new VectorIndexFault("index_unavailable", false);
+    }
+    const records: VectorIndexStoredRecord[] = [];
+    let offset: unknown;
+    const seenOffsets = new Set<string>();
+    try {
+      do {
+        const result = await this.#client.scroll(collection, {
+          filter: {
+            must: [
+              keyword("recordKind", "chunk"),
+              ...versionMust(input.documentIndexId, input.indexVersion),
+            ],
+          },
+          limit: 256,
+          ...(offset === undefined ? {} : { offset }),
+          with_payload: true,
+          with_vector: false,
+        });
+        const page = parseScrollPage(result, input);
+        records.push(...page.records);
+        offset = page.nextOffset;
+        if (offset !== undefined) {
+          const key = JSON.stringify(offset);
+          if (seenOffsets.has(key)) {
+            throw new VectorIndexFault("storage_unavailable", false);
+          }
+          seenOffsets.add(key);
+        }
+      } while (offset !== undefined);
+      return records.sort((left, right) =>
+        left.recordId.localeCompare(right.recordId),
+      );
     } catch (error) {
       throw translateQdrantFault(error);
     }
@@ -294,11 +343,11 @@ function compatibilityDigest(compatibility: VectorIndexCompatibility): string {
 }
 
 function parseAccessHandle(accessHandle: string): string {
-  const match = /^qdrant:v1:(contextctl_[a-f0-9]{32})$/.exec(accessHandle);
+  const match = /^qdrant:v1:([a-f0-9]{32})$/.exec(accessHandle);
   if (match?.[1] === undefined) {
     throw new VectorIndexFault("invalid_request", false);
   }
-  return match[1];
+  return `contextctl_${match[1]}`;
 }
 
 function assertSafeEndpoint(value: string): void {
@@ -447,6 +496,45 @@ function parseSearchHits(result: unknown, scope: VectorIndexScope): VectorIndexS
       metadata,
     };
   });
+}
+
+function parseScrollPage(
+  result: unknown,
+  version: { readonly documentIndexId: string; readonly indexVersion: string },
+): {
+  readonly records: readonly VectorIndexStoredRecord[];
+  readonly nextOffset: unknown;
+} {
+  if (!isRecord(result) || !Array.isArray(result.points)) {
+    throw new VectorIndexFault("storage_unavailable", false);
+  }
+  const records = result.points.map((point) => {
+    if (!isRecord(point) || !isRecord(point.payload)) {
+      throw new VectorIndexFault("storage_unavailable", false);
+    }
+    const payload = point.payload;
+    const metadata = parseMetadata(payload);
+    const recordId = requiredString(payload.recordId);
+    if (
+      payload.recordKind !== "chunk" ||
+      metadata.documentIndexId !== version.documentIndexId ||
+      metadata.indexVersion !== version.indexVersion ||
+      recordId !==
+        createVectorRecordId(
+          metadata.documentIndexId,
+          metadata.indexVersion,
+          metadata.chunkRevisionId,
+        )
+    ) {
+      throw new VectorIndexFault("storage_unavailable", false);
+    }
+    return { recordId, metadata };
+  });
+  const nextOffset = result.next_page_offset;
+  return {
+    records,
+    nextOffset: nextOffset === null ? undefined : nextOffset,
+  };
 }
 
 function parseMetadata(payload: Record<string, unknown>): VectorIndexRecordMetadata {
