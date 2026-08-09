@@ -32,6 +32,11 @@ export interface VectorIndexSearchHit {
   readonly metadata: VectorIndexRecordMetadata;
 }
 
+export interface VectorIndexStoredRecord {
+  readonly recordId: string;
+  readonly metadata: VectorIndexRecordMetadata;
+}
+
 export interface VectorIndexRetentionLease {
   readonly leaseId: string;
   readonly documentIndexId: string;
@@ -47,6 +52,11 @@ export interface VectorIndexPort {
     readonly embeddingProfile: EmbeddingProfile;
     readonly records: readonly VectorIndexRecord[];
   }): Promise<void>;
+  listVersionRecords(input: {
+    readonly accessHandle: string;
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+  }): Promise<readonly VectorIndexStoredRecord[]>;
   search(input: {
     readonly accessHandle: string;
     readonly scope: VectorIndexScope;

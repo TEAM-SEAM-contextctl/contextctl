@@ -46,6 +46,20 @@ export {
   type ReusableChunkEmbedding,
 } from "./application/embed-managed-chunks.js";
 export {
+  DocumentIndexPublisher,
+  DocumentIndexPublicationError,
+  type DocumentIndexPublisherDependencies,
+  type DocumentIndexPublicationErrorCode,
+  type PublishDocumentIndexCommand,
+} from "./application/publish-document-index.js";
+export {
+  createPublishedDocumentScopes,
+  PublishedDocumentScopeError,
+  type CreatePublishedDocumentScopesInput,
+  type PublishedDocumentScopeErrorCode,
+  type SemanticPublishedScopeInput,
+} from "./application/published-document-scope.js";
+export {
   assertValidEmbeddingProfile,
   embeddingProfilesMatch,
   validateEmbeddingProfile,
@@ -126,6 +140,9 @@ export {
   InMemoryVectorIndexAdapter,
 } from "./infrastructure/in-memory-vector-index-adapter.js";
 export {
+  InMemoryIndexPublicationStore,
+} from "./infrastructure/in-memory-index-publication-store.js";
+export {
   OpenAiCompatibleEmbeddingAdapter,
   type OpenAiCompatibleEmbeddingAdapterOptions,
 } from "./infrastructure/openai-compatible-embedding-adapter.js";
@@ -173,14 +190,26 @@ export {
   type VectorIndexRetentionLease,
   type VectorIndexScope,
   type VectorIndexSearchHit,
+  type VectorIndexStoredRecord,
 } from "./ports/vector-index.js";
 export {
   createVectorRecordId,
 } from "./domain/vector-index.js";
-export type {
-  VectorIndexRecord,
-  VectorIndexRecordMetadata,
+export {
+  computeRecordSetDigest,
+  createDocumentIndexId,
+  createIndexVersion,
+  type IndexManifest,
+  type ScopeRevision,
+  type VectorIndexRecord,
+  type VectorIndexRecordMetadata,
 } from "./domain/index-manifest.js";
+export {
+  IndexPublicationStoreConflict,
+  type CommitIndexPublicationResult,
+  type IndexPublicationStore,
+  type PublishedIndexVersion,
+} from "./ports/index-publication-store.js";
 export {
   SourceAdapterFault,
   type CredentialResolver,

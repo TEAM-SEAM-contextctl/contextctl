@@ -1,0 +1,38 @@
+[
+  {
+    "scopeId": "scope_payments_document",
+    "scopeVersion": "scpv_aaaa",
+    "kind": "managed_document",
+    "documentIndex": {
+      "documentIndexId": "didx_payments",
+      "sourceId": "src_payments",
+      "documentId": "doc_payments",
+      "indexVersion": "idxv_aaaa",
+      "connectorId": "vector.main",
+      "accessHandle": "opaque-index-handle-01"
+    },
+    "selector": {
+      "kind": "document"
+    }
+  },
+  {
+    "scopeId": "scope_payment_failures",
+    "scopeVersion": "scpv_bbbb",
+    "kind": "managed_document",
+    "documentIndex": {
+      "documentIndexId": "didx_payments",
+      "sourceId": "src_payments",
+      "documentId": "doc_payments",
+      "indexVersion": "idxv_aaaa",
+      "connectorId": "vector.main",
+      "accessHandle": "opaque-index-handle-01"
+    },
+    "selector": {
+      "kind": "semantic_units",
+      "semanticUnitIds": [
+        "unit_payment_failures",
+        "unit_payment_retries"
+      ]
+    }
+  }
+]

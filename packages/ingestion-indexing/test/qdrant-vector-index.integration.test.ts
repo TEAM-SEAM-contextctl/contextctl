@@ -60,6 +60,18 @@ integration("QdrantVectorIndexAdapter integration", () => {
     });
     expect(paymentsOnly).toHaveLength(1);
     expect(paymentsOnly[0]?.metadata.documentId).toBe("doc_payments");
+    expect(
+      await adapter.listVersionRecords({
+        accessHandle: prepared.accessHandle,
+        documentIndexId: "didx_payments",
+        indexVersion: "idxv_aaaa",
+      }),
+    ).toEqual([
+      {
+        recordId: payments.recordId,
+        metadata: payments.metadata,
+      },
+    ]);
 
     await adapter.retainVersion({
       accessHandle: prepared.accessHandle,

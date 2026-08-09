@@ -4,6 +4,7 @@ import {
   assertValidVectorDeletion,
   assertValidVectorIndexScope,
   assertValidVectorRecordBatch,
+  assertValidVectorVersion,
 } from "../domain/vector-index.js";
 import type { EmbeddingProfile } from "../domain/embedding-profile.js";
 import { assertValidEmbeddingProfile } from "../domain/embedding-profile.js";
@@ -17,6 +18,7 @@ import {
   type VectorIndexRetentionLease,
   type VectorIndexScope,
   type VectorIndexSearchHit,
+  type VectorIndexStoredRecord,
 } from "../ports/vector-index.js";
 import { createHash } from "node:crypto";
 
@@ -80,6 +82,25 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
       }))
       .sort((left, right) => right.score - left.score || left.recordId.localeCompare(right.recordId))
       .slice(0, input.limit);
+  }
+
+  async listVersionRecords(input: {
+    readonly accessHandle: string;
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+  }): Promise<readonly VectorIndexStoredRecord[]> {
+    assertInput(() => assertValidVectorVersion(input));
+    return [...this.#requiredCollection(input.accessHandle).records.values()]
+      .filter(
+        (record) =>
+          record.metadata.documentIndexId === input.documentIndexId &&
+          record.metadata.indexVersion === input.indexVersion,
+      )
+      .map((record) => ({
+        recordId: record.recordId,
+        metadata: structuredClone(record.metadata),
+      }))
+      .sort((left, right) => left.recordId.localeCompare(right.recordId));
   }
 
   async retainVersion(input: {

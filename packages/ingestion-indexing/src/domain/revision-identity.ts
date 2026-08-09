@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export function revisionIdentity(
-  prefix: "crv" | "urv" | "vrec",
+  prefix: "crv" | "idxv" | "scpv" | "urv" | "vrec",
   value: unknown,
 ): string {
   const digest = createHash("sha256")
@@ -10,7 +10,23 @@ export function revisionIdentity(
   return `${prefix}_${toBase32(digest)}`;
 }
 
-function canonicalJson(value: unknown): string {
+export function stableIdentity(
+  prefix: "didx" | "scope",
+  value: unknown,
+): string {
+  const digest = createHash("sha256")
+    .update(canonicalJson(value), "utf8")
+    .digest();
+  return `${prefix}_${toBase32(digest)}`;
+}
+
+export function canonicalDigest(value: unknown): string {
+  return `sha256:${createHash("sha256")
+    .update(canonicalJson(value), "utf8")
+    .digest("hex")}`;
+}
+
+export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(canonicalJson).join(",")}]`;
   }

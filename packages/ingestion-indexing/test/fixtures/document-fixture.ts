@@ -4,9 +4,10 @@ import type {
   NormalizedDocument,
 } from "../../src/domain/document-model.js";
 import { sha256Digest } from "../../src/domain/document-capture.js";
-import type {
-  IndexManifest,
-  VectorIndexRecord,
+import {
+  computeRecordSetDigest,
+  type IndexManifest,
+  type VectorIndexRecord,
 } from "../../src/domain/index-manifest.js";
 
 const heading = "Payment failures";
@@ -173,7 +174,7 @@ export function createIndexManifestFixture(): IndexManifest {
       chk_payment_failures: "crv_aaaa",
     },
     recordCount: 1,
-    recordSetDigest: digestA,
+    recordSetDigest: computeRecordSetDigest(createVectorRecordFixture()),
     scopeRevisions: [
       { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
     ],

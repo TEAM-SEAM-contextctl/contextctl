@@ -201,7 +201,8 @@ describe("Qdrant vector index adapter", () => {
         "payloadSchemaVersion",
       ]),
     );
-    expect(prepared.accessHandle).toMatch(/^qdrant:v1:contextctl_[a-f0-9]{32}$/);
+    expect(prepared.accessHandle).toMatch(/^qdrant:v1:[a-f0-9]{32}$/);
+    expect(prepared.accessHandle).not.toContain("contextctl_");
   });
 
   it("translates records and exact Scope filters without leaking core IDs into point IDs", async () => {
@@ -238,6 +239,40 @@ describe("Qdrant vector index adapter", () => {
           key: "semanticUnitId",
           match: { any: ["unit_refunds", "unit_shipping"] },
         },
+      ],
+    });
+  });
+
+  it("reads staged version metadata through the exact version filter", async () => {
+    const client = new FakeQdrantClient();
+    const adapter = qdrant(client);
+    const prepared = await adapter.prepare(compatibility);
+    const value = record("payments", "aaaa", "refunds", [1, 0, 0]);
+    client.scrollResult = {
+      points: [
+        {
+          payload: {
+            recordKind: "chunk",
+            recordId: value.recordId,
+            ...value.metadata,
+          },
+        },
+      ],
+      next_page_offset: null,
+    };
+
+    expect(
+      await adapter.listVersionRecords({
+        accessHandle: prepared.accessHandle,
+        documentIndexId: "didx_payments",
+        indexVersion: "idxv_aaaa",
+      }),
+    ).toEqual([{ recordId: value.recordId, metadata: value.metadata }]);
+    expect(client.lastFilter).toEqual({
+      must: [
+        { key: "recordKind", match: { value: "chunk" } },
+        { key: "documentIndexId", match: { value: "didx_payments" } },
+        { key: "indexVersion", match: { value: "idxv_aaaa" } },
       ],
     });
   });
@@ -409,6 +444,7 @@ class FakeQdrantClient {
   lastCountRequest: unknown;
   activeLeaseCount = 0;
   queryResult: unknown = { points: [] };
+  scrollResult: unknown = { points: [], next_page_offset: null };
 
   async collectionExists() {
     this.raise();
@@ -454,6 +490,12 @@ class FakeQdrantClient {
     this.raise();
     this.lastFilter = (request as { filter: unknown }).filter;
     return this.queryResult;
+  }
+
+  async scroll(_name: string, request: object) {
+    this.raise();
+    this.lastFilter = (request as { filter: unknown }).filter;
+    return this.scrollResult;
   }
 
   async count(_name: string, request: object) {
