@@ -88,6 +88,10 @@ export type { ConsumerCheckpointStore } from "./ports/consumer-checkpoint-store.
 export type { IdGenerator } from "./ports/id-generator.js";
 export type { LifecycleEventStore } from "./ports/lifecycle-event-store.js";
 export type { PublicationRepository } from "./ports/publication-repository.js";
+export {
+  runOperatorCommand,
+  type OperatorCommandResult,
+} from "./infrastructure/cli/operator-command.js";
 export { openRegistryDatabase } from "./infrastructure/sqlite/registry-database.js";
 export { SqliteCardStore } from "./infrastructure/sqlite/sqlite-card-store.js";
 export { SqliteConsumerCheckpointStore } from "./infrastructure/sqlite/sqlite-consumer-checkpoint-store.js";
