@@ -92,6 +92,7 @@ export {
   runOperatorCommand,
   type OperatorCommandResult,
 } from "./infrastructure/cli/operator-command.js";
+export { DeterministicCardMeaningGenerator } from "./infrastructure/deterministic-card-meaning-generator.js";
 export { openRegistryDatabase } from "./infrastructure/sqlite/registry-database.js";
 export { SqliteCardStore } from "./infrastructure/sqlite/sqlite-card-store.js";
 export { SqliteConsumerCheckpointStore } from "./infrastructure/sqlite/sqlite-consumer-checkpoint-store.js";
