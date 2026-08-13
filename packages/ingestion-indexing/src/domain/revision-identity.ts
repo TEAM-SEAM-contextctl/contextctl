@@ -11,7 +11,7 @@ export function revisionIdentity(
 }
 
 export function stableIdentity(
-  prefix: "didx" | "scope",
+  prefix: "blk" | "chk" | "didx" | "doc" | "obs" | "pub" | "scope" | "unit",
   value: unknown,
 ): string {
   const digest = createHash("sha256")
