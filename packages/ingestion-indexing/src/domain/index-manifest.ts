@@ -41,7 +41,7 @@ export interface IndexManifest {
   readonly chunkPolicyVersion: string;
   readonly textMeasureProfileVersion: string;
   readonly embeddingProfile: EmbeddingProfile;
-  readonly payloadSchemaVersion: 1;
+  readonly payloadSchemaVersion: 2;
   readonly semanticUnitRevisions: Readonly<Record<string, string>>;
   readonly chunkRevisions: Readonly<Record<string, string>>;
   readonly recordCount: number;
@@ -61,11 +61,12 @@ export interface VectorIndexRecord {
   readonly recordId: string;
   readonly chunkRevisionId: string;
   readonly embedding: readonly number[];
+  readonly retrievalText: string;
   readonly metadata: VectorIndexRecordMetadata;
 }
 
 export interface VectorIndexRecordMetadata {
-  readonly payloadSchemaVersion: 1;
+  readonly payloadSchemaVersion: 2;
   readonly sourceId: string;
   readonly observationId: string;
   readonly documentId: string;
@@ -92,7 +93,7 @@ export interface IndexVersionInput {
   readonly segmentationPolicyVersion: string;
   readonly chunkPolicyVersion: string;
   readonly textMeasureProfileVersion: string;
-  readonly payloadSchemaVersion: 1;
+  readonly payloadSchemaVersion: 2;
 }
 
 /** Stable logical index identity for one Source document resource. */
@@ -138,8 +139,9 @@ export function computeRecordSetDigest(
         record.metadata.chunkId,
         record.chunkRevisionId,
         record.metadata.contentDigest,
+        String(record.metadata.payloadSchemaVersion),
       ])
-      .sort(compareTriples),
+      .sort(compareRecordTuples),
   );
 }
 
@@ -182,6 +184,15 @@ export function validateIndexManifest(
     issues,
   );
   issues.push(...validateEmbeddingProfile(manifest.embeddingProfile));
+  if (manifest.payloadSchemaVersion !== 2) {
+    issues.push(
+      issue(
+        "invalid_value",
+        "payloadSchemaVersion",
+        "document index requires payload schema version 2",
+      ),
+    );
+  }
   if (
     manifest.embeddingProfile.textMeasureProfileVersion !==
     manifest.textMeasureProfileVersion
@@ -197,8 +208,13 @@ export function validateIndexManifest(
 
   const expectedRecordSetDigest = canonicalDigest(
     chunks
-      .map((chunk) => [chunk.id, chunk.revisionId, chunk.contentDigest])
-      .sort(compareTriples),
+      .map((chunk) => [
+        chunk.id,
+        chunk.revisionId,
+        chunk.contentDigest,
+        String(manifest.payloadSchemaVersion),
+      ])
+      .sort(compareRecordTuples),
   );
   if (manifest.recordSetDigest !== expectedRecordSetDigest) {
     issues.push(
@@ -454,6 +470,7 @@ export function validateVectorIndexRecords(
 
     const metadata = record.metadata;
     const matches =
+      metadata.payloadSchemaVersion === manifest.payloadSchemaVersion &&
       metadata.sourceId === manifest.sourceId &&
       metadata.observationId === manifest.observationId &&
       metadata.documentId === manifest.documentId &&
@@ -463,6 +480,7 @@ export function validateVectorIndexRecords(
       metadata.chunkId === chunk.id &&
       metadata.chunkRevisionId === chunk.revisionId &&
       metadata.contentDigest === chunk.contentDigest &&
+      record.retrievalText === chunk.text &&
       record.chunkRevisionId === metadata.chunkRevisionId;
     if (!matches) {
       issues.push(
@@ -496,7 +514,7 @@ function revisionEntries(
   return [...entries].sort(([left], [right]) => left.localeCompare(right));
 }
 
-function compareTriples(
+function compareRecordTuples(
   left: readonly string[],
   right: readonly string[],
 ): number {

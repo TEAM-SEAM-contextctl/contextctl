@@ -9,7 +9,7 @@ export const MAX_VECTOR_SEARCH_LIMIT = 1_000;
 export interface VectorIndexCompatibility {
   readonly securityDomain: string;
   readonly embeddingProfile: EmbeddingProfile;
-  readonly payloadSchemaVersion: 1;
+  readonly payloadSchemaVersion: 2;
 }
 
 export interface PreparedVectorIndex {
@@ -29,11 +29,13 @@ export interface VectorIndexScope {
 export interface VectorIndexSearchHit {
   readonly recordId: string;
   readonly score: number;
+  readonly retrievalText: string;
   readonly metadata: VectorIndexRecordMetadata;
 }
 
 export interface VectorIndexStoredRecord {
   readonly recordId: string;
+  readonly retrievalText: string;
   readonly metadata: VectorIndexRecordMetadata;
 }
 

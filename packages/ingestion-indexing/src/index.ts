@@ -53,6 +53,14 @@ export {
   type PublishDocumentIndexCommand,
 } from "./application/publish-document-index.js";
 export {
+  ManagedDocumentSearch,
+  ManagedDocumentSearchError,
+  type DocumentSearchHit,
+  type ManagedDocumentSearchCommand,
+  type ManagedDocumentSearchDependencies,
+  type ManagedDocumentSearchErrorCode,
+} from "./application/managed-document-search.js";
+export {
   createPublishedDocumentScopes,
   PublishedDocumentScopeError,
   type CreatePublishedDocumentScopesInput,

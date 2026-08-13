@@ -78,6 +78,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
           record.embedding,
           collection.compatibility.embeddingProfile.distance,
         ),
+        retrievalText: record.retrievalText,
         metadata: structuredClone(record.metadata),
       }))
       .sort((left, right) => right.score - left.score || left.recordId.localeCompare(right.recordId))
@@ -98,6 +99,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
       )
       .map((record) => ({
         recordId: record.recordId,
+        retrievalText: record.retrievalText,
         metadata: structuredClone(record.metadata),
       }))
       .sort((left, right) => left.recordId.localeCompare(right.recordId));
@@ -181,7 +183,7 @@ function compatibilityHandle(compatibility: VectorIndexCompatibility): string {
 
 function assertCompatibility(compatibility: VectorIndexCompatibility): void {
   assertValidEmbeddingProfile(compatibility.embeddingProfile);
-  if (compatibility.securityDomain.trim() === "" || compatibility.payloadSchemaVersion !== 1) {
+  if (compatibility.securityDomain.trim() === "" || compatibility.payloadSchemaVersion !== 2) {
     throw new VectorIndexFault("invalid_request", false);
   }
 }

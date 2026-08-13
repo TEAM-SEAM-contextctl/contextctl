@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   QdrantVectorIndexAdapter,
   createVectorRecordId,
+  sha256Digest,
   type EmbeddingProfile,
   type VectorIndexRecord,
 } from "../src/index.js";
@@ -26,7 +27,7 @@ integration("QdrantVectorIndexAdapter integration", () => {
     const prepared = await adapter.prepare({
       securityDomain: `integration-${String(Date.now())}`,
       embeddingProfile: profile,
-      payloadSchemaVersion: 1,
+      payloadSchemaVersion: 2,
     });
     const payments = record("payments", "aaaa", "refunds", [1, 0, 0]);
     const inventory = record("inventory", "bbbb", "stock", [1, 0, 0]);
@@ -142,12 +143,14 @@ function record(
   const documentIndexId = `didx_${document}`;
   const indexVersion = "idxv_aaaa";
   const chunkRevisionId = `crv_${revision}`;
+  const retrievalText = `${document}:${unit}:${revision}`;
   return {
     recordId: createVectorRecordId(documentIndexId, indexVersion, chunkRevisionId),
     chunkRevisionId,
     embedding,
+    retrievalText,
     metadata: {
-      payloadSchemaVersion: 1,
+      payloadSchemaVersion: 2,
       sourceId: `src_${document}`,
       observationId: `obs_${document}`,
       documentId: `doc_${document}`,
@@ -156,7 +159,7 @@ function record(
       semanticUnitId: `unit_${unit}`,
       chunkId: `chk_${revision}`,
       chunkRevisionId,
-      contentDigest: `sha256:${revision.padEnd(64, "a").slice(0, 64)}`,
+      contentDigest: sha256Digest(retrievalText),
     },
   };
 }

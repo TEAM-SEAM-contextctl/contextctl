@@ -165,7 +165,7 @@ export function createIndexManifestFixture(): IndexManifest {
       maxInputTokens: 480,
       textMeasureProfileVersion: "unicode-estimate-v1",
     },
-    payloadSchemaVersion: 1,
+    payloadSchemaVersion: 2,
     semanticUnitRevisions: {
       unit_payments: "urv_aaaa",
       unit_payment_failures: "urv_bbbb",
@@ -189,8 +189,9 @@ export function createVectorRecordFixture(): readonly VectorIndexRecord[] {
       recordId: "vrec_aaaa",
       chunkRevisionId: "crv_aaaa",
       embedding: [0.1, 0.2, 0.3],
+      retrievalText: chunkText,
       metadata: {
-        payloadSchemaVersion: 1,
+        payloadSchemaVersion: 2,
         sourceId: "src_payments",
         observationId: "obs_initial",
         documentId: "doc_payments",
