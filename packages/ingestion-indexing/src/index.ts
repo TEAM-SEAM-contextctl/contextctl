@@ -3,6 +3,19 @@ export {
   type CaptureMarkdownCommand,
 } from "./application/markdown-capture.js";
 export {
+  buildMarkdownPublication,
+  type BuildMarkdownPublicationInput,
+} from "./application/build-markdown-publication.js";
+export {
+  MarkdownPublicationWorkflow,
+  MarkdownPublicationWorkflowError,
+  type MarkdownPublicationDiagnostic,
+  type MarkdownPublicationWorkflowDependencies,
+  type MarkdownPublicationWorkflowErrorCode,
+  type PublishMarkdownSourceCommand,
+  type PublishMarkdownSourceResult,
+} from "./application/markdown-publication-workflow.js";
+export {
   SourceManagement,
   SourceManagementError,
   type RegisterSourceCommand,
@@ -151,6 +164,25 @@ export {
   InMemoryIndexPublicationStore,
 } from "./infrastructure/in-memory-index-publication-store.js";
 export {
+  InMemoryIngestionPublicationStore,
+  IngestionPublicationStoreConflict,
+} from "./infrastructure/in-memory-ingestion-publication-store.js";
+export {
+  InMemoryMarkdownPublicationCheckpointStore,
+  MarkdownPublicationCheckpointConflict,
+} from "./infrastructure/in-memory-markdown-publication-checkpoint-store.js";
+export {
+  InMemoryMarkdownPublicationEventSink,
+} from "./infrastructure/in-memory-markdown-publication-event-sink.js";
+export {
+  InMemoryPublicationReadyNotifier,
+} from "./infrastructure/in-memory-publication-ready-notifier.js";
+export {
+  createLocalMarkdownPublicationRuntime,
+  type LocalMarkdownPublicationRuntime,
+  type LocalMarkdownPublicationRuntimeOptions,
+} from "./infrastructure/local-markdown-publication-runtime.js";
+export {
   OpenAiCompatibleEmbeddingAdapter,
   type OpenAiCompatibleEmbeddingAdapterOptions,
 } from "./infrastructure/openai-compatible-embedding-adapter.js";
@@ -218,6 +250,18 @@ export {
   type IndexPublicationStore,
   type PublishedIndexVersion,
 } from "./ports/index-publication-store.js";
+export {
+  type CommitIngestionPublicationResult,
+  type IngestionPublicationStore,
+  type MarkdownPublicationCheckpoint,
+  type MarkdownPublicationCheckpointStore,
+  type MarkdownPublicationEventSink,
+  type MarkdownPublicationStage,
+  type MarkdownPublicationStageEvent,
+  type MarkdownPublicationStageStatus,
+  type PublicationReadyNotifier,
+  type RegisterMarkdownCheckpointResult,
+} from "./ports/markdown-publication.js";
 export {
   SourceAdapterFault,
   type CredentialResolver,
