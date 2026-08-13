@@ -284,6 +284,32 @@ describe("DocumentIndexPublisher", () => {
     expect(vectorIndex.upsertCalls).toBe(0);
   });
 
+  it("fails closed before upsert when staged retrieval text was changed", async () => {
+    const delegate = new InMemoryVectorIndexAdapter();
+    const vectorIndex = new RecordingVectorIndex(delegate);
+    const command = createCommand(1);
+    const staged = conflictingStoredRecord(command);
+    vectorIndex.reportedBeforeUpsert = [
+      {
+        ...staged,
+        retrievalText: "tampered staged text",
+        metadata: {
+          ...staged.metadata,
+          contentDigest: command.chunks[0]!.contentDigest,
+        },
+      },
+    ];
+    const publisher = new DocumentIndexPublisher({
+      vectorIndex,
+      publications: new InMemoryIndexPublicationStore(),
+    });
+
+    await expect(publisher.publish(command)).rejects.toMatchObject({
+      code: "conflicting_index_version",
+    });
+    expect(vectorIndex.upsertCalls).toBe(0);
+  });
+
   it("rejects semantic Scope Units outside the Manifest", async () => {
     const publisher = new DocumentIndexPublisher({
       vectorIndex: new InMemoryVectorIndexAdapter(),
@@ -398,7 +424,7 @@ function versionIdentity(command: PublishDocumentIndexCommand) {
         command.semanticUnits[0]!.segmentationPolicyVersion,
       chunkPolicyVersion: command.chunks[0]!.chunkPolicyVersion,
       textMeasureProfileVersion: command.chunks[0]!.textMeasureProfileVersion,
-      payloadSchemaVersion: 1,
+      payloadSchemaVersion: 2,
     }),
   };
 }
@@ -414,8 +440,9 @@ function conflictingStoredRecord(
       identity.indexVersion,
       chunk.revisionId,
     ),
+    retrievalText: chunk.text,
     metadata: {
-      payloadSchemaVersion: 1,
+      payloadSchemaVersion: 2,
       sourceId: command.document.sourceId,
       observationId: command.document.observationId,
       documentId: command.document.documentId,

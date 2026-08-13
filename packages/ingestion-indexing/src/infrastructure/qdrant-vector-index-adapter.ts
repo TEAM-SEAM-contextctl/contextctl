@@ -135,7 +135,12 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
         points: input.records.map((record) => ({
           id: qdrantPointId(record.recordId),
           vector: [...record.embedding],
-          payload: { recordKind: "chunk", recordId: record.recordId, ...record.metadata },
+          payload: {
+            recordKind: "chunk",
+            recordId: record.recordId,
+            retrievalText: record.retrievalText,
+            ...record.metadata,
+          },
         })),
       });
     } catch (error) {
@@ -471,6 +476,7 @@ function parseSearchHits(result: unknown, scope: VectorIndexScope): VectorIndexS
     }
     const payload = point.payload;
     const metadata = parseMetadata(payload);
+    const retrievalText = requiredString(payload.retrievalText);
     if (
       payload.recordKind !== "chunk" ||
       metadata.documentIndexId !== scope.documentIndexId ||
@@ -493,6 +499,7 @@ function parseSearchHits(result: unknown, scope: VectorIndexScope): VectorIndexS
     return {
       recordId,
       score: point.score,
+      retrievalText,
       metadata,
     };
   });
@@ -515,6 +522,7 @@ function parseScrollPage(
     const payload = point.payload;
     const metadata = parseMetadata(payload);
     const recordId = requiredString(payload.recordId);
+    const retrievalText = requiredString(payload.retrievalText);
     if (
       payload.recordKind !== "chunk" ||
       metadata.documentIndexId !== version.documentIndexId ||
@@ -528,7 +536,7 @@ function parseScrollPage(
     ) {
       throw new VectorIndexFault("storage_unavailable", false);
     }
-    return { recordId, metadata };
+    return { recordId, retrievalText, metadata };
   });
   const nextOffset = result.next_page_offset;
   return {
@@ -538,11 +546,11 @@ function parseScrollPage(
 }
 
 function parseMetadata(payload: Record<string, unknown>): VectorIndexRecordMetadata {
-  if (payload.payloadSchemaVersion !== 1) {
+  if (payload.payloadSchemaVersion !== 2) {
     throw new VectorIndexFault("storage_unavailable", false);
   }
   const metadata: VectorIndexRecordMetadata = {
-    payloadSchemaVersion: 1,
+    payloadSchemaVersion: 2,
     sourceId: requiredString(payload.sourceId),
     observationId: requiredString(payload.observationId),
     documentId: requiredString(payload.documentId),
@@ -606,7 +614,7 @@ function assertInput(assertion: () => void): void {
 
 function assertCompatibility(compatibility: VectorIndexCompatibility): void {
   assertValidEmbeddingProfile(compatibility.embeddingProfile);
-  if (compatibility.securityDomain.trim() === "" || compatibility.payloadSchemaVersion !== 1) {
+  if (compatibility.securityDomain.trim() === "" || compatibility.payloadSchemaVersion !== 2) {
     throw new TypeError("invalid vector index compatibility");
   }
 }

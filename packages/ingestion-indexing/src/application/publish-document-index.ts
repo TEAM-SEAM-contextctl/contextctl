@@ -106,7 +106,7 @@ export class DocumentIndexPublisher {
     const compatibility: VectorIndexCompatibility = {
       securityDomain: command.securityDomain,
       embeddingProfile: command.embeddingProfile,
-      payloadSchemaVersion: 1,
+      payloadSchemaVersion: 2,
     };
     const vectorTarget = await this.#vectorIndex.prepare(compatibility);
     const scopes = createPublishedDocumentScopes({
@@ -230,7 +230,7 @@ function preparePublication(
     segmentationPolicyVersion,
     chunkPolicyVersion,
     textMeasureProfileVersion,
-    payloadSchemaVersion: 1,
+    payloadSchemaVersion: 2,
   });
   const embeddingByRevision = new Map(
     command.embeddings.map((embedding) => [embedding.chunkRevisionId, embedding]),
@@ -252,8 +252,9 @@ function preparePublication(
       ),
       chunkRevisionId: chunk.revisionId,
       embedding: embedding.vector,
+      retrievalText: chunk.text,
       metadata: {
-        payloadSchemaVersion: 1,
+        payloadSchemaVersion: 2,
         sourceId: command.document.sourceId,
         observationId: command.document.observationId,
         documentId: command.document.documentId,
@@ -283,7 +284,7 @@ function preparePublication(
     chunkPolicyVersion,
     textMeasureProfileVersion,
     embeddingProfile: command.embeddingProfile,
-    payloadSchemaVersion: 1 as const,
+    payloadSchemaVersion: 2 as const,
     semanticUnitRevisions: sortedRevisionMap(
       command.semanticUnits.map((unit) => [unit.id, unit.revisionId]),
     ),
@@ -355,6 +356,7 @@ function assertCompatibleStaging(
     if (
       expected === undefined ||
       seen.has(record.recordId) ||
+      record.retrievalText !== expected.retrievalText ||
       canonicalJson(record.metadata) !== canonicalJson(expected.metadata)
     ) {
       throw new DocumentIndexPublicationError("conflicting_index_version");
@@ -379,6 +381,7 @@ function assertCompleteStaging(
     recordId: record.recordId,
     chunkRevisionId: record.metadata.chunkRevisionId,
     embedding: intendedById.get(record.recordId)!.embedding,
+    retrievalText: record.retrievalText,
     metadata: record.metadata,
   }));
   try {

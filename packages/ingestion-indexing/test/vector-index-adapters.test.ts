@@ -5,6 +5,7 @@ import {
   QdrantVectorIndexAdapter,
   VectorIndexFault,
   createVectorRecordId,
+  sha256Digest,
   type EmbeddingProfile,
   type VectorIndexPort,
   type VectorIndexRecord,
@@ -23,7 +24,7 @@ const profile: EmbeddingProfile = {
 const compatibility = {
   securityDomain: "test-tenant",
   embeddingProfile: profile,
-  payloadSchemaVersion: 1 as const,
+  payloadSchemaVersion: 2 as const,
 };
 
 describe("VectorIndexPort contract", () => {
@@ -215,7 +216,20 @@ describe("Qdrant vector index adapter", () => {
       embeddingProfile: profile,
       records: [value],
     });
-    await adapter.search({
+    client.queryResult = {
+      points: [
+        {
+          score: 0.75,
+          payload: {
+            recordKind: "chunk",
+            recordId: value.recordId,
+            retrievalText: value.retrievalText,
+            ...value.metadata,
+          },
+        },
+      ],
+    };
+    const hits = await adapter.search({
       accessHandle: prepared.accessHandle,
       scope: {
         documentIndexId: "didx_payments",
@@ -229,6 +243,19 @@ describe("Qdrant vector index adapter", () => {
 
     expect(client.lastPointId).toMatch(/^[a-f0-9-]{36}$/);
     expect(client.lastPointId).not.toContain(value.recordId);
+    expect(client.lastPayload).toMatchObject({
+      retrievalText: value.retrievalText,
+      contentDigest: value.metadata.contentDigest,
+      payloadSchemaVersion: 2,
+    });
+    expect(hits).toEqual([
+      {
+        recordId: value.recordId,
+        score: 0.75,
+        retrievalText: value.retrievalText,
+        metadata: value.metadata,
+      },
+    ]);
     expect(client.lastFilter).toEqual({
       must: [
         { key: "recordKind", match: { value: "chunk" } },
@@ -254,6 +281,7 @@ describe("Qdrant vector index adapter", () => {
           payload: {
             recordKind: "chunk",
             recordId: value.recordId,
+            retrievalText: value.retrievalText,
             ...value.metadata,
           },
         },
@@ -267,7 +295,13 @@ describe("Qdrant vector index adapter", () => {
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
       }),
-    ).toEqual([{ recordId: value.recordId, metadata: value.metadata }]);
+    ).toEqual([
+      {
+        recordId: value.recordId,
+        retrievalText: value.retrievalText,
+        metadata: value.metadata,
+      },
+    ]);
     expect(client.lastFilter).toEqual({
       must: [
         { key: "recordKind", match: { value: "chunk" } },
@@ -356,6 +390,7 @@ describe("Qdrant vector index adapter", () => {
             value.metadata.indexVersion,
             "crv_bbbb",
           ),
+          retrievalText: value.retrievalText,
           ...value.metadata,
         },
       }],
@@ -406,12 +441,14 @@ function record(
   const documentIndexId = `didx_${document}`;
   const indexVersion = "idxv_aaaa";
   const chunkRevisionId = `crv_${revision}`;
+  const retrievalText = `${document}:${unit}:${revision}`;
   return {
     recordId: createVectorRecordId(documentIndexId, indexVersion, chunkRevisionId),
     chunkRevisionId,
     embedding,
+    retrievalText,
     metadata: {
-      payloadSchemaVersion: 1,
+      payloadSchemaVersion: 2,
       sourceId: `src_${document}`,
       observationId: `obs_${document}`,
       documentId: `doc_${document}`,
@@ -420,7 +457,7 @@ function record(
       semanticUnitId: `unit_${unit}`,
       chunkId: `chk_${revision}`,
       chunkRevisionId,
-      contentDigest: `sha256:${revision.padEnd(64, "a").slice(0, 64)}`,
+      contentDigest: sha256Digest(retrievalText),
     },
   };
 }
@@ -440,6 +477,7 @@ class FakeQdrantClient {
   ignoreIndexCreation = false;
   failure: unknown;
   lastPointId: string | undefined;
+  lastPayload: unknown;
   lastFilter: unknown;
   lastCountRequest: unknown;
   activeLeaseCount = 0;
@@ -481,8 +519,10 @@ class FakeQdrantClient {
 
   async upsert(_name: string, request: object) {
     this.raise();
-    const point = (request as { points: { id: string }[] }).points[0];
+    const point = (request as { points: { id: string; payload: unknown }[] })
+      .points[0];
     this.lastPointId = point?.id;
+    this.lastPayload = point?.payload;
     return { status: "completed" };
   }
 

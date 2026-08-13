@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { EmbeddingProfile } from "./embedding-profile.js";
 import { assertValidEmbeddingProfile } from "./embedding-profile.js";
 import type { VectorIndexRecord } from "./index-manifest.js";
@@ -53,7 +55,9 @@ export function assertValidVectorRecordBatch(
       metadata.documentId !== first.metadata.documentId ||
       metadata.sourceId !== first.metadata.sourceId ||
       metadata.observationId !== first.metadata.observationId ||
-      metadata.payloadSchemaVersion !== 1 ||
+      metadata.payloadSchemaVersion !== 2 ||
+      record.retrievalText.length === 0 ||
+      metadata.contentDigest !== retrievalTextDigest(record.retrievalText) ||
       record.embedding.length !== profile.dimensions ||
       record.embedding.some((component) => !Number.isFinite(component)) ||
       seen.has(record.recordId)
@@ -68,7 +72,7 @@ export function assertValidVectorRecordMetadata(
   metadata: VectorIndexRecordMetadata,
 ): void {
   if (
-    metadata.payloadSchemaVersion !== 1 ||
+    metadata.payloadSchemaVersion !== 2 ||
     !isId(metadata.sourceId, "src") ||
     !isId(metadata.observationId, "obs") ||
     !isId(metadata.documentId, "doc") ||
@@ -81,6 +85,10 @@ export function assertValidVectorRecordMetadata(
   ) {
     throw new TypeError("invalid vector record metadata");
   }
+}
+
+function retrievalTextDigest(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 export function assertValidVectorIndexScope(input: {
