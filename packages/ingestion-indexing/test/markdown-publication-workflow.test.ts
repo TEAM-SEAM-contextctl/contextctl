@@ -41,6 +41,8 @@ describe("MarkdownPublicationWorkflow", () => {
         "source.fixture": { path: STRUCTURE_FIXTURE },
       },
       embeddingProfile: profile,
+      connectorId: "vector.local",
+      allowedSecurityDomains: ["tenant-a"],
       embeddingProvider: embeddings,
       clock: () => NOW,
     });
@@ -127,6 +129,8 @@ describe("MarkdownPublicationWorkflow", () => {
         "source.fixture": { path: STRUCTURE_FIXTURE },
       },
       embeddingProfile: profile,
+      connectorId: "vector.local",
+      allowedSecurityDomains: ["tenant-a"],
       embeddingProvider: embeddings,
       clock: () => NOW,
     });
@@ -180,6 +184,8 @@ describe("MarkdownPublicationWorkflow", () => {
         "source.unsupported": { path: UNSUPPORTED_FIXTURE },
       },
       embeddingProfile: profile,
+      connectorId: "vector.local",
+      allowedSecurityDomains: ["tenant-a"],
       clock: () => NOW,
     });
 
@@ -216,6 +222,8 @@ describe("MarkdownPublicationWorkflow", () => {
         "source.fixture": { path: STRUCTURE_FIXTURE },
       },
       embeddingProfile: profile,
+      connectorId: "vector.local",
+      allowedSecurityDomains: ["tenant-a"],
       readyNotifier: notifier,
       clock: () => NOW,
     });

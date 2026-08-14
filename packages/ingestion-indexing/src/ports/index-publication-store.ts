@@ -1,18 +1,6 @@
-import type {
-  PublishedDocumentIndexRef,
-  PublishedDocumentScope,
-} from "@contextctl/contracts";
+import type { PublishedIndexVersion } from "../domain/published-index-version.js";
 
-import type { IndexManifest } from "../domain/index-manifest.js";
-
-/** Immutable metadata made visible by one successful atomic current transition. */
-export interface PublishedIndexVersion {
-  readonly manifest: IndexManifest;
-  /** Internal isolation key; never serialized into a Published Scope. */
-  readonly securityDomain: string;
-  readonly documentIndex: PublishedDocumentIndexRef;
-  readonly scopes: readonly PublishedDocumentScope[];
-}
+export type { PublishedIndexVersion } from "../domain/published-index-version.js";
 
 export interface CommitIndexPublicationResult {
   readonly status: "already_published" | "published";
@@ -35,5 +23,20 @@ export class IndexPublicationStoreConflict extends Error {
   constructor() {
     super("Index publication store rejected conflicting immutable content");
     this.name = "IndexPublicationStoreConflict";
+  }
+}
+
+export type IndexCatalogFaultCode =
+  | "catalog_unavailable"
+  | "corrupt_record"
+  | "schema_unsupported";
+
+export class IndexCatalogFault extends Error {
+  constructor(
+    readonly code: IndexCatalogFaultCode,
+    readonly retriable: boolean,
+  ) {
+    super(`Index catalog operation failed: ${code}`);
+    this.name = "IndexCatalogFault";
   }
 }

@@ -68,11 +68,20 @@ export {
 export {
   ManagedDocumentSearch,
   ManagedDocumentSearchError,
+  type BatchManagedDocumentSearchCommand,
+  type BatchManagedDocumentSearchItem,
+  type BatchManagedDocumentSearchTarget,
   type DocumentSearchHit,
   type ManagedDocumentSearchCommand,
   type ManagedDocumentSearchDependencies,
   type ManagedDocumentSearchErrorCode,
+  type ManagedDocumentSearchFailure,
 } from "./application/managed-document-search.js";
+export {
+  PublicationReadyReconciler,
+  type PublicationReadyReconciliationItem,
+  type ReconcilePublicationReadyDependencies,
+} from "./application/reconcile-publication-ready.js";
 export {
   createPublishedDocumentScopes,
   PublishedDocumentScopeError,
@@ -165,11 +174,9 @@ export {
 } from "./infrastructure/in-memory-index-publication-store.js";
 export {
   InMemoryIngestionPublicationStore,
-  IngestionPublicationStoreConflict,
 } from "./infrastructure/in-memory-ingestion-publication-store.js";
 export {
   InMemoryMarkdownPublicationCheckpointStore,
-  MarkdownPublicationCheckpointConflict,
 } from "./infrastructure/in-memory-markdown-publication-checkpoint-store.js";
 export {
   InMemoryMarkdownPublicationEventSink,
@@ -177,6 +184,27 @@ export {
 export {
   InMemoryPublicationReadyNotifier,
 } from "./infrastructure/in-memory-publication-ready-notifier.js";
+export {
+  openIngestionDatabase,
+} from "./infrastructure/sqlite-ingestion-database.js";
+export {
+  SqliteIndexPublicationStore,
+} from "./infrastructure/sqlite-index-publication-store.js";
+export {
+  IngestionPublicationStoreCorrupt,
+  IngestionPublicationStoreUnavailable,
+  SqliteIngestionPublicationStore,
+} from "./infrastructure/sqlite-ingestion-publication-store.js";
+export {
+  MarkdownPublicationCheckpointStoreUnavailable,
+  SqliteMarkdownPublicationCheckpointStore,
+} from "./infrastructure/sqlite-markdown-publication-checkpoint-store.js";
+export {
+  StaticQueryEmbeddingProviderRegistry,
+  StaticVectorIndexConnectorRegistry,
+  type QueryEmbeddingProviderRegistration,
+  type VectorIndexConnectorRegistration,
+} from "./infrastructure/static-managed-search-registries.js";
 export {
   createLocalMarkdownPublicationRuntime,
   type LocalMarkdownPublicationRuntime,
@@ -198,6 +226,10 @@ export {
   UuidV7BlockIdSource,
   type UuidV7BlockIdSourceOptions,
 } from "./infrastructure/uuid-v7-block-id-source.js";
+export {
+  UuidSourceIdGenerator,
+  type UuidSourceIdGeneratorOptions,
+} from "./infrastructure/uuid-source-id-generator.js";
 export {
   type KnowledgeSource,
   type ObservationCapability,
@@ -224,6 +256,7 @@ export {
   MAX_VECTOR_SEARCH_LIMIT,
   VectorIndexFault,
   type PreparedVectorIndex,
+  type RehydratedVectorIndex,
   type VectorIndexCompatibility,
   type VectorIndexFaultCode,
   type VectorIndexPort,
@@ -245,12 +278,16 @@ export {
   type VectorIndexRecordMetadata,
 } from "./domain/index-manifest.js";
 export {
+  IndexCatalogFault,
   IndexPublicationStoreConflict,
+  type IndexCatalogFaultCode,
   type CommitIndexPublicationResult,
   type IndexPublicationStore,
   type PublishedIndexVersion,
 } from "./ports/index-publication-store.js";
 export {
+  IngestionPublicationStoreConflict,
+  MarkdownPublicationCheckpointConflict,
   type CommitIngestionPublicationResult,
   type IngestionPublicationStore,
   type MarkdownPublicationCheckpoint,
@@ -262,6 +299,11 @@ export {
   type PublicationReadyNotifier,
   type RegisterMarkdownCheckpointResult,
 } from "./ports/markdown-publication.js";
+export {
+  type QueryEmbeddingProviderBinding,
+  type QueryEmbeddingProviderResolver,
+  type VectorIndexConnectorResolver,
+} from "./ports/managed-document-search.js";
 export {
   SourceAdapterFault,
   type CredentialResolver,

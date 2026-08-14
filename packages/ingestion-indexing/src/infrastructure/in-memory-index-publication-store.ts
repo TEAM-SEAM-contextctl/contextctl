@@ -1,4 +1,7 @@
-import { canonicalJson } from "../domain/revision-identity.js";
+import {
+  parsePublishedIndexVersion,
+  publishedIndexVersionFingerprint,
+} from "../domain/published-index-version.js";
 import {
   IndexPublicationStoreConflict,
   type CommitIndexPublicationResult,
@@ -29,11 +32,21 @@ export class InMemoryIndexPublicationStore implements IndexPublicationStore {
   async commitCurrent(
     publication: PublishedIndexVersion,
   ): Promise<CommitIndexPublicationResult> {
-    assertConsistentPublication(publication);
-    const key = versionKey(publication.manifest);
+    let validated: PublishedIndexVersion;
+    try {
+      validated = parsePublishedIndexVersion(
+        JSON.parse(JSON.stringify(publication)) as unknown,
+      );
+    } catch {
+      throw new IndexPublicationStoreConflict();
+    }
+    const key = versionKey(validated.manifest);
     const existing = this.#versions.get(key);
     if (existing !== undefined) {
-      if (publicationFingerprint(existing) !== publicationFingerprint(publication)) {
+      if (
+        publishedIndexVersionFingerprint(existing) !==
+        publishedIndexVersionFingerprint(validated)
+      ) {
         throw new IndexPublicationStoreConflict();
       }
       return {
@@ -42,7 +55,7 @@ export class InMemoryIndexPublicationStore implements IndexPublicationStore {
       };
     }
 
-    const stored = structuredClone(publication);
+    const stored = structuredClone(validated);
     this.#versions.set(key, stored);
     this.#current.set(
       stored.manifest.documentIndexId,
@@ -50,37 +63,6 @@ export class InMemoryIndexPublicationStore implements IndexPublicationStore {
     );
     return { status: "published", publication: structuredClone(stored) };
   }
-}
-
-function assertConsistentPublication(publication: PublishedIndexVersion): void {
-  const { manifest, documentIndex, scopes } = publication;
-  if (
-    publication.securityDomain.trim() === "" ||
-    documentIndex.documentIndexId !== manifest.documentIndexId ||
-    documentIndex.sourceId !== manifest.sourceId ||
-    documentIndex.documentId !== manifest.documentId ||
-    documentIndex.indexVersion !== manifest.indexVersion ||
-    scopes.length === 0 ||
-    scopes.some(
-      (scope) =>
-        canonicalJson(scope.documentIndex) !== canonicalJson(documentIndex),
-    ) ||
-    canonicalJson(
-      scopes.map(({ scopeId, scopeVersion }) => ({ scopeId, scopeVersion })),
-    ) !== canonicalJson(manifest.scopeRevisions)
-  ) {
-    throw new IndexPublicationStoreConflict();
-  }
-}
-
-function publicationFingerprint(publication: PublishedIndexVersion): string {
-  const { publishedAt: _publishedAt, ...manifest } = publication.manifest;
-  return canonicalJson({
-    manifest,
-    securityDomain: publication.securityDomain,
-    documentIndex: publication.documentIndex,
-    scopes: publication.scopes,
-  });
 }
 
 function versionKey(input: {

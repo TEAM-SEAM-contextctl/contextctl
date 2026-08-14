@@ -1,0 +1,749 @@
+import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { DatabaseSync } from "node:sqlite";
+
+import type {
+  PublicationReady,
+  PublishedDocumentIndexRef,
+  PublishedDocumentScope,
+} from "@contextctl/contracts";
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  DeterministicEmbeddingAdapter,
+  InMemoryIndexPublicationStore,
+  InMemoryPublicationReadyNotifier,
+  InMemoryVectorIndexAdapter,
+  IndexCatalogFault,
+  ManagedDocumentSearch,
+  PublicationReadyReconciler,
+  SqliteIndexPublicationStore,
+  SqliteIngestionPublicationStore,
+  SqliteMarkdownPublicationCheckpointStore,
+  StaticQueryEmbeddingProviderRegistry,
+  StaticVectorIndexConnectorRegistry,
+  UuidSourceIdGenerator,
+  createLocalMarkdownPublicationRuntime,
+  openIngestionDatabase,
+  type EmbeddingPort,
+  type EmbeddingProviderRequest,
+  type IndexPublicationStore,
+  type PublicationReadyNotifier,
+  type PublishedIndexVersion,
+  type PublishMarkdownSourceCommand,
+  type VectorIndexPort,
+} from "../src/index.js";
+import { createIndexManifestFixture } from "./fixtures/document-fixture.js";
+
+const STRUCTURE_FIXTURE = fileURLToPath(
+  new URL("./fixtures/markdown/structure.md", import.meta.url),
+);
+const NOW = "2026-08-14T00:00:00.000Z";
+const profile = {
+  id: "durable-index-test",
+  version: "1.0.0",
+  model: "durable-index-test-v1",
+  dimensions: 8,
+  distance: "cosine" as const,
+  maxInputTokens: 480,
+  textMeasureProfileVersion: "unicode-estimate-v1",
+};
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+describe("durable Index control plane", () => {
+  it("generates collision-resistant Source IDs for durable compositions", () => {
+    const generator = new UuidSourceIdGenerator({
+      randomUuid: () => "01890f5c-7b1a-7cc3-8a2f-123456789abc",
+    });
+
+    expect(generator.nextSourceId()).toBe(
+      "src_01890f5c-7b1a-7cc3-8a2f-123456789abc",
+    );
+    expect(
+      () =>
+        new UuidSourceIdGenerator({ randomUuid: () => "not-a-uuid" })
+          .nextSourceId(),
+    ).toThrow(TypeError);
+  });
+
+  it.each(["memory", "sqlite"] as const)(
+    "preserves immutable versions and an idempotent current pointer in %s",
+    async (adapter) => {
+      const database =
+        adapter === "sqlite" ? openIngestionDatabase(":memory:") : undefined;
+      const store: IndexPublicationStore =
+        database === undefined
+          ? new InMemoryIndexPublicationStore()
+          : new SqliteIndexPublicationStore(database);
+      const initial = publishedVersion("aaaa", NOW);
+      const latest = publishedVersion("bbbb", "2026-08-14T01:00:00.000Z");
+
+      expect(await store.commitCurrent(initial)).toMatchObject({
+        status: "published",
+      });
+      expect(await store.commitCurrent(initial)).toMatchObject({
+        status: "already_published",
+      });
+      expect(await store.commitCurrent(latest)).toMatchObject({
+        status: "published",
+      });
+      expect(
+        await store.findVersion({
+          documentIndexId: initial.manifest.documentIndexId,
+          indexVersion: initial.manifest.indexVersion,
+        }),
+      ).toEqual(initial);
+      expect(await store.current(initial.manifest.documentIndexId)).toEqual(
+        latest,
+      );
+      await expect(
+        store.commitCurrent({ ...initial, securityDomain: "" }),
+      ).rejects.toMatchObject({ name: "IndexPublicationStoreConflict" });
+      database?.close();
+    },
+  );
+
+  it("recreates the Markdown composition and searches the same durable version and Scope", async () => {
+    const fixture = await createTemporaryFixture();
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+    );
+    const embeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const firstDatabase = openIngestionDatabase(fixture.databasePath);
+    const first = createDurableRuntime(
+      fixture.markdownPath,
+      firstDatabase,
+      vectorIndex,
+      embeddings,
+    );
+
+    const published = await first.workflow.publish(command());
+    const publication = requiredValue(published.publication);
+    const retryUnit = publication.knowledgeUnits.find((unit) =>
+      unit.evidence.some(
+        (fact) => fact.name === "title" && fact.value === "재시도",
+      ),
+    );
+    const scope = requiredManagedScope(retryUnit?.publishedScopes[0]);
+    const callsAfterPublish = embeddings.requests.length;
+    firstDatabase.close();
+
+    const secondDatabase = openIngestionDatabase(fixture.databasePath);
+    const second = createDurableRuntime(
+      fixture.markdownPath,
+      secondDatabase,
+      vectorIndex,
+      embeddings,
+    );
+    const repeated = await second.workflow.publish(command());
+    const hits = await second.search.search({
+      queryText: "결제 재시도 절차",
+      securityDomain: "tenant-a",
+      scope,
+      limit: 5,
+    });
+
+    expect(repeated.status).toBe("unchanged");
+    expect(repeated.publication?.publicationId).toBe(publication.publicationId);
+    expect(hits.some((hit) => hit.text.includes("재시도"))).toBe(true);
+    expect(embeddings.requests).toHaveLength(callsAfterPublish + 1);
+    expect(vectorIndex.rehydrateCalls).toBe(1);
+    expect(
+      await second.indexPublications.findVersion({
+        documentIndexId: scope.documentIndex.documentIndexId,
+        indexVersion: scope.documentIndex.indexVersion,
+      }),
+    ).toBeDefined();
+    secondDatabase.close();
+  });
+
+  it("rolls back a new version when the atomic current transition fails", async () => {
+    const database = openIngestionDatabase(":memory:");
+    const store = new SqliteIndexPublicationStore(database);
+    const initial = publishedVersion("aaaa", NOW);
+    const interrupted = publishedVersion(
+      "bbbb",
+      "2026-08-14T01:00:00.000Z",
+    );
+    await store.commitCurrent(initial);
+    database.exec(`
+      CREATE TRIGGER reject_current_transition
+      BEFORE UPDATE ON current_index_versions
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated current failure');
+      END;
+    `);
+
+    await expect(store.commitCurrent(interrupted)).rejects.toBeInstanceOf(
+      IndexCatalogFault,
+    );
+    expect(await store.current(initial.manifest.documentIndexId)).toEqual(
+      initial,
+    );
+    expect(
+      await store.findVersion({
+        documentIndexId: interrupted.manifest.documentIndexId,
+        indexVersion: interrupted.manifest.indexVersion,
+      }),
+    ).toBeUndefined();
+    database.close();
+  });
+
+  it("shares query embedding and binding rehydration per request while isolating target failures", async () => {
+    const fixture = await createTemporaryFixture();
+    const database = openIngestionDatabase(fixture.databasePath);
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+    );
+    const embeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const runtime = createDurableRuntime(
+      fixture.markdownPath,
+      database,
+      vectorIndex,
+      embeddings,
+    );
+    const result = await runtime.workflow.publish(command());
+    const publication = requiredValue(result.publication);
+    const scopes = publication.knowledgeUnits.map((unit) =>
+      requiredManagedScope(unit.publishedScopes[0]),
+    );
+    const callsBeforeSearch = embeddings.requests.length;
+    const rehydratesBeforeSearch = vectorIndex.rehydrateCalls;
+
+    const items = await runtime.search.searchBatch({
+      queryText: "결제 재시도",
+      targets: [
+        target("document", scopes[0]!),
+        target("section", scopes[1]!),
+        target("missing", { ...scopes[1]!, scopeId: "scope_missing" }),
+      ],
+    });
+
+    expect(items.map((item) => [item.targetKey, item.status])).toEqual([
+      ["document", "fulfilled"],
+      ["section", "fulfilled"],
+      ["missing", "failed"],
+    ]);
+    expect(items[2]).toMatchObject({
+      failure: { code: "scope_not_published", retriable: false },
+    });
+    expect(embeddings.requests).toHaveLength(callsBeforeSearch + 1);
+    expect(vectorIndex.rehydrateCalls).toBe(rehydratesBeforeSearch + 1);
+    expect(vectorIndex.searchCalls).toBe(2);
+    database.close();
+  });
+
+  it("never shares a query vector across security domains", async () => {
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+    );
+    const tenantA = await vectorIndex.prepare({
+      securityDomain: "tenant-a",
+      embeddingProfile: profile,
+      payloadSchemaVersion: 2,
+    });
+    const tenantB = await vectorIndex.prepare({
+      securityDomain: "tenant-b",
+      embeddingProfile: profile,
+      payloadSchemaVersion: 2,
+    });
+    const publicationA = domainPublishedVersion(
+      "alpha",
+      "tenant-a",
+      tenantA.accessHandle,
+    );
+    const publicationB = domainPublishedVersion(
+      "bravo",
+      "tenant-b",
+      tenantB.accessHandle,
+    );
+    const catalog = new InMemoryIndexPublicationStore();
+    await catalog.commitCurrent(publicationA);
+    await catalog.commitCurrent(publicationB);
+    const tenantAEmbeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const tenantBEmbeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const managedSearch = new ManagedDocumentSearch({
+      embeddingProviders: new StaticQueryEmbeddingProviderRegistry([
+        {
+          securityDomain: "tenant-a",
+          embeddingProfile: profile,
+          providerId: "provider.tenant-a",
+          provider: tenantAEmbeddings,
+        },
+        {
+          securityDomain: "tenant-b",
+          embeddingProfile: profile,
+          providerId: "provider.tenant-b",
+          provider: tenantBEmbeddings,
+        },
+      ]),
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([
+        { connectorId: "vector.main", vectorIndex },
+      ]),
+      publications: catalog,
+    });
+
+    const results = await managedSearch.searchBatch({
+      queryText: "shared query text",
+      targets: [
+        {
+          targetKey: "tenant-a",
+          securityDomain: "tenant-a",
+          scope: publicationA.scopes[0]!,
+          limit: 5,
+        },
+        {
+          targetKey: "tenant-b",
+          securityDomain: "tenant-b",
+          scope: publicationB.scopes[0]!,
+          limit: 5,
+        },
+      ],
+    });
+
+    expect(results.every((item) => item.status === "fulfilled")).toBe(true);
+    expect(tenantAEmbeddings.requests).toHaveLength(1);
+    expect(tenantBEmbeddings.requests).toHaveLength(1);
+    expect(vectorIndex.rehydrateCalls).toBe(2);
+    expect(
+      () =>
+        new StaticQueryEmbeddingProviderRegistry([
+          {
+            securityDomain: "tenant-a",
+            embeddingProfile: profile,
+            providerId: "provider.shared-credential",
+            provider: tenantAEmbeddings,
+          },
+          {
+            securityDomain: "tenant-b",
+            embeddingProfile: profile,
+            providerId: "provider.shared-credential",
+            provider: tenantBEmbeddings,
+          },
+        ]),
+    ).toThrow(/crosses security domains/);
+  });
+
+  it("fails closed for a disallowed provider, missing binding, and corrupt catalog record", async () => {
+    const fixture = await createTemporaryFixture();
+    const database = openIngestionDatabase(fixture.databasePath);
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+    );
+    const embeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const runtime = createDurableRuntime(
+      fixture.markdownPath,
+      database,
+      vectorIndex,
+      embeddings,
+    );
+    const result = await runtime.workflow.publish(command());
+    const scope = requiredManagedScope(
+      requiredValue(result.publication).knowledgeUnits[0]?.publishedScopes[0],
+    );
+
+    const providerDenied = new ManagedDocumentSearch({
+      embeddingProviders: new StaticQueryEmbeddingProviderRegistry([]),
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([
+        { connectorId: "vector.local", vectorIndex },
+      ]),
+      publications: runtime.indexPublications,
+    });
+    await expect(search(providerDenied, scope)).rejects.toMatchObject({
+      code: "embedding_provider_not_allowed",
+    });
+
+    const bindingMissing = new ManagedDocumentSearch({
+      embeddingProviders: providerRegistry(embeddings),
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([]),
+      publications: runtime.indexPublications,
+    });
+    await expect(search(bindingMissing, scope)).rejects.toMatchObject({
+      code: "index_binding_unavailable",
+    });
+
+    const missingPhysicalBinding = domainPublishedVersion(
+      "alpha",
+      "tenant-a",
+      "memory:v1:missing",
+    );
+    const isolatedCatalog = new InMemoryIndexPublicationStore();
+    await isolatedCatalog.commitCurrent(missingPhysicalBinding);
+    const bindingUnavailable = new ManagedDocumentSearch({
+      embeddingProviders: providerRegistry(embeddings),
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([
+        { connectorId: "vector.main", vectorIndex },
+      ]),
+      publications: isolatedCatalog,
+    });
+    await expect(
+      search(bindingUnavailable, missingPhysicalBinding.scopes[0]!),
+    ).rejects.toMatchObject({ code: "index_binding_unavailable" });
+
+    database
+      .prepare(
+        `UPDATE index_versions SET publication_json = '{}'
+         WHERE document_index_id = ? AND index_version = ?`,
+      )
+      .run(scope.documentIndex.documentIndexId, scope.documentIndex.indexVersion);
+    await expect(search(runtime.search, scope)).rejects.toMatchObject({
+      code: "index_catalog_corrupt",
+    });
+    expect(vectorIndex.searchCalls).toBe(0);
+    database.close();
+  });
+
+  it("rejects a payload v1 catalog target and serves its v2 replacement", async () => {
+    const fixture = await createTemporaryFixture();
+    const database = openIngestionDatabase(fixture.databasePath);
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+    );
+    const embeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const runtime = createDurableRuntime(
+      fixture.markdownPath,
+      database,
+      vectorIndex,
+      embeddings,
+    );
+    const result = await runtime.workflow.publish(command());
+    const v2Scope = requiredManagedScope(
+      requiredValue(result.publication).knowledgeUnits[0]?.publishedScopes[0],
+    );
+    const row = database
+      .prepare(
+        `SELECT publication_json FROM index_versions
+         WHERE document_index_id = ? AND index_version = ?`,
+      )
+      .get(
+        v2Scope.documentIndex.documentIndexId,
+        v2Scope.documentIndex.indexVersion,
+      ) as { readonly publication_json: string };
+    const v1 = JSON.parse(row.publication_json) as Record<string, unknown>;
+    const v1Scope = downgradeToV1(v1);
+    database
+      .prepare(
+        `INSERT INTO index_versions (
+           document_index_id, index_version, payload_schema_version,
+           publication_json, fingerprint, published_at
+         ) VALUES (?, ?, 1, ?, 'legacy-v1', ?)`,
+      )
+      .run(
+        v1Scope.documentIndex.documentIndexId,
+        v1Scope.documentIndex.indexVersion,
+        JSON.stringify(v1),
+        NOW,
+      );
+
+    await expect(search(runtime.search, v1Scope)).rejects.toMatchObject({
+      code: "index_schema_unsupported",
+    });
+    await expect(search(runtime.search, v2Scope)).resolves.not.toEqual([]);
+    database.close();
+  });
+
+  it("rediscovers and delivers a committed ready notification after restart", async () => {
+    const fixture = await createTemporaryFixture();
+    const vectorIndex = new InMemoryVectorIndexAdapter();
+    const firstDatabase = openIngestionDatabase(fixture.databasePath);
+    const first = createDurableRuntime(
+      fixture.markdownPath,
+      firstDatabase,
+      vectorIndex,
+      new DeterministicEmbeddingAdapter(),
+      new AlwaysFailNotifier(),
+    );
+
+    await expect(first.workflow.publish(command())).rejects.toMatchObject({
+      stage: "ready_notification",
+      diagnosticCode: "notification_unavailable",
+    });
+    const pending = await first.publications.pendingReady();
+    expect(pending).toHaveLength(1);
+    firstDatabase.close();
+
+    const secondDatabase = openIngestionDatabase(fixture.databasePath);
+    const publications = new SqliteIngestionPublicationStore(secondDatabase);
+    const notifier = new InMemoryPublicationReadyNotifier();
+    const reconciled = await new PublicationReadyReconciler({
+      publications,
+      notifier,
+    }).reconcile();
+
+    expect(reconciled).toEqual([
+      { publicationId: pending[0]!.publicationId, status: "delivered" },
+    ]);
+    expect(notifier.notifications).toEqual(pending);
+    expect(await publications.pendingReady()).toEqual([]);
+    expect(await publications.find(pending[0]!.publicationId)).toBeDefined();
+    secondDatabase.close();
+  });
+});
+
+function createDurableRuntime(
+  markdownPath: string,
+  database: DatabaseSync,
+  vectorIndex: VectorIndexPort,
+  embeddingProvider: EmbeddingPort,
+  readyNotifier?: PublicationReadyNotifier,
+) {
+  return createLocalMarkdownPublicationRuntime({
+    configurations: { "source.fixture": { path: markdownPath } },
+    embeddingProfile: profile,
+    embeddingProvider,
+    vectorIndex,
+    connectorId: "vector.local",
+    allowedSecurityDomains: ["tenant-a"],
+    checkpoints: new SqliteMarkdownPublicationCheckpointStore(database),
+    publications: new SqliteIngestionPublicationStore(database),
+    indexPublications: new SqliteIndexPublicationStore(database),
+    sourceIds: new UuidSourceIdGenerator(),
+    ...(readyNotifier === undefined ? {} : { readyNotifier }),
+    clock: () => NOW,
+  });
+}
+
+async function createTemporaryFixture(): Promise<{
+  readonly databasePath: string;
+  readonly markdownPath: string;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), "contextctl-durable-index-"));
+  temporaryDirectories.push(directory);
+  const markdownPath = join(directory, "source.md");
+  await copyFile(STRUCTURE_FIXTURE, markdownPath);
+  return { databasePath: join(directory, "ingestion.sqlite"), markdownPath };
+}
+
+function command(): PublishMarkdownSourceCommand {
+  return {
+    source: {
+      sourceType: "markdown",
+      displayName: "Durable Markdown fixture",
+      configReference: "source.fixture",
+      polling: { enabled: false },
+    },
+    connectorId: "vector.local",
+    securityDomain: "tenant-a",
+  };
+}
+
+function target(
+  targetKey: string,
+  scope: PublishedDocumentScope,
+) {
+  return { targetKey, securityDomain: "tenant-a", scope, limit: 5 };
+}
+
+function search(
+  managedSearch: ManagedDocumentSearch,
+  scope: PublishedDocumentScope,
+) {
+  return managedSearch.search({
+    queryText: "결제 재시도",
+    securityDomain: "tenant-a",
+    scope,
+    limit: 5,
+  });
+}
+
+function providerRegistry(provider: EmbeddingPort) {
+  return new StaticQueryEmbeddingProviderRegistry([
+    {
+      securityDomain: "tenant-a",
+      embeddingProfile: profile,
+      providerId: "provider.durable-test",
+      provider,
+    },
+  ]);
+}
+
+function publishedVersion(
+  revision: "aaaa" | "bbbb",
+  publishedAt: string,
+): PublishedIndexVersion {
+  const manifest = {
+    ...createIndexManifestFixture(),
+    indexVersion: `idxv_${revision}`,
+    scopeRevisions: [
+      {
+        scopeId: "scope_payment_failures",
+        scopeVersion: `scpv_${revision}`,
+      },
+    ],
+    publishedAt,
+  };
+  const documentIndex: PublishedDocumentIndexRef = {
+    documentIndexId: manifest.documentIndexId,
+    sourceId: manifest.sourceId,
+    documentId: manifest.documentId,
+    indexVersion: manifest.indexVersion,
+    connectorId: "vector.main",
+    accessHandle: "memory:v1:durable-fixture",
+  };
+  return {
+    manifest,
+    securityDomain: "tenant-a",
+    documentIndex,
+    scopes: [
+      {
+        scopeId: "scope_payment_failures",
+        scopeVersion: `scpv_${revision}`,
+        kind: "managed_document",
+        documentIndex,
+        selector: { kind: "document" },
+      },
+    ],
+  };
+}
+
+function domainPublishedVersion(
+  suffix: "alpha" | "bravo",
+  securityDomain: string,
+  accessHandle: string,
+): PublishedIndexVersion {
+  const manifest = {
+    ...createIndexManifestFixture(),
+    documentIndexId: `didx_${suffix}`,
+    sourceId: `src_${suffix}`,
+    observationId: `obs_${suffix}`,
+    documentId: `doc_${suffix}`,
+    embeddingProfile: profile,
+    scopeRevisions: [
+      { scopeId: `scope_${suffix}`, scopeVersion: "scpv_aaaa" },
+    ],
+    publishedAt: NOW,
+  };
+  const documentIndex: PublishedDocumentIndexRef = {
+    documentIndexId: manifest.documentIndexId,
+    sourceId: manifest.sourceId,
+    documentId: manifest.documentId,
+    indexVersion: manifest.indexVersion,
+    connectorId: "vector.main",
+    accessHandle,
+  };
+  return {
+    manifest,
+    securityDomain,
+    documentIndex,
+    scopes: [
+      {
+        scopeId: `scope_${suffix}`,
+        scopeVersion: "scpv_aaaa",
+        kind: "managed_document",
+        documentIndex,
+        selector: { kind: "document" },
+      },
+    ],
+  };
+}
+
+function downgradeToV1(
+  publication: Record<string, unknown>,
+): PublishedDocumentScope {
+  const manifest = publication.manifest as Record<string, unknown>;
+  const documentIndex = publication.documentIndex as Record<string, unknown>;
+  const scopes = publication.scopes as Array<Record<string, unknown>>;
+  const v1Version = "idxv_vvvv";
+  const v1ScopeVersion = "scpv_vvvv";
+  manifest.payloadSchemaVersion = 1;
+  manifest.indexVersion = v1Version;
+  manifest.scopeRevisions = [
+    { scopeId: scopes[0]!.scopeId, scopeVersion: v1ScopeVersion },
+  ];
+  documentIndex.indexVersion = v1Version;
+  scopes[0]!.scopeVersion = v1ScopeVersion;
+  scopes[0]!.documentIndex = structuredClone(documentIndex);
+  return structuredClone(scopes[0]) as PublishedDocumentScope;
+}
+
+function requiredManagedScope(
+  value: unknown,
+): PublishedDocumentScope {
+  if (
+    value === undefined ||
+    value === null ||
+    typeof value !== "object" ||
+    !("kind" in value) ||
+    value.kind !== "managed_document"
+  ) {
+    throw new Error("managed document Scope is missing");
+  }
+  return value as PublishedDocumentScope;
+}
+
+function requiredValue<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("required fixture value is missing");
+  return value;
+}
+
+class RecordingEmbeddingPort implements EmbeddingPort {
+  readonly requests: EmbeddingProviderRequest[] = [];
+
+  constructor(private readonly delegate: EmbeddingPort) {}
+
+  async embed(request: EmbeddingProviderRequest) {
+    this.requests.push(request);
+    return this.delegate.embed(request);
+  }
+}
+
+class RecordingVectorIndex implements VectorIndexPort {
+  rehydrateCalls = 0;
+  searchCalls = 0;
+
+  constructor(private readonly delegate: VectorIndexPort) {}
+
+  prepare: VectorIndexPort["prepare"] = (input) => this.delegate.prepare(input);
+  upsertRecords: VectorIndexPort["upsertRecords"] = (input) =>
+    this.delegate.upsertRecords(input);
+  listVersionRecords: VectorIndexPort["listVersionRecords"] = (input) =>
+    this.delegate.listVersionRecords(input);
+  retainVersion: VectorIndexPort["retainVersion"] = (input) =>
+    this.delegate.retainVersion(input);
+  releaseRetentionLease: VectorIndexPort["releaseRetentionLease"] = (input) =>
+    this.delegate.releaseRetentionLease(input);
+  deleteVersion: VectorIndexPort["deleteVersion"] = (input) =>
+    this.delegate.deleteVersion(input);
+
+  async rehydrate(input: Parameters<VectorIndexPort["rehydrate"]>[0]) {
+    this.rehydrateCalls += 1;
+    return this.delegate.rehydrate(input);
+  }
+
+  async search(input: Parameters<VectorIndexPort["search"]>[0]) {
+    this.searchCalls += 1;
+    return this.delegate.search(input);
+  }
+}
+
+class AlwaysFailNotifier implements PublicationReadyNotifier {
+  async notify(_notification: PublicationReady): Promise<void> {
+    throw new NotificationUnavailable();
+  }
+}
+
+class NotificationUnavailable extends Error {
+  readonly code = "notification_unavailable";
+}

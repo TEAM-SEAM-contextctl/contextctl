@@ -334,6 +334,8 @@ class RecordingVectorIndex implements VectorIndexPort {
   constructor(private readonly delegate: VectorIndexPort) {}
 
   prepare: VectorIndexPort["prepare"] = (input) => this.delegate.prepare(input);
+  rehydrate: VectorIndexPort["rehydrate"] = (input) =>
+    this.delegate.rehydrate(input);
 
   async upsertRecords(input: Parameters<VectorIndexPort["upsertRecords"]>[0]) {
     this.upsertCalls += 1;

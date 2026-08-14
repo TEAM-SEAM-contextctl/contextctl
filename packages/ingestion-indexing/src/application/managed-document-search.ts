@@ -7,10 +7,21 @@ import { sha256Digest } from "../domain/document-capture.js";
 import type { EmbeddingProfile } from "../domain/embedding-profile.js";
 import { canonicalJson } from "../domain/revision-identity.js";
 import { createVectorRecordId } from "../domain/vector-index.js";
-import type { EmbeddingPort } from "../ports/embedding.js";
-import type { IndexPublicationStore } from "../ports/index-publication-store.js";
+import { EmbeddingProviderFault } from "../ports/embedding.js";
+import {
+  IndexCatalogFault,
+  type IndexPublicationStore,
+  type PublishedIndexVersion,
+} from "../ports/index-publication-store.js";
+import type {
+  QueryEmbeddingProviderBinding,
+  QueryEmbeddingProviderResolver,
+  VectorIndexConnectorResolver,
+} from "../ports/managed-document-search.js";
 import {
   MAX_VECTOR_SEARCH_LIMIT,
+  VectorIndexFault,
+  type VectorIndexCompatibility,
   type VectorIndexPort,
   type VectorIndexScope,
   type VectorIndexSearchHit,
@@ -23,6 +34,19 @@ export interface ManagedDocumentSearchCommand {
   readonly securityDomain: string;
   readonly scope: PublishedDocumentScope;
   readonly limit: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface BatchManagedDocumentSearchTarget {
+  readonly targetKey: string;
+  readonly securityDomain: string;
+  readonly scope: PublishedDocumentScope;
+  readonly limit: number;
+}
+
+export interface BatchManagedDocumentSearchCommand {
+  readonly queryText: string;
+  readonly targets: readonly BatchManagedDocumentSearchTarget[];
   readonly signal?: AbortSignal;
 }
 
@@ -40,51 +64,179 @@ export interface DocumentSearchHit {
   readonly contentDigest: string;
 }
 
+export interface ManagedDocumentSearchFailure {
+  readonly code: ManagedDocumentSearchErrorCode;
+  readonly retriable: boolean;
+}
+
+export type BatchManagedDocumentSearchItem =
+  | {
+      readonly targetKey: string;
+      readonly status: "fulfilled";
+      readonly hits: readonly DocumentSearchHit[];
+    }
+  | {
+      readonly targetKey: string;
+      readonly status: "failed";
+      readonly failure: ManagedDocumentSearchFailure;
+    };
+
 export interface ManagedDocumentSearchDependencies {
-  readonly embeddings: EmbeddingPort;
-  readonly vectorIndex: VectorIndexPort;
+  readonly embeddingProviders: QueryEmbeddingProviderResolver;
+  readonly vectorIndexes: VectorIndexConnectorResolver;
   readonly publications: IndexPublicationStore;
 }
 
 export type ManagedDocumentSearchErrorCode =
+  | "cancelled"
+  | "embedding_provider_not_allowed"
+  | "index_binding_invalid"
+  | "index_binding_unavailable"
+  | "index_catalog_corrupt"
+  | "index_catalog_unavailable"
   | "index_schema_unsupported"
   | "invalid_request"
+  | "query_embedding_failed"
   | "query_embedding_invalid"
   | "scope_not_published"
   | "search_result_invalid"
-  | "security_domain_mismatch";
+  | "security_domain_mismatch"
+  | "unexpected_failure"
+  | "vector_search_unavailable";
 
 export class ManagedDocumentSearchError extends Error {
-  constructor(readonly code: ManagedDocumentSearchErrorCode) {
+  constructor(
+    readonly code: ManagedDocumentSearchErrorCode,
+    readonly retriable = false,
+  ) {
     super(`Managed document search failed: ${code}`);
     this.name = "ManagedDocumentSearchError";
   }
 }
 
-/** Searches exactly one immutable managed-document Scope. */
+interface SearchRequestContext {
+  readonly queryText: string;
+  readonly signal: AbortSignal;
+  readonly catalog: Map<string, Promise<PublishedIndexVersion | undefined>>;
+  readonly embeddings: Map<string, Promise<readonly number[]>>;
+  readonly bindings: Map<string, Promise<VectorIndexPort>>;
+}
+
+interface ResolvedTarget {
+  readonly target: BatchManagedDocumentSearchTarget;
+  readonly publication: PublishedIndexVersion;
+  readonly scope: PublishedDocumentScope;
+  readonly vectorScope: VectorIndexScope;
+  readonly vectorIndex: VectorIndexPort;
+  readonly queryVector: readonly number[];
+}
+
+/** Searches one or more immutable managed-document Scopes with target isolation. */
 export class ManagedDocumentSearch {
-  readonly #embeddings: EmbeddingPort;
-  readonly #vectorIndex: VectorIndexPort;
-  readonly #publications: IndexPublicationStore;
+  readonly #dependencies: ManagedDocumentSearchDependencies;
 
   constructor(dependencies: ManagedDocumentSearchDependencies) {
-    this.#embeddings = dependencies.embeddings;
-    this.#vectorIndex = dependencies.vectorIndex;
-    this.#publications = dependencies.publications;
+    this.#dependencies = dependencies;
   }
 
   async search(
     command: ManagedDocumentSearchCommand,
   ): Promise<readonly DocumentSearchHit[]> {
-    const scope = parseCommand(command);
-    const publication = await this.#publications.findVersion({
-      documentIndexId: scope.documentIndex.documentIndexId,
-      indexVersion: scope.documentIndex.indexVersion,
+    const items = await this.searchBatch({
+      queryText: command.queryText,
+      targets: [
+        {
+          targetKey: "single-target",
+          securityDomain: command.securityDomain,
+          scope: command.scope,
+          limit: command.limit,
+        },
+      ],
+      ...(command.signal === undefined ? {} : { signal: command.signal }),
     });
+    const item = items[0];
+    if (item === undefined) {
+      throw new ManagedDocumentSearchError("unexpected_failure");
+    }
+    if (item.status === "failed") {
+      throw new ManagedDocumentSearchError(
+        item.failure.code,
+        item.failure.retriable,
+      );
+    }
+    return item.hits;
+  }
+
+  async searchBatch(
+    command: BatchManagedDocumentSearchCommand,
+  ): Promise<readonly BatchManagedDocumentSearchItem[]> {
+    validateBatchCommand(command);
+    const context: SearchRequestContext = {
+      queryText: command.queryText,
+      signal: command.signal ?? new AbortController().signal,
+      catalog: new Map(),
+      embeddings: new Map(),
+      bindings: new Map(),
+    };
+    return Promise.all(
+      command.targets.map(async (target): Promise<BatchManagedDocumentSearchItem> => {
+        try {
+          const hits = await this.#searchTarget(target, context);
+          return { targetKey: target.targetKey, status: "fulfilled", hits };
+        } catch (error) {
+          const failure = toManagedSearchError(error);
+          return {
+            targetKey: target.targetKey,
+            status: "failed",
+            failure: { code: failure.code, retriable: failure.retriable },
+          };
+        }
+      }),
+    );
+  }
+
+  async #searchTarget(
+    target: BatchManagedDocumentSearchTarget,
+    context: SearchRequestContext,
+  ): Promise<readonly DocumentSearchHit[]> {
+    const resolved = await this.#resolveTarget(target, context);
+    let hits: readonly VectorIndexSearchHit[];
+    try {
+      hits = await resolved.vectorIndex.search({
+        accessHandle: resolved.publication.documentIndex.accessHandle,
+        scope: resolved.vectorScope,
+        queryVector: resolved.queryVector,
+        limit: resolved.target.limit,
+      });
+    } catch (error) {
+      throw mapVectorSearchError(error);
+    }
+    if (
+      hits.length > resolved.target.limit ||
+      new Set(hits.map((hit) => hit.recordId)).size !== hits.length
+    ) {
+      throw new ManagedDocumentSearchError("search_result_invalid");
+    }
+    return hits.map((hit, index) =>
+      projectHit(
+        hit,
+        index + 1,
+        resolved.publication.manifest,
+        resolved.vectorScope,
+      ),
+    );
+  }
+
+  async #resolveTarget(
+    target: BatchManagedDocumentSearchTarget,
+    context: SearchRequestContext,
+  ): Promise<ResolvedTarget> {
+    const scope = parseTarget(target);
+    const publication = await this.#catalogPublication(scope, context);
     if (publication === undefined) {
       throw new ManagedDocumentSearchError("scope_not_published");
     }
-    if (publication.securityDomain !== command.securityDomain) {
+    if (publication.securityDomain !== target.securityDomain) {
       throw new ManagedDocumentSearchError("security_domain_mismatch");
     }
     if (
@@ -107,11 +259,42 @@ export class ManagedDocumentSearch {
       throw new ManagedDocumentSearchError("scope_not_published");
     }
 
-    const queryVector = await this.#embedQuery(
-      command.queryText,
-      publication.manifest.embeddingProfile,
-      command.signal ?? new AbortController().signal,
+    const provider = this.#dependencies.embeddingProviders.resolve({
+      securityDomain: target.securityDomain,
+      embeddingProfile: publication.manifest.embeddingProfile,
+    });
+    if (provider === undefined) {
+      throw new ManagedDocumentSearchError(
+        "embedding_provider_not_allowed",
+      );
+    }
+    const vectorIndex = this.#dependencies.vectorIndexes.resolve(
+      publication.documentIndex.connectorId,
     );
+    if (vectorIndex === undefined) {
+      throw new ManagedDocumentSearchError("index_binding_unavailable");
+    }
+
+    const compatibility: VectorIndexCompatibility = {
+      securityDomain: target.securityDomain,
+      embeddingProfile: publication.manifest.embeddingProfile,
+      payloadSchemaVersion: 2,
+    };
+    const [rehydrated, queryVector] = await Promise.all([
+      this.#rehydrateBinding(
+        vectorIndex,
+        publication.documentIndex.connectorId,
+        publication.documentIndex.accessHandle,
+        compatibility,
+        context,
+      ),
+      this.#queryEmbedding(
+        provider,
+        target.securityDomain,
+        publication.manifest.embeddingProfile,
+        context,
+      ),
+    ]);
     const vectorScope: VectorIndexScope = {
       documentIndexId: scope.documentIndex.documentIndexId,
       indexVersion: scope.documentIndex.indexVersion,
@@ -120,61 +303,203 @@ export class ManagedDocumentSearch {
         ? { semanticUnitIds: scope.selector.semanticUnitIds }
         : {}),
     };
-    const hits = await this.#vectorIndex.search({
-      accessHandle: publication.documentIndex.accessHandle,
-      scope: vectorScope,
+    return {
+      target,
+      publication,
+      scope,
+      vectorScope,
+      vectorIndex: rehydrated,
       queryVector,
-      limit: command.limit,
-    });
-    if (
-      hits.length > command.limit ||
-      new Set(hits.map((hit) => hit.recordId)).size !== hits.length
-    ) {
-      throw new ManagedDocumentSearchError("search_result_invalid");
-    }
-    return hits.map((hit, index) =>
-      projectHit(hit, index + 1, publication.manifest, vectorScope),
-    );
+    };
   }
 
-  async #embedQuery(
-    queryText: string,
+  async #catalogPublication(
+    scope: PublishedDocumentScope,
+    context: SearchRequestContext,
+  ): Promise<PublishedIndexVersion | undefined> {
+    const key = `${scope.documentIndex.documentIndexId}\u0000${scope.documentIndex.indexVersion}`;
+    let pending = context.catalog.get(key);
+    if (pending === undefined) {
+      pending = this.#dependencies.publications.findVersion({
+        documentIndexId: scope.documentIndex.documentIndexId,
+        indexVersion: scope.documentIndex.indexVersion,
+      });
+      context.catalog.set(key, pending);
+    }
+    try {
+      return await pending;
+    } catch (error) {
+      throw mapCatalogError(error);
+    }
+  }
+
+  async #rehydrateBinding(
+    vectorIndex: VectorIndexPort,
+    connectorId: string,
+    accessHandle: string,
+    compatibility: VectorIndexCompatibility,
+    context: SearchRequestContext,
+  ): Promise<VectorIndexPort> {
+    const key = `${connectorId}\u0000${accessHandle}\u0000${canonicalJson(compatibility)}`;
+    let pending = context.bindings.get(key);
+    if (pending === undefined) {
+      pending = (async () => {
+        try {
+          await vectorIndex.rehydrate({ accessHandle, compatibility });
+          return vectorIndex;
+        } catch (error) {
+          throw mapBindingError(error);
+        }
+      })();
+      context.bindings.set(key, pending);
+    }
+    return pending;
+  }
+
+  async #queryEmbedding(
+    binding: QueryEmbeddingProviderBinding,
+    securityDomain: string,
     profile: EmbeddingProfile,
-    signal: AbortSignal,
+    context: SearchRequestContext,
   ): Promise<readonly number[]> {
-    const outputs = await this.#embeddings.embed({
+    const key = `${securityDomain}\u0000${binding.providerId}\u0000${canonicalJson(profile)}`;
+    let pending = context.embeddings.get(key);
+    if (pending === undefined) {
+      pending = embedQuery(
+        binding,
+        context.queryText,
+        profile,
+        context.signal,
+      );
+      context.embeddings.set(key, pending);
+    }
+    return pending;
+  }
+}
+
+async function embedQuery(
+  binding: QueryEmbeddingProviderBinding,
+  queryText: string,
+  profile: EmbeddingProfile,
+  signal: AbortSignal,
+): Promise<readonly number[]> {
+  let outputs;
+  try {
+    outputs = await binding.provider.embed({
       profile,
       inputs: [{ key: QUERY_EMBEDDING_KEY, text: queryText }],
       signal,
     });
-    const output = outputs[0];
-    if (
-      outputs.length !== 1 ||
-      output?.key !== QUERY_EMBEDDING_KEY ||
-      output.vector.length !== profile.dimensions ||
-      output.vector.some((component) => !Number.isFinite(component))
-    ) {
-      throw new ManagedDocumentSearchError("query_embedding_invalid");
+  } catch (error) {
+    if (signal.aborted) {
+      throw new ManagedDocumentSearchError("cancelled");
     }
-    return output.vector;
+    if (error instanceof EmbeddingProviderFault) {
+      throw new ManagedDocumentSearchError(
+        "query_embedding_failed",
+        error.retriable,
+      );
+    }
+    throw new ManagedDocumentSearchError("query_embedding_failed");
+  }
+  const output = outputs[0];
+  if (
+    outputs.length !== 1 ||
+    output?.key !== QUERY_EMBEDDING_KEY ||
+    output.vector.length !== profile.dimensions ||
+    output.vector.some((component) => !Number.isFinite(component))
+  ) {
+    throw new ManagedDocumentSearchError("query_embedding_invalid");
+  }
+  return output.vector;
+}
+
+function validateBatchCommand(command: BatchManagedDocumentSearchCommand): void {
+  if (
+    command.queryText.trim() === "" ||
+    command.targets.length === 0 ||
+    command.signal?.aborted === true ||
+    new Set(command.targets.map((target) => target.targetKey)).size !==
+      command.targets.length ||
+    command.targets.some((target) => target.targetKey.trim() === "")
+  ) {
+    throw new ManagedDocumentSearchError(
+      command.signal?.aborted === true ? "cancelled" : "invalid_request",
+    );
   }
 }
 
-function parseCommand(
-  command: ManagedDocumentSearchCommand,
+function parseTarget(
+  target: BatchManagedDocumentSearchTarget,
 ): PublishedDocumentScope {
-  const parsedScope = PublishedDocumentScopeSchema.safeParse(command.scope);
+  const parsedScope = PublishedDocumentScopeSchema.safeParse(target.scope);
   if (
     !parsedScope.success ||
-    command.queryText.trim() === "" ||
-    command.securityDomain.trim() === "" ||
-    !Number.isSafeInteger(command.limit) ||
-    command.limit <= 0 ||
-    command.limit > MAX_VECTOR_SEARCH_LIMIT
+    target.securityDomain.trim() === "" ||
+    !Number.isSafeInteger(target.limit) ||
+    target.limit <= 0 ||
+    target.limit > MAX_VECTOR_SEARCH_LIMIT
   ) {
     throw new ManagedDocumentSearchError("invalid_request");
   }
   return parsedScope.data;
+}
+
+function mapCatalogError(error: unknown): ManagedDocumentSearchError {
+  if (error instanceof IndexCatalogFault) {
+    if (error.code === "schema_unsupported") {
+      return new ManagedDocumentSearchError("index_schema_unsupported");
+    }
+    if (error.code === "corrupt_record") {
+      return new ManagedDocumentSearchError("index_catalog_corrupt");
+    }
+    return new ManagedDocumentSearchError(
+      "index_catalog_unavailable",
+      error.retriable,
+    );
+  }
+  return new ManagedDocumentSearchError("index_catalog_unavailable", true);
+}
+
+function mapBindingError(error: unknown): ManagedDocumentSearchError {
+  if (error instanceof VectorIndexFault) {
+    if (
+      error.code === "invalid_request" ||
+      error.code === "filter_not_supported"
+    ) {
+      return new ManagedDocumentSearchError("index_binding_invalid");
+    }
+    return new ManagedDocumentSearchError(
+      "index_binding_unavailable",
+      error.retriable,
+    );
+  }
+  return new ManagedDocumentSearchError("index_binding_unavailable", true);
+}
+
+function mapVectorSearchError(error: unknown): ManagedDocumentSearchError {
+  if (error instanceof VectorIndexFault) {
+    if (
+      error.code === "invalid_request" ||
+      error.code === "filter_not_supported"
+    ) {
+      return new ManagedDocumentSearchError("index_binding_invalid");
+    }
+    if (error.code === "index_unavailable") {
+      return new ManagedDocumentSearchError("index_binding_unavailable");
+    }
+    return new ManagedDocumentSearchError(
+      "vector_search_unavailable",
+      error.retriable,
+    );
+  }
+  return new ManagedDocumentSearchError("vector_search_unavailable", true);
+}
+
+function toManagedSearchError(error: unknown): ManagedDocumentSearchError {
+  return error instanceof ManagedDocumentSearchError
+    ? error
+    : new ManagedDocumentSearchError("unexpected_failure");
 }
 
 function projectHit(
