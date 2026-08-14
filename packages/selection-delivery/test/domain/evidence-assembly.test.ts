@@ -3,10 +3,11 @@ import { describe, expect, it } from "vitest";
 import { EvidenceBudgetInvariantError } from "../../src/domain/errors.js";
 import {
   assembleDocumentEvidence,
-  DEFAULT_EVIDENCE_BUDGET,
-  EVIDENCE_ASSEMBLY_POLICY_VERSION,
+  toEvidenceOmission,
+  type AssembledEvidence,
   type EvidenceBudget,
   type EvidenceChunk,
+  type EvidenceOmission,
 } from "../../src/domain/evidence-assembly.js";
 
 /**
@@ -56,6 +57,26 @@ function revisionsOf(chunks: readonly EvidenceChunk[]): string[] {
   return chunks.map((entry) => entry.chunkRevisionId);
 }
 
+/**
+ * The consumer-facing projection of the omissions.
+ *
+ * Assembly now hands back each dropped chunk whole so the caller can attribute
+ * it to the Scope it came from; these helpers assert the record a consumer
+ * actually receives, which is what these tests were always about.
+ */
+function omissionsOf(evidence: AssembledEvidence): readonly EvidenceOmission[] {
+  return evidence.omitted.map(toEvidenceOmission);
+}
+
+/**
+ * `truncated` is no longer a field on the assembly result: it is a per-Scope
+ * fact, derived in `resolveContext` from that Scope's own omissions. Derived
+ * the same way here, so these tests keep asserting the same behaviour.
+ */
+function truncatedOf(evidence: AssembledEvidence): boolean {
+  return evidence.omitted.some((entry) => entry.reason === "budget_exhausted");
+}
+
 describe("assembleDocumentEvidence", () => {
   it("keeps the first appearance of a repeated chunk revision", () => {
     const evidence = assembleDocumentEvidence(
@@ -67,14 +88,14 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a"]);
-    expect(evidence.omitted).toEqual([
+    expect(omissionsOf(evidence)).toEqual([
       {
         chunkId: "chunk_rev_a_again",
         chunkRevisionId: "rev_a",
         reason: "duplicate_chunk_revision",
       },
     ]);
-    expect(evidence.truncated).toBe(false);
+    expect(truncatedOf(evidence)).toBe(false);
   });
 
   it("keeps the higher-scoring copy of a repeated chunk revision", () => {
@@ -89,7 +110,7 @@ describe("assembleDocumentEvidence", () => {
     expect(evidence.chunks.map((entry) => entry.chunkId)).toEqual([
       "chunk_high",
     ]);
-    expect(evidence.omitted.map((entry) => entry.chunkId)).toEqual([
+    expect(omissionsOf(evidence).map((entry) => entry.chunkId)).toEqual([
       "chunk_low",
     ]);
   });
@@ -104,7 +125,7 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a"]);
-    expect(evidence.omitted).toEqual([
+    expect(omissionsOf(evidence)).toEqual([
       {
         chunkId: "chunk_rev_b",
         chunkRevisionId: "rev_b",
@@ -139,8 +160,8 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a", "rev_b"]);
-    expect(evidence.omitted).toEqual([]);
-    expect(evidence.truncated).toBe(false);
+    expect(omissionsOf(evidence)).toEqual([]);
+    expect(truncatedOf(evidence)).toBe(false);
   });
 
   it("stops at the first chunk that would cross the character ceiling", () => {
@@ -150,14 +171,14 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a"]);
-    expect(evidence.omitted).toEqual([
+    expect(omissionsOf(evidence)).toEqual([
       {
         chunkId: "chunk_rev_b",
         chunkRevisionId: "rev_b",
         reason: "budget_exhausted",
       },
     ]);
-    expect(evidence.truncated).toBe(true);
+    expect(truncatedOf(evidence)).toBe(true);
   });
 
   it("does not slot a later smaller chunk into the room the oversized one left", () => {
@@ -173,7 +194,7 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a"]);
-    expect(evidence.omitted).toEqual([
+    expect(omissionsOf(evidence)).toEqual([
       {
         chunkId: "chunk_rev_b",
         chunkRevisionId: "rev_b",
@@ -185,7 +206,7 @@ describe("assembleDocumentEvidence", () => {
         reason: "budget_exhausted",
       },
     ]);
-    expect(evidence.truncated).toBe(true);
+    expect(truncatedOf(evidence)).toBe(true);
   });
 
   it("admits exactly as many chunks as the chunk ceiling allows", () => {
@@ -195,8 +216,8 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a", "rev_b", "rev_c"]);
-    expect(evidence.omitted).toEqual([]);
-    expect(evidence.truncated).toBe(false);
+    expect(omissionsOf(evidence)).toEqual([]);
+    expect(truncatedOf(evidence)).toBe(false);
   });
 
   it("omits the chunk that would exceed the chunk ceiling by one", () => {
@@ -206,14 +227,14 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a", "rev_b"]);
-    expect(evidence.omitted).toEqual([
+    expect(omissionsOf(evidence)).toEqual([
       {
         chunkId: "chunk_rev_c",
         chunkRevisionId: "rev_c",
         reason: "budget_exhausted",
       },
     ]);
-    expect(evidence.truncated).toBe(true);
+    expect(truncatedOf(evidence)).toBe(true);
   });
 
   it("returns no evidence when the only chunk is larger than the whole budget", () => {
@@ -223,14 +244,14 @@ describe("assembleDocumentEvidence", () => {
     });
 
     expect(evidence.chunks).toEqual([]);
-    expect(evidence.omitted).toEqual([
+    expect(omissionsOf(evidence)).toEqual([
       {
         chunkId: "chunk_rev_a",
         chunkRevisionId: "rev_a",
         reason: "budget_exhausted",
       },
     ]);
-    expect(evidence.truncated).toBe(true);
+    expect(truncatedOf(evidence)).toBe(true);
   });
 
   it("refuses a budget limit of zero", () => {
@@ -297,8 +318,8 @@ describe("assembleDocumentEvidence", () => {
     const evidence = assembleDocumentEvidence([], roomy);
 
     expect(evidence.chunks).toEqual([]);
-    expect(evidence.omitted).toEqual([]);
-    expect(evidence.truncated).toBe(false);
+    expect(omissionsOf(evidence)).toEqual([]);
+    expect(truncatedOf(evidence)).toBe(false);
   });
 
   it("does not reorder the caller's array", () => {
@@ -346,7 +367,7 @@ describe("assembleDocumentEvidence", () => {
       "rev_inf",
       "rev_nan",
     ]);
-    expect(evidence.omitted).toEqual([]);
+    expect(omissionsOf(evidence)).toEqual([]);
   });
 
   it("orders non-finite scores among themselves by ascending revision id", () => {
@@ -381,26 +402,44 @@ describe("assembleDocumentEvidence", () => {
     );
 
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a", "rev_b"]);
-    expect(evidence.omitted).toEqual([
+    expect(omissionsOf(evidence)).toEqual([
       {
         chunkId: "chunk_rev_a_again",
         chunkRevisionId: "rev_a",
         reason: "duplicate_chunk_revision",
       },
     ]);
-    expect(evidence.truncated).toBe(false);
+    expect(truncatedOf(evidence)).toBe(false);
   });
 
-  it("stamps the assembly policy version and the budget it applied", () => {
-    const evidence = assembleDocumentEvidence([chunk("rev_a", 0.9)], roomy);
+  // The policy version and the applied budget used to be stamped on this
+  // result. Both are facts about the whole response, not about one assembly
+  // pass, and they are now asserted on `ResolutionPolicy` in
+  // `test/application/resolve-context.test.ts`.
 
-    expect(evidence.policyVersion).toBe(EVIDENCE_ASSEMBLY_POLICY_VERSION);
-    expect(evidence.budget).toBe(roomy);
-  });
-
-  it("records the default budget when none was given", () => {
-    expect(assembleDocumentEvidence([chunk("rev_a", 0.9)]).budget).toBe(
-      DEFAULT_EVIDENCE_BUDGET,
+  it("hands back the whole chunk for every omission, not just its identity", () => {
+    // Without the source chunk, `resolveContext` could not tell which Scope an
+    // omission belongs to — and re-joining by revision id would be wrong in
+    // exactly the deduplication case, where the dropped copy and the surviving
+    // one come from different Scopes.
+    const other = {
+      scopeId: "scope_other",
+      scopeVersion: "scopev_0001",
+    };
+    const evidence = assembleDocumentEvidence(
+      [
+        chunk("rev_a", 0.9, { contentDigest: "digest_shared" }),
+        chunk("rev_b", 0.5, {
+          contentDigest: "digest_shared",
+          scopeRef: other,
+        }),
+      ],
+      roomy,
     );
+
+    expect(revisionsOf(evidence.chunks)).toEqual(["rev_a"]);
+    expect(evidence.omitted).toHaveLength(1);
+    expect(evidence.omitted[0]?.reason).toBe("duplicate_content");
+    expect(evidence.omitted[0]?.chunk.scopeRef).toEqual(other);
   });
 });

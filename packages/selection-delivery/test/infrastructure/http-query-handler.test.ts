@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import type { DeliveryResult } from "../../src/application/select-context.js";
-import type { SelectContextPorts } from "../../src/application/select-context.js";
+import type { ResolveContextPorts } from "../../src/application/resolve-context.js";
+import type {
+  ContextResolution,
+  ResolutionItem,
+} from "../../src/domain/context-resolution.js";
+import {
+  DocumentRetrievalFault,
+  type DocumentRetrievalFaultCode,
+  type ManagedDocumentRetriever,
+} from "../../src/ports/managed-document-retriever.js";
 import {
   createHttpQueryHandler,
   type DeliveryHttpHandler,
@@ -9,13 +17,24 @@ import {
 } from "../../src/infrastructure/http/http-query-handler.js";
 import { FixtureDocumentRetriever } from "../../src/infrastructure/fixture-document-retriever.js";
 import { InMemoryCardCatalog } from "../../src/infrastructure/in-memory-card-catalog.js";
-import { createDemoCardSet } from "../fixtures/approved-card.fixture.js";
+import {
+  createDemoCardSet,
+  createRefundPolicyCard,
+  DEMO_QUERY,
+} from "../fixtures/approved-card.fixture.js";
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
 
-/** The demo question: it names refund wording and stock wording at once. */
-const DEMO_QUERY = "환불할 수 없는 상품과 현재 재고를 알려줘";
+/**
+ * The physical binding the refund policy Card's Scope carries.
+ *
+ * Named here so the leak tests can assert on the actual values rather than on
+ * field names alone: a surface that renamed the field but still shipped the
+ * value would pass a name-only check.
+ */
+const DOCUMENT_CONNECTOR_ID = "vector.local";
+const DOCUMENT_ACCESS_HANDLE = "documents/policies/indexes/refund";
 
-function createDemoPorts(): SelectContextPorts {
+function createDemoPorts(): ResolveContextPorts {
   return {
     catalog: new InMemoryCardCatalog(createDemoCardSet()),
     retriever: new FixtureDocumentRetriever(createRefundPolicyChunkMap()),
@@ -24,6 +43,20 @@ function createDemoPorts(): SelectContextPorts {
 
 function createDemoHandler(): DeliveryHttpHandler {
   return createHttpQueryHandler(createDemoPorts());
+}
+
+/** A retriever that fails every read with one declared port fault. */
+function createFaultingHandler(
+  code: DocumentRetrievalFaultCode,
+): DeliveryHttpHandler {
+  const retriever: ManagedDocumentRetriever = {
+    searchChunks: () => Promise.reject(new DocumentRetrievalFault(code)),
+  };
+
+  return createHttpQueryHandler({
+    catalog: new InMemoryCardCatalog(createDemoCardSet()),
+    retriever,
+  });
 }
 
 function post(
@@ -46,8 +79,23 @@ function errorCodeOf(response: DeliveryHttpResponse): unknown {
     ?.code;
 }
 
+function resolutionOf(response: DeliveryHttpResponse): ContextResolution {
+  return JSON.parse(response.body) as ContextResolution;
+}
+
+function itemForCard(
+  resolution: ContextResolution,
+  cardId: string,
+): ResolutionItem {
+  const item = resolution.items.find((candidate) => candidate.cardId === cardId);
+  if (item === undefined) {
+    throw new Error(`no resolved item for ${cardId}`);
+  }
+  return item;
+}
+
 describe("createHttpQueryHandler", () => {
-  it("delivers evidence and consumer contracts for the demo query", async () => {
+  it("resolves the demo query into one item per selected Scope", async () => {
     const response = await post(
       createDemoHandler(),
       JSON.stringify({ query: DEMO_QUERY }),
@@ -55,14 +103,171 @@ describe("createHttpQueryHandler", () => {
 
     expect(response.status).toBe(200);
 
-    const result = JSON.parse(response.body) as DeliveryResult;
-    expect(result.query).toBe(DEMO_QUERY);
-    expect(result.evidence.chunks.length).toBeGreaterThan(0);
-    expect(result.contracts).toHaveLength(1);
-    expect(result.contracts[0]).toMatchObject({
-      kind: "sql",
-      table: "inventory",
+    const resolution = resolutionOf(response);
+    expect(resolution.query).toBe(DEMO_QUERY);
+    expect(resolution.policy.payloadSchemaVersion).toBe(2);
+    expect(resolution.items.map((item) => item.cardId)).toEqual([
+      "card_payment_api",
+      "card_payments_table",
+      "card_refund_policy",
+    ]);
+
+    const document = itemForCard(resolution, "card_refund_policy");
+    expect(document.fulfillment).toBe("fulfilled");
+    if (document.fulfillment !== "fulfilled") {
+      throw new Error("expected the document Scope to be fulfilled");
+    }
+    expect(document.context.chunks.length).toBeGreaterThan(0);
+
+    const sql = itemForCard(resolution, "card_payments_table");
+    expect(sql.guide).toMatchObject({ kind: "sql", table: "payments" });
+  });
+
+  it("carries items and policy at the root, and none of the split channels", async () => {
+    const response = await post(
+      createDemoHandler(),
+      JSON.stringify({ query: DEMO_QUERY }),
+    );
+
+    const payload = JSON.parse(response.body) as Record<string, unknown>;
+
+    expect(Object.keys(payload).sort()).toEqual([
+      "candidates",
+      "items",
+      "policy",
+      "query",
+      "selection",
+    ]);
+    for (const retired of ["evidence", "contracts", "retrievalFailures"]) {
+      expect(payload).not.toHaveProperty(retired);
+    }
+  });
+
+  /**
+   * The premise the two leak tests below rest on.
+   *
+   * Asserted separately and first: if the fixture ever stopped carrying a
+   * connector id and an access handle, "the response does not contain them"
+   * would still pass while proving nothing at all.
+   */
+  it("selects over a Card that really carries a physical binding", () => {
+    const [scope] = createRefundPolicyCard().scopes;
+
+    expect(scope?.kind).toBe("managed_document");
+    if (scope?.kind !== "managed_document") {
+      throw new Error("expected the refund policy Scope to be a document");
+    }
+    expect(scope.documentIndex.connectorId).toBe(DOCUMENT_CONNECTOR_ID);
+    expect(scope.documentIndex.accessHandle).toBe(DOCUMENT_ACCESS_HANDLE);
+  });
+
+  it("publishes no physical retrieval coordinate on either route", async () => {
+    // The handler runs under the thresholds the package ships. This test and
+    // the one below used to build a handler with the band forced open, because
+    // the old demo query admitted only two Scope kinds and a leak check that
+    // never sees an HTTP guide cannot say whether an HTTP guide leaks. The demo
+    // Cards now answer the demo query on their own, so the checks run on the
+    // path a consumer actually takes rather than on a widened one.
+    const handler = createDemoHandler();
+
+    const bodies = [
+      (await post(handler, JSON.stringify({ query: DEMO_QUERY }))).body,
+      (await get(handler, "/v1/context/cards")).body,
+    ];
+
+    for (const body of bodies) {
+      for (const field of [
+        "connectorId",
+        "accessHandle",
+        "collection",
+        "credential",
+      ]) {
+        expect(body).not.toContain(field);
+      }
+      // The values too, so a rename cannot smuggle the same binding out under
+      // a field name this test does not know about.
+      expect(body).not.toContain(DOCUMENT_CONNECTOR_ID);
+      expect(body).not.toContain(DOCUMENT_ACCESS_HANDLE);
+    }
+  });
+
+  it("keeps the consumer's own SQL and HTTP coordinates", async () => {
+    const response = await post(
+      createDemoHandler(),
+      JSON.stringify({ query: DEMO_QUERY }),
+    );
+
+    // `connector` is the consumer's datasource name and has to survive, while
+    // the document index's `connectorId` above is ours and must not. The two
+    // read alike and are opposite obligations, so both are asserted on one body.
+    for (const coordinate of [
+      "table",
+      "columns",
+      "allowedOperations",
+      "method",
+      "path",
+      "connector",
+      "postgres.main",
+      "payments.api",
+    ]) {
+      expect(response.body).toContain(coordinate);
+    }
+
+    const resolution = resolutionOf(response);
+    expect(itemForCard(resolution, "card_payment_api").guide).toMatchObject({
+      kind: "http",
+      connector: "payments.api",
+      method: "GET",
+      path: "/payments/{paymentId}",
     });
+    expect(itemForCard(resolution, "card_payments_table").guide).toMatchObject({
+      kind: "sql",
+      connector: "postgres.main",
+      table: "payments",
+      columns: ["created_at", "failed_reason", "payment_id", "status"],
+      allowedOperations: ["select"],
+    });
+  });
+
+  it("marks a delegated Scope as delegated and attaches no failure to it", async () => {
+    const resolution = resolutionOf(
+      await post(createDemoHandler(), JSON.stringify({ query: DEMO_QUERY })),
+    );
+
+    for (const cardId of ["card_payments_table", "card_payment_api"]) {
+      const item = itemForCard(resolution, cardId);
+
+      expect(item.fulfillment).toBe("delegated");
+      // We never ran the consumer's database or endpoint, so we are in no
+      // position to report how it went.
+      expect(item).not.toHaveProperty("code");
+      expect(item).not.toHaveProperty("context");
+    }
+  });
+
+  it("reports each retrieval fault as a failed item carrying its code", async () => {
+    const codes: readonly DocumentRetrievalFaultCode[] = [
+      "index_unavailable",
+      "index_version_mismatch",
+      "access_denied",
+    ];
+
+    for (const code of codes) {
+      const response = await post(
+        createFaultingHandler(code),
+        JSON.stringify({ query: DEMO_QUERY }),
+      );
+
+      expect(response.status).toBe(200);
+
+      const item = itemForCard(resolutionOf(response), "card_refund_policy");
+      expect(item.fulfillment).toBe("failed");
+      if (item.fulfillment !== "failed") {
+        throw new Error(`expected ${code} to fail the document Scope`);
+      }
+      expect(item.code).toBe(code);
+      expect(item.guide.kind).toBe("managed_document");
+    }
   });
 
   it("answers empty_query for a query that selects nothing", async () => {
@@ -102,9 +307,16 @@ describe("createHttpQueryHandler", () => {
     );
     expect(narrowed.status).toBe(200);
 
-    const result = JSON.parse(narrowed.body) as DeliveryResult;
-    expect(result.evidence.budget.maxTotalCharacters).toBe(1);
-    expect(result.evidence.truncated).toBe(true);
+    const resolution = resolutionOf(narrowed);
+    // The ceiling is a property of the response as a whole, so it is reported
+    // once on `policy` rather than repeated on every item.
+    expect(resolution.policy.budget.maxTotalCharacters).toBe(1);
+
+    const document = itemForCard(resolution, "card_refund_policy");
+    if (document.fulfillment !== "fulfilled") {
+      throw new Error("expected the document Scope to be fulfilled");
+    }
+    expect(document.context.truncated).toBe(true);
 
     const impossible = await post(
       handler,
@@ -131,7 +343,7 @@ describe("createHttpQueryHandler", () => {
     expect(cards).toHaveLength(3);
     expect(cards.map((card) => card.cardId)).toEqual([
       "card_refund_policy",
-      "card_inventory",
+      "card_payments_table",
       "card_payment_api",
     ]);
     expect(cards.map((card) => card.scopeKinds)).toEqual([
@@ -139,7 +351,7 @@ describe("createHttpQueryHandler", () => {
       ["sql_source"],
       ["http_source"],
     ]);
-    expect(cards[1]?.keywords).toEqual(["재고", "품절", "stock", "수량"]);
+    expect(cards[1]?.keywords).toEqual(["결제 실패", "실패 내역"]);
     expect(cards[0]?.description.length).toBeGreaterThan(0);
   });
 

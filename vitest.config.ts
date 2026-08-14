@@ -8,6 +8,9 @@ export default defineConfig({
       "@contextctl/contracts": fileURLToPath(
         new URL("./packages/contracts/src/index.ts", import.meta.url),
       ),
+      "@contextctl/ingestion-indexing": fileURLToPath(
+        new URL("./packages/ingestion-indexing/src/index.ts", import.meta.url),
+      ),
       "@contextctl/registry-lifecycle": fileURLToPath(
         new URL("./packages/registry-lifecycle/src/index.ts", import.meta.url),
       ),

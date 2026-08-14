@@ -2,16 +2,19 @@ import type { Server } from "node:http";
 
 import { describe, expect, it } from "vitest";
 
-import type { DeliveryResult } from "../../src/application/select-context.js";
+import type {
+  ContextResolution,
+  ResolutionItem,
+} from "../../src/domain/context-resolution.js";
 import { createHttpQueryHandler } from "../../src/infrastructure/http/http-query-handler.js";
 import { createDeliveryHttpServer } from "../../src/infrastructure/http/node-http-server.js";
 import { FixtureDocumentRetriever } from "../../src/infrastructure/fixture-document-retriever.js";
 import { InMemoryCardCatalog } from "../../src/infrastructure/in-memory-card-catalog.js";
-import { createDemoCardSet } from "../fixtures/approved-card.fixture.js";
+import {
+  createDemoCardSet,
+  DEMO_QUERY,
+} from "../fixtures/approved-card.fixture.js";
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
-
-/** The demo question: it names refund wording and stock wording at once. */
-const DEMO_QUERY = "환불할 수 없는 상품과 현재 재고를 알려줘";
 
 /**
  * Binds the server to a loopback port the OS picks.
@@ -69,9 +72,18 @@ describe("createDeliveryHttpServer", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe("application/json");
 
-      const result = (await response.json()) as DeliveryResult;
-      expect(result.query).toBe(DEMO_QUERY);
-      expect(result.evidence.chunks.length).toBeGreaterThan(0);
+      const resolution = (await response.json()) as ContextResolution;
+      expect(resolution.query).toBe(DEMO_QUERY);
+      expect(resolution.policy.payloadSchemaVersion).toBe(2);
+
+      // The round trip is what this test exists for, so it checks that a
+      // fulfilled item survived the socket rather than re-checking assembly.
+      const fulfilled = resolution.items.filter(
+        (item): item is Extract<ResolutionItem, { fulfillment: "fulfilled" }> =>
+          item.fulfillment === "fulfilled",
+      );
+      expect(fulfilled).toHaveLength(1);
+      expect(fulfilled[0]?.context.chunks.length).toBeGreaterThan(0);
     } finally {
       await close(server);
     }
