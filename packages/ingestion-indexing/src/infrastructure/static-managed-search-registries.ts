@@ -23,6 +23,7 @@ export class StaticQueryEmbeddingProviderRegistry
   constructor(registrations: readonly QueryEmbeddingProviderRegistration[]) {
     const bindings = new Map<string, QueryEmbeddingProviderBinding>();
     const providerDomains = new Map<string, string>();
+    const providerInstanceDomains = new Map<EmbeddingPort, string>();
     for (const registration of registrations) {
       if (
         registration.securityDomain.trim() === "" ||
@@ -47,6 +48,21 @@ export class StaticQueryEmbeddingProviderRegistry
         );
       }
       providerDomains.set(registration.providerId, registration.securityDomain);
+      const providerInstanceDomain = providerInstanceDomains.get(
+        registration.provider,
+      );
+      if (
+        providerInstanceDomain !== undefined &&
+        providerInstanceDomain !== registration.securityDomain
+      ) {
+        throw new TypeError(
+          "query embedding provider instance crosses security domains",
+        );
+      }
+      providerInstanceDomains.set(
+        registration.provider,
+        registration.securityDomain,
+      );
       bindings.set(key, {
         providerId: registration.providerId,
         provider: registration.provider,

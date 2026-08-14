@@ -40,7 +40,7 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly credentials?: Readonly<Record<string, unknown>>;
   readonly embeddingProfile: EmbeddingProfile;
   readonly connectorId: string;
-  readonly allowedSecurityDomains: readonly string[];
+  readonly securityDomain: string;
   readonly embeddingProvider?: EmbeddingPort;
   readonly vectorIndex?: VectorIndexPort;
   readonly readyNotifier?: PublicationReadyNotifier;
@@ -119,19 +119,20 @@ export function createLocalMarkdownPublicationRuntime(
     readyNotifier: options.readyNotifier ?? readyNotifications,
     events,
     embeddingProfile: options.embeddingProfile,
+    securityDomain: options.securityDomain,
     clock,
   });
   return {
     workflow,
     search: new ManagedDocumentSearch({
-      embeddingProviders: new StaticQueryEmbeddingProviderRegistry(
-        options.allowedSecurityDomains.map((securityDomain) => ({
-          securityDomain,
+      embeddingProviders: new StaticQueryEmbeddingProviderRegistry([
+        {
+          securityDomain: options.securityDomain,
           embeddingProfile: options.embeddingProfile,
-          providerId: `local.${securityDomain}.${options.embeddingProfile.id}`,
+          providerId: `local.${options.securityDomain}.${options.embeddingProfile.id}`,
           provider: embeddingProvider,
-        })),
-      ),
+        },
+      ]),
       vectorIndexes: new StaticVectorIndexConnectorRegistry([
         { connectorId: options.connectorId, vectorIndex },
       ]),

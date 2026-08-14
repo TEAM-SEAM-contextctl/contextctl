@@ -68,6 +68,9 @@ export {
 export {
   ManagedDocumentSearch,
   ManagedDocumentSearchError,
+  DEFAULT_MANAGED_SEARCH_CONCURRENCY,
+  MAX_MANAGED_SEARCH_BATCH_TARGETS,
+  MAX_MANAGED_SEARCH_QUERY_CHARACTERS,
   type BatchManagedDocumentSearchCommand,
   type BatchManagedDocumentSearchItem,
   type BatchManagedDocumentSearchTarget,
@@ -185,7 +188,10 @@ export {
   InMemoryPublicationReadyNotifier,
 } from "./infrastructure/in-memory-publication-ready-notifier.js";
 export {
+  INGESTION_DATABASE_SCHEMA_VERSION,
+  IngestionDatabaseSchemaError,
   openIngestionDatabase,
+  type IngestionDatabaseSchemaErrorCode,
 } from "./infrastructure/sqlite-ingestion-database.js";
 export {
   SqliteIndexPublicationStore,

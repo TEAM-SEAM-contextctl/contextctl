@@ -42,7 +42,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
-      allowedSecurityDomains: ["tenant-a"],
+      securityDomain: "tenant-a",
       embeddingProvider: embeddings,
       clock: () => NOW,
     });
@@ -130,7 +130,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
-      allowedSecurityDomains: ["tenant-a"],
+      securityDomain: "tenant-a",
       embeddingProvider: embeddings,
       clock: () => NOW,
     });
@@ -185,7 +185,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
-      allowedSecurityDomains: ["tenant-a"],
+      securityDomain: "tenant-a",
       clock: () => NOW,
     });
 
@@ -215,6 +215,40 @@ describe("MarkdownPublicationWorkflow", () => {
     expect(runtime.readyNotifications.notifications).toEqual([]);
   });
 
+  it("rejects a security domain that is not bound to the workflow provider", async () => {
+    const embeddings = new RecordingEmbeddingPort();
+    const runtime = createLocalMarkdownPublicationRuntime({
+      configurations: {
+        "source.fixture": { path: STRUCTURE_FIXTURE },
+      },
+      embeddingProfile: profile,
+      connectorId: "vector.local",
+      securityDomain: "tenant-a",
+      embeddingProvider: embeddings,
+      clock: () => NOW,
+    });
+
+    await expect(
+      runtime.workflow.publish({
+        ...command(),
+        securityDomain: "tenant-b",
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_request",
+      stage: "registration",
+      diagnosticCode: "security_domain_not_allowed",
+      diagnostics: [
+        {
+          stage: "registration",
+          status: "failed",
+          code: "security_domain_not_allowed",
+        },
+      ],
+    });
+    expect(embeddings.requests).toEqual([]);
+    expect(runtime.events.events).toEqual([]);
+  });
+
   it("keeps a committed Publication pending and redelivers its ID after notification failure", async () => {
     const notifier = new FailOnceReadyNotifier();
     const runtime = createLocalMarkdownPublicationRuntime({
@@ -223,7 +257,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
-      allowedSecurityDomains: ["tenant-a"],
+      securityDomain: "tenant-a",
       readyNotifier: notifier,
       clock: () => NOW,
     });
