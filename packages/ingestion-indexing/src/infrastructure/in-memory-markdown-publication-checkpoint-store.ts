@@ -4,6 +4,7 @@ import type {
   MarkdownPublicationCheckpointStore,
   RegisterMarkdownCheckpointResult,
 } from "../ports/markdown-publication.js";
+import { MarkdownPublicationCheckpointConflict } from "../ports/markdown-publication.js";
 
 export class InMemoryMarkdownPublicationCheckpointStore
   implements MarkdownPublicationCheckpointStore
@@ -54,14 +55,5 @@ export class InMemoryMarkdownPublicationCheckpointStore
   ): Promise<MarkdownPublicationCheckpoint | undefined> {
     const checkpoint = this.#bySourceId.get(sourceId);
     return checkpoint === undefined ? undefined : structuredClone(checkpoint);
-  }
-}
-
-export class MarkdownPublicationCheckpointConflict extends Error {
-  readonly code = "checkpoint_conflict";
-
-  constructor() {
-    super("Markdown publication checkpoint is inconsistent");
-    this.name = "MarkdownPublicationCheckpointConflict";
   }
 }

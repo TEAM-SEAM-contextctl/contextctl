@@ -206,6 +206,49 @@ describe("Qdrant vector index adapter", () => {
     expect(prepared.accessHandle).not.toContain("contextctl_");
   });
 
+  it("rehydrates an existing binding into a fresh Qdrant adapter without creating storage", async () => {
+    const client = new FakeQdrantClient();
+    const prepared = await qdrant(client).prepare(compatibility);
+    const value = record("payments", "aaaa", "refunds", [1, 0, 0]);
+    client.queryResult = {
+      points: [
+        {
+          score: 0.9,
+          payload: {
+            recordKind: "chunk",
+            recordId: value.recordId,
+            retrievalText: value.retrievalText,
+            ...value.metadata,
+          },
+        },
+      ],
+    };
+    const creationsBeforeRestart = client.createdCollections.length;
+    const restarted = qdrant(client);
+
+    await restarted.rehydrate({
+      accessHandle: prepared.accessHandle,
+      compatibility: {
+        payloadSchemaVersion: 2,
+        embeddingProfile: {
+          distance: profile.distance,
+          dimensions: profile.dimensions,
+          id: profile.id,
+          maxInputTokens: profile.maxInputTokens,
+          model: profile.model,
+          textMeasureProfileVersion: profile.textMeasureProfileVersion,
+          version: profile.version,
+        },
+        securityDomain: compatibility.securityDomain,
+      },
+    });
+
+    await expect(search(restarted, prepared.accessHandle)).resolves.toHaveLength(
+      1,
+    );
+    expect(client.createdCollections).toHaveLength(creationsBeforeRestart);
+  });
+
   it("translates records and exact Scope filters without leaking core IDs into point IDs", async () => {
     const client = new FakeQdrantClient();
     const adapter = qdrant(client);

@@ -10,6 +10,11 @@ import { stableIdentity } from "../domain/revision-identity.js";
 import type { EmbeddingPort } from "../ports/embedding.js";
 import type { PublicationReadyNotifier } from "../ports/markdown-publication.js";
 import type {
+  IngestionPublicationStore,
+  MarkdownPublicationCheckpointStore,
+} from "../ports/markdown-publication.js";
+import type { IndexPublicationStore } from "../ports/index-publication-store.js";
+import type {
   CredentialResolver,
   SourceConfigurationResolver,
   SourceIdGenerator,
@@ -25,33 +30,43 @@ import { InMemoryVectorIndexAdapter } from "./in-memory-vector-index-adapter.js"
 import { MarkdownFileSourceAdapter } from "./markdown-file-source-adapter.js";
 import { RemarkMarkdownParser } from "./remark-markdown-parser.js";
 import { SourceAdapterRegistry } from "./source-adapter-registry.js";
+import {
+  StaticQueryEmbeddingProviderRegistry,
+  StaticVectorIndexConnectorRegistry,
+} from "./static-managed-search-registries.js";
 
 export interface LocalMarkdownPublicationRuntimeOptions {
   readonly configurations: Readonly<Record<string, unknown>>;
   readonly credentials?: Readonly<Record<string, unknown>>;
   readonly embeddingProfile: EmbeddingProfile;
+  readonly connectorId: string;
+  readonly allowedSecurityDomains: readonly string[];
   readonly embeddingProvider?: EmbeddingPort;
   readonly vectorIndex?: VectorIndexPort;
   readonly readyNotifier?: PublicationReadyNotifier;
+  readonly checkpoints?: MarkdownPublicationCheckpointStore;
+  readonly publications?: IngestionPublicationStore;
+  readonly indexPublications?: IndexPublicationStore;
   readonly embeddingPolicy?: EmbeddingPipelinePolicy;
   readonly defaultSourceTimeoutMs?: number;
+  readonly sourceIds?: SourceIdGenerator;
   readonly clock?: () => string;
 }
 
 export interface LocalMarkdownPublicationRuntime {
   readonly workflow: MarkdownPublicationWorkflow;
   readonly search: ManagedDocumentSearch;
-  readonly checkpoints: InMemoryMarkdownPublicationCheckpointStore;
-  readonly publications: InMemoryIngestionPublicationStore;
+  readonly checkpoints: MarkdownPublicationCheckpointStore;
+  readonly publications: IngestionPublicationStore;
   readonly readyNotifications: InMemoryPublicationReadyNotifier;
   readonly events: InMemoryMarkdownPublicationEventSink;
-  readonly indexPublications: InMemoryIndexPublicationStore;
+  readonly indexPublications: IndexPublicationStore;
   readonly vectorIndex: VectorIndexPort;
 }
 
 /**
- * Network-free I5 composition. Production daemon wiring and durable stores are
- * intentionally left to the composition root and the Index hardening issue.
+ * Network-free composition that defaults to in-memory adapters and accepts
+ * durable adapter instances from a production composition root.
  */
 export function createLocalMarkdownPublicationRuntime(
   options: LocalMarkdownPublicationRuntimeOptions,
@@ -65,17 +80,20 @@ export function createLocalMarkdownPublicationRuntime(
     ]),
     configurations,
     credentials,
-    ids: new SequentialSourceIdGenerator(),
+    ids: options.sourceIds ?? new SequentialSourceIdGenerator(),
     defaultTimeoutMs: options.defaultSourceTimeoutMs ?? 30_000,
   });
   const embeddingProvider =
     options.embeddingProvider ?? new DeterministicEmbeddingAdapter();
   const vectorIndex = options.vectorIndex ?? new InMemoryVectorIndexAdapter();
-  const checkpoints = new InMemoryMarkdownPublicationCheckpointStore();
-  const publications = new InMemoryIngestionPublicationStore();
+  const checkpoints =
+    options.checkpoints ?? new InMemoryMarkdownPublicationCheckpointStore();
+  const publications =
+    options.publications ?? new InMemoryIngestionPublicationStore();
   const readyNotifications = new InMemoryPublicationReadyNotifier();
   const events = new InMemoryMarkdownPublicationEventSink();
-  const indexPublications = new InMemoryIndexPublicationStore();
+  const indexPublications =
+    options.indexPublications ?? new InMemoryIndexPublicationStore();
   const parser = new RemarkMarkdownParser();
   const embeddingPipeline = new EmbeddingPipeline({
     provider: embeddingProvider,
@@ -106,8 +124,17 @@ export function createLocalMarkdownPublicationRuntime(
   return {
     workflow,
     search: new ManagedDocumentSearch({
-      embeddings: embeddingProvider,
-      vectorIndex,
+      embeddingProviders: new StaticQueryEmbeddingProviderRegistry(
+        options.allowedSecurityDomains.map((securityDomain) => ({
+          securityDomain,
+          embeddingProfile: options.embeddingProfile,
+          providerId: `local.${securityDomain}.${options.embeddingProfile.id}`,
+          provider: embeddingProvider,
+        })),
+      ),
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([
+        { connectorId: options.connectorId, vectorIndex },
+      ]),
       publications: indexPublications,
     }),
     checkpoints,

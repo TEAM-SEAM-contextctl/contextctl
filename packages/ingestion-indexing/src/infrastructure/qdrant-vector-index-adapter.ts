@@ -4,6 +4,7 @@ import { QdrantClient } from "@qdrant/js-client-rest";
 
 import type { EmbeddingProfile } from "../domain/embedding-profile.js";
 import { assertValidEmbeddingProfile } from "../domain/embedding-profile.js";
+import { canonicalJson } from "../domain/revision-identity.js";
 import type {
   VectorIndexRecord,
   VectorIndexRecordMetadata,
@@ -116,6 +117,34 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     }
     this.#profiles.set(handle, structuredClone(compatibility.embeddingProfile));
     return { accessHandle: handle, capabilities: { metadataPreFilter: true } };
+  }
+
+  async rehydrate(input: {
+    readonly accessHandle: string;
+    readonly compatibility: VectorIndexCompatibility;
+  }): Promise<{ readonly capabilities: { readonly metadataPreFilter: true } }> {
+    assertInput(() => assertCompatibility(input.compatibility));
+    const expectedHandle = `qdrant:v1:${compatibilityDigest(input.compatibility).slice(0, 32)}`;
+    if (input.accessHandle !== expectedHandle) {
+      throw new VectorIndexFault("invalid_request", false);
+    }
+    const collection = parseAccessHandle(input.accessHandle);
+    try {
+      const existence = await this.#client.collectionExists(collection);
+      if (!existence.exists) {
+        throw new VectorIndexFault("index_unavailable", false);
+      }
+      const info = await this.#client.getCollection(collection);
+      assertCollectionCompatibility(info, input.compatibility);
+      assertRequiredPayloadIndexes(info);
+    } catch (error) {
+      throw translateQdrantFault(error);
+    }
+    this.#profiles.set(
+      input.accessHandle,
+      structuredClone(input.compatibility.embeddingProfile),
+    );
+    return { capabilities: { metadataPreFilter: true } };
   }
 
   async upsertRecords(input: {
@@ -339,7 +368,7 @@ function collectionName(compatibility: VectorIndexCompatibility): string {
 
 function compatibilityDigest(compatibility: VectorIndexCompatibility): string {
   return createHash("sha256")
-    .update(JSON.stringify({
+    .update(canonicalJson({
       securityDomain: compatibility.securityDomain,
       embeddingProfile: compatibility.embeddingProfile,
       payloadSchemaVersion: compatibility.payloadSchemaVersion,
@@ -432,7 +461,7 @@ function assertKnownProfile(
   if (known === undefined) {
     throw new VectorIndexFault("index_unavailable", false);
   }
-  if (JSON.stringify(known) !== JSON.stringify(profile)) {
+  if (canonicalJson(known) !== canonicalJson(profile)) {
     throw new VectorIndexFault("invalid_request", false);
   }
 }

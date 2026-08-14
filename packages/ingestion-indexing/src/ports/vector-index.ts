@@ -19,6 +19,12 @@ export interface PreparedVectorIndex {
   };
 }
 
+export interface RehydratedVectorIndex {
+  readonly capabilities: {
+    readonly metadataPreFilter: true;
+  };
+}
+
 export interface VectorIndexScope {
   readonly documentIndexId: string;
   readonly indexVersion: string;
@@ -49,6 +55,14 @@ export interface VectorIndexRetentionLease {
 /** Outbound storage contract owned by the Ingestion indexing workflow. */
 export interface VectorIndexPort {
   prepare(compatibility: VectorIndexCompatibility): Promise<PreparedVectorIndex>;
+  /**
+   * Restores a published opaque binding after process-local adapter state was
+   * lost. Unlike prepare, this operation must not create missing storage.
+   */
+  rehydrate(input: {
+    readonly accessHandle: string;
+    readonly compatibility: VectorIndexCompatibility;
+  }): Promise<RehydratedVectorIndex>;
   upsertRecords(input: {
     readonly accessHandle: string;
     readonly embeddingProfile: EmbeddingProfile;

@@ -6,6 +6,8 @@ import {
   InMemoryIndexPublicationStore,
   InMemoryVectorIndexAdapter,
   ManagedDocumentSearch,
+  StaticQueryEmbeddingProviderRegistry,
+  StaticVectorIndexConnectorRegistry,
   createVectorRecordId,
   sha256Digest,
   type EmbeddingPort,
@@ -217,8 +219,17 @@ async function createHarness() {
     publication,
     vectorIndex,
     search: new ManagedDocumentSearch({
-      embeddings,
-      vectorIndex,
+      embeddingProviders: new StaticQueryEmbeddingProviderRegistry([
+        {
+          securityDomain: "tenant-a",
+          embeddingProfile: profile,
+          providerId: "provider.test",
+          provider: embeddings,
+        },
+      ]),
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([
+        { connectorId: "vector.main", vectorIndex },
+      ]),
       publications,
     }),
   };
@@ -292,6 +303,8 @@ class RecordingVectorIndex implements VectorIndexPort {
   constructor(private readonly delegate: VectorIndexPort) {}
 
   prepare: VectorIndexPort["prepare"] = (input) => this.delegate.prepare(input);
+  rehydrate: VectorIndexPort["rehydrate"] = (input) =>
+    this.delegate.rehydrate(input);
   upsertRecords: VectorIndexPort["upsertRecords"] = (input) =>
     this.delegate.upsertRecords(input);
   listVersionRecords: VectorIndexPort["listVersionRecords"] = (input) =>

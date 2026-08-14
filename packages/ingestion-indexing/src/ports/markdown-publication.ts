@@ -56,7 +56,7 @@ export interface RegisterMarkdownCheckpointResult {
   readonly checkpoint: MarkdownPublicationCheckpoint;
 }
 
-/** Process-local in I5; a durable replacement is part of Index hardening. */
+/** Checkpoint boundary; production compositions bind a durable adapter. */
 export interface MarkdownPublicationCheckpointStore {
   register(
     source: KnowledgeSource,
@@ -91,4 +91,22 @@ export interface IngestionPublicationStore {
 
 export interface PublicationReadyNotifier {
   notify(notification: PublicationReady): Promise<void>;
+}
+
+export class IngestionPublicationStoreConflict extends Error {
+  readonly code = "publication_conflict";
+
+  constructor() {
+    super("Ingestion Publication store rejected conflicting immutable content");
+    this.name = "IngestionPublicationStoreConflict";
+  }
+}
+
+export class MarkdownPublicationCheckpointConflict extends Error {
+  readonly code = "checkpoint_conflict";
+
+  constructor() {
+    super("Markdown publication checkpoint is inconsistent");
+    this.name = "MarkdownPublicationCheckpointConflict";
+  }
 }

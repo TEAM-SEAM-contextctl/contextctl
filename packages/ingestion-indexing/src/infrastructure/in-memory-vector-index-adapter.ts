@@ -1,3 +1,9 @@
+import { createHash } from "node:crypto";
+
+import type { EmbeddingProfile } from "../domain/embedding-profile.js";
+import { assertValidEmbeddingProfile } from "../domain/embedding-profile.js";
+import type { VectorIndexRecord } from "../domain/index-manifest.js";
+import { canonicalJson } from "../domain/revision-identity.js";
 import {
   assertValidLeaseId,
   assertValidRetentionLease,
@@ -6,9 +12,6 @@ import {
   assertValidVectorRecordBatch,
   assertValidVectorVersion,
 } from "../domain/vector-index.js";
-import type { EmbeddingProfile } from "../domain/embedding-profile.js";
-import { assertValidEmbeddingProfile } from "../domain/embedding-profile.js";
-import type { VectorIndexRecord } from "../domain/index-manifest.js";
 import {
   MAX_VECTOR_SEARCH_LIMIT,
   VectorIndexFault,
@@ -20,7 +23,6 @@ import {
   type VectorIndexSearchHit,
   type VectorIndexStoredRecord,
 } from "../ports/vector-index.js";
-import { createHash } from "node:crypto";
 
 interface MemoryCollection {
   readonly compatibility: VectorIndexCompatibility;
@@ -44,6 +46,32 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
       });
     }
     return { accessHandle, capabilities: { metadataPreFilter: true } };
+  }
+
+  async rehydrate(input: {
+    readonly accessHandle: string;
+    readonly compatibility: VectorIndexCompatibility;
+  }): Promise<{ readonly capabilities: { readonly metadataPreFilter: true } }> {
+    assertInput(() => assertCompatibility(input.compatibility));
+    const collection = this.#requiredCollection(input.accessHandle);
+    assertInput(() => {
+      if (compatibilityHandle(input.compatibility) !== input.accessHandle) {
+        throw new TypeError("vector binding is incompatible");
+      }
+      assertSameProfile(
+        collection.compatibility.embeddingProfile,
+        input.compatibility.embeddingProfile,
+      );
+      if (
+        collection.compatibility.securityDomain !==
+          input.compatibility.securityDomain ||
+        collection.compatibility.payloadSchemaVersion !==
+          input.compatibility.payloadSchemaVersion
+      ) {
+        throw new TypeError("vector binding is incompatible");
+      }
+    });
+    return { capabilities: { metadataPreFilter: true } };
   }
 
   async upsertRecords(input: {
@@ -171,7 +199,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
 
 function compatibilityHandle(compatibility: VectorIndexCompatibility): string {
   const digest = createHash("sha256")
-    .update(JSON.stringify({
+    .update(canonicalJson({
       securityDomain: compatibility.securityDomain,
       profile: compatibility.embeddingProfile,
       payloadSchemaVersion: compatibility.payloadSchemaVersion,
@@ -189,7 +217,7 @@ function assertCompatibility(compatibility: VectorIndexCompatibility): void {
 }
 
 function assertSameProfile(left: EmbeddingProfile, right: EmbeddingProfile): void {
-  if (JSON.stringify(left) !== JSON.stringify(right)) {
+  if (canonicalJson(left) !== canonicalJson(right)) {
     throw new VectorIndexFault("invalid_request", false);
   }
 }

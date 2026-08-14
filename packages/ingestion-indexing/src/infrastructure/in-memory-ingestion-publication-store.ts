@@ -10,6 +10,7 @@ import type {
   CommitIngestionPublicationResult,
   IngestionPublicationStore,
 } from "../ports/markdown-publication.js";
+import { IngestionPublicationStoreConflict } from "../ports/markdown-publication.js";
 
 interface StoredPublication {
   readonly publication: IngestionPublication;
@@ -25,9 +26,14 @@ export class InMemoryIngestionPublicationStore
   async commitReady(
     input: IngestionPublication,
   ): Promise<CommitIngestionPublicationResult> {
-    const publication = parseIngestionPublication(
-      JSON.parse(JSON.stringify(input)) as unknown,
-    );
+    let publication: IngestionPublication;
+    try {
+      publication = parseIngestionPublication(
+        JSON.parse(JSON.stringify(input)) as unknown,
+      );
+    } catch {
+      throw new IngestionPublicationStoreConflict();
+    }
     const existing = this.#publications.get(publication.publicationId);
     if (existing !== undefined) {
       if (canonicalJson(existing.publication) !== canonicalJson(publication)) {
@@ -86,14 +92,5 @@ export class InMemoryIngestionPublicationStore
       throw new IngestionPublicationStoreConflict();
     }
     stored.notified = true;
-  }
-}
-
-export class IngestionPublicationStoreConflict extends Error {
-  readonly code = "publication_conflict";
-
-  constructor() {
-    super("Ingestion Publication store rejected conflicting immutable content");
-    this.name = "IngestionPublicationStoreConflict";
   }
 }
