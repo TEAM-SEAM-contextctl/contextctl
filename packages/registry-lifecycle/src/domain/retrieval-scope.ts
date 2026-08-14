@@ -18,8 +18,10 @@ export interface RetrievalScopeReference {
 
 /**
  * Immutable index reference carried in the approved Card read model. The
- * connector and access handle stay opaque: Registry never interprets them and
- * the daemon's Vector DB adapter resolves them without calling Ingestion.
+ * connector and access handle stay opaque: Registry never interprets them, and
+ * they reach the physical index only through Selection's internal fulfillment
+ * target, which the daemon adapter hands to Indexing's search surface. They are
+ * never projected into the public RetrievalGuide or any consumer transport.
  */
 export interface DocumentIndexRef {
   readonly documentIndexId: DocumentIndexId;
