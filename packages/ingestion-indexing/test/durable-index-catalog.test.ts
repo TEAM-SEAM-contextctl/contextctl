@@ -2,7 +2,7 @@ import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 
 import type {
   PublicationReady,
@@ -13,10 +13,13 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   DeterministicEmbeddingAdapter,
+  INGESTION_DATABASE_SCHEMA_VERSION,
   InMemoryIndexPublicationStore,
   InMemoryPublicationReadyNotifier,
   InMemoryVectorIndexAdapter,
   IndexCatalogFault,
+  IngestionDatabaseSchemaError,
+  MAX_MANAGED_SEARCH_BATCH_TARGETS,
   ManagedDocumentSearch,
   PublicationReadyReconciler,
   SqliteIndexPublicationStore,
@@ -74,6 +77,44 @@ describe("durable Index control plane", () => {
         new UuidSourceIdGenerator({ randomUuid: () => "not-a-uuid" })
           .nextSourceId(),
     ).toThrow(TypeError);
+  });
+
+  it("versions the control-plane schema and rejects newer or malformed databases", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "contextctl-schema-"));
+    temporaryDirectories.push(directory);
+    const healthyPath = join(directory, "healthy.sqlite");
+    const healthy = openIngestionDatabase(healthyPath);
+    expect(
+      healthy.prepare("PRAGMA user_version").get(),
+    ).toEqual({ user_version: INGESTION_DATABASE_SCHEMA_VERSION });
+    healthy.close();
+
+    const newerPath = join(directory, "newer.sqlite");
+    const newer = new DatabaseSync(newerPath);
+    newer.exec(
+      `PRAGMA user_version = ${String(
+        INGESTION_DATABASE_SCHEMA_VERSION + 1,
+      )}`,
+    );
+    newer.close();
+    expect(() => openIngestionDatabase(newerPath)).toThrowError(
+      expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
+        code: "schema_newer",
+      }),
+    );
+
+    const malformedPath = join(directory, "malformed.sqlite");
+    const malformed = new DatabaseSync(malformedPath);
+    malformed.exec(`
+      CREATE TABLE index_versions (document_index_id TEXT PRIMARY KEY);
+      PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)};
+    `);
+    malformed.close();
+    expect(() => openIngestionDatabase(malformedPath)).toThrowError(
+      expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
+        code: "schema_invalid",
+      }),
+    );
   });
 
   it.each(["memory", "sqlite"] as const)(
@@ -247,6 +288,70 @@ describe("durable Index control plane", () => {
     database.close();
   });
 
+  it("bounds batch size, query input, and concurrent target searches", async () => {
+    const fixture = await createTemporaryFixture();
+    const database = openIngestionDatabase(fixture.databasePath);
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+      5,
+    );
+    const embeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const runtime = createDurableRuntime(
+      fixture.markdownPath,
+      database,
+      vectorIndex,
+      embeddings,
+    );
+    const published = await runtime.workflow.publish(command());
+    const scope = requiredManagedScope(
+      requiredValue(published.publication).knowledgeUnits[0]?.publishedScopes[0],
+    );
+    const managedSearch = new ManagedDocumentSearch({
+      embeddingProviders: providerRegistry(embeddings),
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([
+        { connectorId: "vector.local", vectorIndex },
+      ]),
+      publications: runtime.indexPublications,
+      maxConcurrency: 3,
+    });
+
+    const items = await managedSearch.searchBatch({
+      queryText: "결제 재시도",
+      targets: Array.from({ length: 12 }, (_, index) =>
+        target(`bounded-${String(index)}`, scope),
+      ),
+    });
+    expect(items.every((item) => item.status === "fulfilled")).toBe(true);
+    expect(vectorIndex.maxConcurrentSearches).toBe(3);
+
+    await expect(
+      managedSearch.searchBatch({
+        queryText: "bounded batch",
+        targets: Array.from(
+          { length: MAX_MANAGED_SEARCH_BATCH_TARGETS + 1 },
+          (_, index) => target(`overflow-${String(index)}`, scope),
+        ),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+
+    const callsBeforeOversizedQuery = embeddings.requests.length;
+    const oversized = await managedSearch.searchBatch({
+      queryText: "a".repeat(profile.maxInputTokens * 4 + 1),
+      targets: [target("oversized-query", scope)],
+    });
+    expect(oversized[0]).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "query_input_limit_exceeded",
+        retriable: false,
+      },
+    });
+    expect(embeddings.requests).toHaveLength(callsBeforeOversizedQuery);
+    database.close();
+  });
+
   it("never shares a query vector across security domains", async () => {
     const vectorIndex = new RecordingVectorIndex(
       new InMemoryVectorIndexAdapter(),
@@ -340,6 +445,23 @@ describe("durable Index control plane", () => {
           },
         ]),
     ).toThrow(/crosses security domains/);
+    expect(
+      () =>
+        new StaticQueryEmbeddingProviderRegistry([
+          {
+            securityDomain: "tenant-a",
+            embeddingProfile: profile,
+            providerId: "provider.tenant-a-second",
+            provider: tenantAEmbeddings,
+          },
+          {
+            securityDomain: "tenant-b",
+            embeddingProfile: profile,
+            providerId: "provider.tenant-b-second",
+            provider: tenantAEmbeddings,
+          },
+        ]),
+    ).toThrow(/instance crosses security domains/);
   });
 
   it("fails closed for a disallowed provider, missing binding, and corrupt catalog record", async () => {
@@ -515,7 +637,7 @@ function createDurableRuntime(
     embeddingProvider,
     vectorIndex,
     connectorId: "vector.local",
-    allowedSecurityDomains: ["tenant-a"],
+    securityDomain: "tenant-a",
     checkpoints: new SqliteMarkdownPublicationCheckpointStore(database),
     publications: new SqliteIngestionPublicationStore(database),
     indexPublications: new SqliteIndexPublicationStore(database),
@@ -712,8 +834,13 @@ class RecordingEmbeddingPort implements EmbeddingPort {
 class RecordingVectorIndex implements VectorIndexPort {
   rehydrateCalls = 0;
   searchCalls = 0;
+  activeSearches = 0;
+  maxConcurrentSearches = 0;
 
-  constructor(private readonly delegate: VectorIndexPort) {}
+  constructor(
+    private readonly delegate: VectorIndexPort,
+    private readonly searchDelayMs = 0,
+  ) {}
 
   prepare: VectorIndexPort["prepare"] = (input) => this.delegate.prepare(input);
   upsertRecords: VectorIndexPort["upsertRecords"] = (input) =>
@@ -734,7 +861,19 @@ class RecordingVectorIndex implements VectorIndexPort {
 
   async search(input: Parameters<VectorIndexPort["search"]>[0]) {
     this.searchCalls += 1;
-    return this.delegate.search(input);
+    this.activeSearches += 1;
+    this.maxConcurrentSearches = Math.max(
+      this.maxConcurrentSearches,
+      this.activeSearches,
+    );
+    try {
+      if (this.searchDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.searchDelayMs));
+      }
+      return await this.delegate.search(input);
+    } finally {
+      this.activeSearches -= 1;
+    }
   }
 }
 

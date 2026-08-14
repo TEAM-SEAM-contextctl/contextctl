@@ -4,6 +4,10 @@ import {
 } from "@contextctl/contracts";
 
 import { sha256Digest } from "../domain/document-capture.js";
+import {
+  measureText,
+  TEXT_MEASURE_PROFILE_VERSION,
+} from "../domain/document-indexing-policy.js";
 import type { EmbeddingProfile } from "../domain/embedding-profile.js";
 import { canonicalJson } from "../domain/revision-identity.js";
 import { createVectorRecordId } from "../domain/vector-index.js";
@@ -28,6 +32,9 @@ import {
 } from "../ports/vector-index.js";
 
 const QUERY_EMBEDDING_KEY = "managed-document-query";
+export const MAX_MANAGED_SEARCH_BATCH_TARGETS = 64;
+export const DEFAULT_MANAGED_SEARCH_CONCURRENCY = 8;
+export const MAX_MANAGED_SEARCH_QUERY_CHARACTERS = 32_768;
 
 export interface ManagedDocumentSearchCommand {
   readonly queryText: string;
@@ -85,6 +92,7 @@ export interface ManagedDocumentSearchDependencies {
   readonly embeddingProviders: QueryEmbeddingProviderResolver;
   readonly vectorIndexes: VectorIndexConnectorResolver;
   readonly publications: IndexPublicationStore;
+  readonly maxConcurrency?: number;
 }
 
 export type ManagedDocumentSearchErrorCode =
@@ -98,6 +106,7 @@ export type ManagedDocumentSearchErrorCode =
   | "invalid_request"
   | "query_embedding_failed"
   | "query_embedding_invalid"
+  | "query_input_limit_exceeded"
   | "scope_not_published"
   | "search_result_invalid"
   | "security_domain_mismatch"
@@ -134,9 +143,20 @@ interface ResolvedTarget {
 /** Searches one or more immutable managed-document Scopes with target isolation. */
 export class ManagedDocumentSearch {
   readonly #dependencies: ManagedDocumentSearchDependencies;
+  readonly #maxConcurrency: number;
 
   constructor(dependencies: ManagedDocumentSearchDependencies) {
+    if (
+      dependencies.maxConcurrency !== undefined &&
+      (!Number.isSafeInteger(dependencies.maxConcurrency) ||
+        dependencies.maxConcurrency <= 0 ||
+        dependencies.maxConcurrency > MAX_MANAGED_SEARCH_BATCH_TARGETS)
+    ) {
+      throw new TypeError("managed document search concurrency is invalid");
+    }
     this.#dependencies = dependencies;
+    this.#maxConcurrency =
+      dependencies.maxConcurrency ?? DEFAULT_MANAGED_SEARCH_CONCURRENCY;
   }
 
   async search(
@@ -178,8 +198,10 @@ export class ManagedDocumentSearch {
       embeddings: new Map(),
       bindings: new Map(),
     };
-    return Promise.all(
-      command.targets.map(async (target): Promise<BatchManagedDocumentSearchItem> => {
+    return mapWithConcurrency(
+      command.targets,
+      this.#maxConcurrency,
+      async (target): Promise<BatchManagedDocumentSearchItem> => {
         try {
           const hits = await this.#searchTarget(target, context);
           return { targetKey: target.targetKey, status: "fulfilled", hits };
@@ -191,7 +213,7 @@ export class ManagedDocumentSearch {
             failure: { code: failure.code, retriable: failure.retriable },
           };
         }
-      }),
+      },
     );
   }
 
@@ -238,6 +260,14 @@ export class ManagedDocumentSearch {
     }
     if (publication.securityDomain !== target.securityDomain) {
       throw new ManagedDocumentSearchError("security_domain_mismatch");
+    }
+    if (
+      publication.manifest.embeddingProfile.textMeasureProfileVersion ===
+        TEXT_MEASURE_PROFILE_VERSION &&
+      measureText(context.queryText) >
+        publication.manifest.embeddingProfile.maxInputTokens
+    ) {
+      throw new ManagedDocumentSearchError("query_input_limit_exceeded");
     }
     if (
       publication.manifest.payloadSchemaVersion !== 2 ||
@@ -417,7 +447,9 @@ async function embedQuery(
 function validateBatchCommand(command: BatchManagedDocumentSearchCommand): void {
   if (
     command.queryText.trim() === "" ||
+    command.queryText.length > MAX_MANAGED_SEARCH_QUERY_CHARACTERS ||
     command.targets.length === 0 ||
+    command.targets.length > MAX_MANAGED_SEARCH_BATCH_TARGETS ||
     command.signal?.aborted === true ||
     new Set(command.targets.map((target) => target.targetKey)).size !==
       command.targets.length ||
@@ -427,6 +459,27 @@ function validateBatchCommand(command: BatchManagedDocumentSearchCommand): void 
       command.signal?.aborted === true ? "cancelled" : "invalid_request",
     );
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  task: (value: T) => Promise<R>,
+): Promise<readonly R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (next < values.length) {
+        const index = next;
+        next += 1;
+        results[index] = await task(values[index]!);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 function parseTarget(

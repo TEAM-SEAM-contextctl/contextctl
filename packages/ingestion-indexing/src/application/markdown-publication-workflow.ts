@@ -99,6 +99,8 @@ export interface MarkdownPublicationWorkflowDependencies {
   readonly readyNotifier: PublicationReadyNotifier;
   readonly events: MarkdownPublicationEventSink;
   readonly embeddingProfile: EmbeddingProfile;
+  /** One workflow instance is bound to exactly one provider security domain. */
+  readonly securityDomain: string;
   readonly indexingPolicy?: DocumentIndexingPolicySet;
   readonly clock?: () => string;
 }
@@ -114,6 +116,9 @@ export class MarkdownPublicationWorkflow {
   #nextOperation = 1;
 
   constructor(dependencies: MarkdownPublicationWorkflowDependencies) {
+    if (dependencies.securityDomain.trim() === "") {
+      throw new TypeError("Markdown publication security domain is invalid");
+    }
     this.#dependencies = dependencies;
     this.#policy = dependencies.indexingPolicy ?? DEFAULT_DOCUMENT_INDEXING_POLICY;
     this.#clock = dependencies.clock ?? (() => new Date().toISOString());
@@ -122,17 +127,31 @@ export class MarkdownPublicationWorkflow {
   async publish(
     command: PublishMarkdownSourceCommand,
   ): Promise<PublishMarkdownSourceResult> {
+    const securityDomainDenied =
+      command.securityDomain.trim() !== "" &&
+      command.securityDomain !== this.#dependencies.securityDomain;
     if (
       command.source.sourceType !== "markdown" ||
       command.connectorId.trim() === "" ||
       command.securityDomain.trim() === "" ||
+      command.securityDomain !== this.#dependencies.securityDomain ||
       command.signal?.aborted === true
     ) {
       throw new MarkdownPublicationWorkflowError(
         "invalid_request",
         "registration",
-        "invalid_request",
-        [{ stage: "registration", status: "failed", code: "invalid_request" }],
+        securityDomainDenied
+          ? "security_domain_not_allowed"
+          : "invalid_request",
+        [
+          {
+            stage: "registration",
+            status: "failed",
+            code: securityDomainDenied
+              ? "security_domain_not_allowed"
+              : "invalid_request",
+          },
+        ],
       );
     }
     const operation = new OperationContext(
