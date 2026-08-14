@@ -7,6 +7,37 @@ import type { ApprovedCard } from "../../src/domain/card-catalog.js";
  * test that mutates or narrows a returned Card cannot leak into the next one.
  */
 
+/**
+ * The one query the demo Card set is written against.
+ *
+ * It lives here rather than in each suite because the same literal was declared
+ * separately in six test files: changing the query in one place left the others
+ * scoring against the old wording, and nothing failed loudly enough to say so.
+ * A demo Card set and the query those Cards are designed to answer are one pair
+ * that has to move together, so they are declared together.
+ *
+ * Each of the three Cards below matches a different clause of it: "환불 불가"
+ * reaches the policy document, "결제 실패 내역" reaches the payments table, and
+ * "결제 상태 조회" reaches the lookup API.
+ */
+export const DEMO_QUERY =
+  "환불 불가 상품과 결제 실패 내역, 그리고 결제 상태 조회 방법을 알려줘";
+
+/**
+ * A query from a domain no demo Card covers, used as a negative control.
+ *
+ * Widening a Card's vocabulary until it is admitted and a Card being admitted
+ * because it can actually answer produce the same observation — an admitted
+ * Card — so the difference has to be measured somewhere else. Asserting that
+ * *no* Card is admitted for an unrelated query is that measurement: it fails
+ * the moment a keyword is broad enough to catch text the Card cannot answer,
+ * which is exactly the failure the product claims to avoid.
+ *
+ * None of the three Cards' keywords or aliases occurs in this text, so every
+ * score falls back to the indirect signals and stays under the admit threshold.
+ */
+export const UNRELATED_QUERY = "사내 연차 규정과 휴가 신청 절차를 알려줘";
+
 /** Managed document Card. Answers refund eligibility questions. */
 export function createRefundPolicyCard(): ApprovedCard {
   return {
@@ -44,33 +75,39 @@ export function createRefundPolicyCard(): ApprovedCard {
   };
 }
 
-/** SQL Card. Answers stock questions, and shares the "환불" vocabulary. */
-export function createInventoryCard(): ApprovedCard {
+/**
+ * SQL Card. Answers what went wrong with past payments.
+ *
+ * Its vocabulary is deliberately narrower than the lookup API's: the bare word
+ * "결제" belongs to `createPaymentApiCard`, and declaring it here too would drag
+ * this table into every query that merely mentions payment. This table answers
+ * "which payments failed, and why", not "what is the status of this payment",
+ * so both declared keywords carry the "실패" the table can actually account for.
+ */
+export function createPaymentsTableCard(): ApprovedCard {
   return {
-    cardId: "card_inventory",
-    versionId: "cardv_inventory_v1",
+    cardId: "card_payments_table",
+    versionId: "cardv_payments_table_v1",
     meaning: {
-      description: "상품 재고 테이블 — 상품별 현재 재고 수량과 환불 가능 여부",
-      representativeQuestions: ["현재 재고가 있는 상품은 무엇인가요?"],
-      aliases: ["stock", "inventory"],
-      keywords: ["재고", "품절", "stock", "수량"],
+      description: "결제 내역 테이블 — 결제별 상태와 실패 사유, 발생 시각",
+      representativeQuestions: [
+        "결제 실패 내역은 어디에서 확인하나요?",
+        "실패한 결제의 사유는 무엇인가요?",
+      ],
+      aliases: ["payment failures"],
+      keywords: ["결제 실패", "실패 내역"],
     },
     policy: { sensitive: false, allowedUsage: ["retrieval"] },
     scopes: [
       {
         kind: "sql_source",
         reference: {
-          scopeId: "scope_inventory_table",
+          scopeId: "scope_payments_table",
           scopeVersion: "scopev_0001",
         },
         connector: "postgres.main",
-        table: "inventory",
-        columns: [
-          "product_id",
-          "product_name",
-          "refundable",
-          "stock_quantity",
-        ],
+        table: "payments",
+        columns: ["created_at", "failed_reason", "payment_id", "status"],
       },
     ],
   };
@@ -107,7 +144,190 @@ export function createPaymentApiCard(): ApprovedCard {
 export function createDemoCardSet(): readonly ApprovedCard[] {
   return [
     createRefundPolicyCard(),
-    createInventoryCard(),
+    createPaymentsTableCard(),
     createPaymentApiCard(),
+  ];
+}
+
+/**
+ * The query the four Cards below are written against, and the reason they are
+ * separate from the demo set.
+ *
+ * A test about what a resolution *serializes* needs every Scope kind and every
+ * `fulfillment` state present at once, and the demo Cards only reach that under
+ * a widened threshold band — which made the serialization suite depend on the
+ * exact number `card_payment_api` happens to score. A scoring heuristic that
+ * moved would then break tests about serialization.
+ *
+ * These Cards depend on a declared policy constant instead of on a number. Each
+ * one declares a keyword that appears in this query literally, and
+ * `query-scoring.ts` puts every direct keyword match at or above
+ * `DIRECT_MATCH_FLOOR` (0.9), which sits above the default admit threshold
+ * (0.85) by construction — that split is the whole point of separating direct
+ * from indirect signals. So all four are admitted under
+ * `DEFAULT_SELECTION_THRESHOLDS`, and no test has to state a band of its own.
+ *
+ * The terms are distinct enough that none is a substring of another, so each
+ * Card matches on its own word rather than on a neighbour's.
+ */
+export const ALL_OUTCOMES_QUERY =
+  "환불정책문서와 재고원장 표, 결제조회엔드포인트, 그리고 유실된색인 문서를 한 번에 확인한다";
+
+/**
+ * Managed document Card that resolves to `fulfilled`.
+ *
+ * It points at `docidx_refund_policy`, the one index
+ * `createRefundPolicyChunkMap()` registers, so `FixtureDocumentRetriever`
+ * answers with the refund policy chunks. Its physical binding is deliberately
+ * non-empty: the serialization tests assert these values never reach a
+ * consumer, and an exclusion check over a Card that never carried them proves
+ * nothing.
+ */
+export function createIndexedDocumentCard(): ApprovedCard {
+  return {
+    cardId: "card_indexed_document",
+    versionId: "cardv_indexed_document_v1",
+    meaning: {
+      description: "환불 정책 문서의 색인 — 우리가 발행하고 색인한 문서다",
+      representativeQuestions: ["환불정책문서에는 무엇이 적혀 있나요?"],
+      aliases: ["indexed policy document"],
+      keywords: ["환불정책문서"],
+    },
+    policy: { sensitive: false, allowedUsage: ["retrieval"] },
+    scopes: [
+      {
+        kind: "managed_document",
+        reference: {
+          scopeId: "scope_indexed_document",
+          scopeVersion: "scopev_0001",
+        },
+        documentIndex: {
+          documentIndexId: "docidx_refund_policy",
+          sourceId: "src_policy_docs",
+          documentId: "doc_refund_policy",
+          indexVersion: "idxv_0001",
+          connectorId: "vector.local",
+          accessHandle: "documents/policies/indexes/refund",
+        },
+        selection: { kind: "document" },
+      },
+    ],
+  };
+}
+
+/** SQL Card that resolves to `delegated`: we hand over coordinates, never run them. */
+export function createLedgerTableCard(): ApprovedCard {
+  return {
+    cardId: "card_ledger_table",
+    versionId: "cardv_ledger_table_v1",
+    meaning: {
+      description: "재고 원장 테이블 — 상품별 입출고 이력",
+      representativeQuestions: ["재고원장에서 입출고 이력을 어떻게 보나요?"],
+      aliases: ["inventory ledger"],
+      keywords: ["재고원장"],
+    },
+    policy: { sensitive: false, allowedUsage: ["retrieval"] },
+    scopes: [
+      {
+        kind: "sql_source",
+        reference: {
+          scopeId: "scope_ledger_table",
+          scopeVersion: "scopev_0001",
+        },
+        connector: "postgres.ledger",
+        table: "inventory_ledger",
+        columns: ["ledger_id", "product_id", "delta_quantity", "recorded_at"],
+      },
+    ],
+  };
+}
+
+/** HTTP Card that resolves to `delegated`, for the same reason the SQL one does. */
+export function createLookupApiCard(): ApprovedCard {
+  return {
+    cardId: "card_lookup_api",
+    versionId: "cardv_lookup_api_v1",
+    meaning: {
+      description: "결제 조회 엔드포인트 — 결제 단건의 현재 상태",
+      representativeQuestions: [
+        "결제조회엔드포인트는 어떤 상태를 돌려주나요?",
+      ],
+      aliases: ["settlement lookup"],
+      keywords: ["결제조회엔드포인트"],
+    },
+    policy: { sensitive: false, allowedUsage: ["retrieval"] },
+    scopes: [
+      {
+        kind: "http_source",
+        reference: {
+          scopeId: "scope_lookup_api",
+          scopeVersion: "scopev_0001",
+        },
+        connector: "billing.api",
+        method: "GET",
+        path: "/settlements/{settlementId}",
+      },
+    ],
+  };
+}
+
+/**
+ * Managed document Card that resolves to `failed`.
+ *
+ * Its `documentIndexId` is not registered in any chunk map, and
+ * `FixtureDocumentRetriever` rejects an unknown index with
+ * `DocumentRetrievalFault("index_unavailable")`. The failure therefore comes
+ * from the adapter's own behaviour rather than from a stub written to fail,
+ * which is what makes the resulting item honest.
+ *
+ * Its binding differs from the indexed Card's so the exclusion checks cover the
+ * guide of a `failed` item too: that guide is serialized just like a fulfilled
+ * one, and nothing about failing exempts it from the field ban.
+ */
+export function createUnindexedDocumentCard(): ApprovedCard {
+  return {
+    cardId: "card_unindexed_document",
+    versionId: "cardv_unindexed_document_v1",
+    meaning: {
+      description: "색인이 유실된 문서 — 승인은 살아 있으나 색인을 읽을 수 없다",
+      representativeQuestions: ["유실된색인 문서는 어떻게 보고되나요?"],
+      aliases: ["retired index"],
+      keywords: ["유실된색인"],
+    },
+    policy: { sensitive: false, allowedUsage: ["retrieval"] },
+    scopes: [
+      {
+        kind: "managed_document",
+        reference: {
+          scopeId: "scope_unindexed_document",
+          scopeVersion: "scopev_0001",
+        },
+        documentIndex: {
+          documentIndexId: "docidx_not_registered",
+          sourceId: "src_policy_docs",
+          documentId: "doc_retired_terms",
+          indexVersion: "idxv_0002",
+          connectorId: "vector.retired",
+          accessHandle: "documents/policies/indexes/retired",
+        },
+        selection: { kind: "document" },
+      },
+    ],
+  };
+}
+
+/**
+ * The four Cards above, in catalog order.
+ *
+ * Resolved against `ALL_OUTCOMES_QUERY` under the default thresholds they
+ * produce all three Scope kinds and all three `fulfillment` states, with a
+ * managed document on both sides of the fulfilled/failed split.
+ */
+export function createAllOutcomesCardSet(): readonly ApprovedCard[] {
+  return [
+    createIndexedDocumentCard(),
+    createLedgerTableCard(),
+    createLookupApiCard(),
+    createUnindexedDocumentCard(),
   ];
 }

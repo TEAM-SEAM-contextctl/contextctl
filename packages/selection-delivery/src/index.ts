@@ -11,33 +11,44 @@ export type {
   ApprovedSqlScope,
 } from "./domain/card-catalog.js";
 export {
+  buildRetrievalGuide,
+  type ContextResolution,
+  type HttpRetrievalGuide,
+  type ManagedDocumentGuide,
+  type ResolutionFaultCode,
+  type ResolutionItem,
+  type ResolutionPolicy,
+  type RetrievalGuide,
+  type RetrievedDocumentContext,
+  type SqlRetrievalGuide,
+} from "./domain/context-resolution.js";
+export {
   EvidenceBudgetInvariantError,
   SelectionCandidateInvariantError,
   SelectionScopeInvariantError,
   SelectionThresholdsInvariantError,
 } from "./domain/errors.js";
+// `assembleDocumentEvidence` and its result are deliberately absent: assembly
+// is a step inside `resolveContext`, and exporting it would let a caller
+// reassemble evidence outside the one place that knows the budget the response
+// was built under. The vocabulary a resolution is read with does cross.
 export {
-  assembleDocumentEvidence,
   DEFAULT_EVIDENCE_BUDGET,
   EVIDENCE_ASSEMBLY_POLICY_VERSION,
   type EvidenceBudget,
   type EvidenceChunk,
   type EvidenceOmission,
-  type ManagedDocumentEvidence,
 } from "./domain/evidence-assembly.js";
+export {
+  buildFulfillmentTarget,
+  type ManagedDocumentFulfillmentTarget,
+} from "./domain/fulfillment-target.js";
 export {
   QUERY_SCORING_POLICY_VERSION,
   scoreCardsAgainstQuery,
   type CandidateScore,
   type ScoreSignal,
 } from "./domain/query-scoring.js";
-export {
-  buildRetrievalContracts,
-  type ContractSource,
-  type HttpRetrievalContract,
-  type RetrievalContract,
-  type SqlRetrievalContract,
-} from "./domain/retrieval-contract.js";
 export {
   DEFAULT_SELECTION_THRESHOLDS,
   judgeCandidates,
@@ -53,12 +64,10 @@ export {
 } from "./domain/selection-verdict.js";
 export { EmptyQueryError } from "./application/errors.js";
 export {
-  selectContext,
-  type DeliveryResult,
-  type ScopeRetrievalFailure,
-  type SelectContextOptions,
-  type SelectContextPorts,
-} from "./application/select-context.js";
+  resolveContext,
+  type ResolveContextOptions,
+  type ResolveContextPorts,
+} from "./application/resolve-context.js";
 export type { ApprovedCardCatalog } from "./ports/approved-card-catalog.js";
 export {
   DocumentRetrievalFault,

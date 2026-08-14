@@ -11,6 +11,7 @@
   },
   "files": ["dist"],
   "dependencies": {
+    "@contextctl/ingestion-indexing": "0.0.0",
     "@contextctl/registry-lifecycle": "0.0.0",
     "@contextctl/selection-delivery": "0.0.0"
   }

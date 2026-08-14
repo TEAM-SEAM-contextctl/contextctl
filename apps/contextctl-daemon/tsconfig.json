@@ -7,6 +7,7 @@
   },
   "include": ["src"],
   "references": [
+    { "path": "../../packages/ingestion-indexing" },
     { "path": "../../packages/registry-lifecycle" },
     { "path": "../../packages/selection-delivery" }
   ]

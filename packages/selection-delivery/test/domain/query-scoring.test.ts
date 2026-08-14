@@ -16,6 +16,8 @@ import {
 import {
   createDemoCardSet,
   createRefundPolicyCard,
+  DEMO_QUERY,
+  UNRELATED_QUERY,
 } from "../fixtures/approved-card.fixture.js";
 
 const EMPTY_MEANING: ApprovedCardMeaning = {
@@ -214,12 +216,11 @@ describe("scoreCardsAgainstQuery", () => {
   });
 
   it("produces the same result twice and the same per-Card score in any order", () => {
-    const query = "환불할 수 없는 상품과 현재 재고를 알려줘";
     const cards = createDemoCardSet();
 
-    const first = scoreCardsAgainstQuery(query, cards);
-    const second = scoreCardsAgainstQuery(query, cards);
-    const reversed = scoreCardsAgainstQuery(query, [...cards].reverse());
+    const first = scoreCardsAgainstQuery(DEMO_QUERY, cards);
+    const second = scoreCardsAgainstQuery(DEMO_QUERY, cards);
+    const reversed = scoreCardsAgainstQuery(DEMO_QUERY, [...cards].reverse());
 
     expect(second).toEqual(first);
     expect(scoreByCardId(reversed)).toEqual(scoreByCardId(first));
@@ -227,10 +228,7 @@ describe("scoreCardsAgainstQuery", () => {
 
   it("feeds judgeCandidates unchanged, carrying versionId through", () => {
     const cards = createDemoCardSet();
-    const scores = scoreCardsAgainstQuery(
-      "환불할 수 없는 상품과 현재 재고를 알려줘",
-      cards,
-    );
+    const scores = scoreCardsAgainstQuery(DEMO_QUERY, cards);
 
     const { outcomes, provenance } = judgeCandidates(scores);
 
@@ -244,44 +242,86 @@ describe("scoreCardsAgainstQuery", () => {
     }
   });
 
-  it("pins the demo query: refund and inventory admit, payment rejects", () => {
+  it("pins the demo query: every demo Card reaches the admit band", () => {
     const scores = scoreByCardId(
-      scoreCardsAgainstQuery(
-        "환불할 수 없는 상품과 현재 재고를 알려줘",
-        createDemoCardSet(),
-      ),
+      scoreCardsAgainstQuery(DEMO_QUERY, createDemoCardSet()),
     );
 
-    expect(scores.get("card_refund_policy")).toBeGreaterThanOrEqual(0.85);
-    expect(scores.get("card_inventory")).toBeGreaterThanOrEqual(0.85);
-    expect(scores.get("card_payment_api")).toBeLessThan(0.35);
+    // Compared against the threshold constant rather than against the numbers
+    // the heuristic currently produces. Pinning 0.9167 here would turn any
+    // tuning of the scoring constants into a failure of a test that is not
+    // about them: what the demo depends on is that each Card clears the bar.
+    for (const cardId of [
+      "card_refund_policy",
+      "card_payments_table",
+      "card_payment_api",
+    ]) {
+      expect(scores.get(cardId)).toBeGreaterThanOrEqual(
+        DEFAULT_SELECTION_THRESHOLDS.admit,
+      );
+    }
   });
 
-  it("admits the inventory Card on its keyword, not on its description prose", () => {
-    const inventory = createDemoCardSet().find(
-      (card) => card.cardId === "card_inventory",
+  it("admits no demo Card at all on a query from a domain none of them covers", () => {
+    // The negative control, and the reason it is worth more than the positive
+    // one above: widening a Card's keywords until it is admitted and a Card
+    // being admitted because it can answer look identical from the admit side.
+    // Only "nothing is admitted for an unrelated question" tells them apart,
+    // and it fails the moment a declared term is broad enough to catch text the
+    // Card cannot account for.
+    const scores = scoreCardsAgainstQuery(UNRELATED_QUERY, createDemoCardSet());
+
+    expect(scores).toHaveLength(3);
+    for (const scored of scores) {
+      expect(scored.score).toBeLessThan(DEFAULT_SELECTION_THRESHOLDS.admit);
+
+      // And the scores are low for the right reason. A score alone cannot
+      // separate "no declared term matched" from "a term matched but the
+      // arithmetic happened to land low", so the direct signals are asserted
+      // absent outright: not one keyword or alias of any demo Card occurs in
+      // this query.
+      expect(
+        scored.signals.filter(
+          (signal) => signal.field === "keyword" || signal.field === "alias",
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("admits the payments table Card on its keyword, not on its description prose", () => {
+    const payments = createDemoCardSet().find(
+      (card) => card.cardId === "card_payments_table",
     );
-    if (inventory === undefined) {
-      throw new Error("demo card set no longer contains the inventory Card");
+    if (payments === undefined) {
+      throw new Error("demo card set no longer contains the payments table Card");
     }
 
-    const scored = scoreOne("환불할 수 없는 상품과 현재 재고를 알려줘", inventory);
+    const scored = scoreOne(DEMO_QUERY, payments);
     const admitting = scored.signals.filter(
       (signal) => signal.contribution >= DEFAULT_SELECTION_THRESHOLDS.admit,
     );
 
-    expect(admitting.map((signal) => signal.field)).toEqual(["keyword"]);
-    expect(admitting[0]?.matched).toBe("재고");
+    expect(admitting.map((signal) => signal.field)).toEqual([
+      "keyword",
+      "keyword",
+    ]);
+    expect(admitting.map((signal) => signal.matched)).toEqual([
+      "결제 실패",
+      "실패 내역",
+    ]);
   });
 
   it("gives the demo query a defer-or-lower score on prose overlap alone", () => {
     const scored = scoreOne(
-      "환불할 수 없는 상품과 현재 재고를 알려줘",
+      DEMO_QUERY,
       cardMeaning({
-        description: "상품 재고 테이블 — 상품별 현재 재고 수량과 환불 가능 여부",
+        description: "결제 내역 테이블 — 결제별 상태와 실패 사유, 발생 시각",
       }),
     );
 
+    // Non-vacuous on both sides: the prose really does resemble the query, and
+    // resembling it is still not enough to be admitted.
+    expect(scored.score).toBeGreaterThan(0);
     expect(scored.score).toBeLessThan(DEFAULT_SELECTION_THRESHOLDS.admit);
   });
 });

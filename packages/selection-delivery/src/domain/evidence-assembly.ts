@@ -61,19 +61,48 @@ export interface EvidenceOmission {
 }
 
 /**
+ * One dropped chunk with the chunk itself still attached.
+ *
+ * An `EvidenceOmission` identifies a chunk but does not say which Scope it came
+ * from, and the caller has to know: assembly runs over every admitted Scope at
+ * once, and each omission has to end up in the one item that Scope produced.
+ * Re-joining afterwards by `chunkRevisionId` would be wrong precisely in the
+ * deduplication case — the dropped copy belongs to a different Scope than the
+ * surviving one — so the link is kept rather than reconstructed.
+ */
+export interface OmittedChunk {
+  readonly chunk: EvidenceChunk;
+  readonly reason: EvidenceOmission["reason"];
+}
+
+/**
  * The evidence assembled for one answer, and what it cost.
  *
- * `omitted` and `truncated` are part of the result rather than a side channel:
- * a consumer that sees only the surviving chunks cannot tell an exhaustive
- * answer from a clipped one, and that difference changes how the answer may be
- * used.
+ * Internal to this domain: it is the raw outcome of one assembly pass, not a
+ * shape any consumer receives. `resolveContext` splits it per Scope into the
+ * `RetrievedDocumentContext` of each item, which is what leaves the package.
+ *
+ * The policy version and the budget deliberately do not appear here. Both are
+ * facts about the whole response rather than about this pass, and they are
+ * stated once on `ResolutionPolicy`; carrying them along a second time would
+ * let two copies of one unvarying fact disagree.
+ *
+ * `omitted` is part of the result rather than a side channel: a consumer that
+ * sees only the surviving chunks cannot tell an exhaustive answer from a
+ * clipped one, and that difference changes how the answer may be used.
  */
-export interface ManagedDocumentEvidence {
+export interface AssembledEvidence {
   readonly chunks: readonly EvidenceChunk[];
-  readonly omitted: readonly EvidenceOmission[];
-  readonly truncated: boolean;
-  readonly policyVersion: string;
-  readonly budget: EvidenceBudget;
+  readonly omitted: readonly OmittedChunk[];
+}
+
+/** Projects an attributed omission into the record a consumer receives. */
+export function toEvidenceOmission(omitted: OmittedChunk): EvidenceOmission {
+  return {
+    chunkId: omitted.chunk.chunkId,
+    chunkRevisionId: omitted.chunk.chunkRevisionId,
+    reason: omitted.reason,
+  };
 }
 
 /**
@@ -94,26 +123,18 @@ export interface ManagedDocumentEvidence {
 export function assembleDocumentEvidence(
   chunks: readonly EvidenceChunk[],
   budget: EvidenceBudget = DEFAULT_EVIDENCE_BUDGET,
-): ManagedDocumentEvidence {
+): AssembledEvidence {
   assertUsableBudget(budget);
 
   // The caller's array is never reordered: ranking is an observation, not a
   // mutation of the input.
   const ranked = [...chunks].sort(compareChunks);
 
-  const omitted: EvidenceOmission[] = [];
+  const omitted: OmittedChunk[] = [];
   const distinct = dropRepeats(ranked, omitted);
   const admitted = applyBudget(distinct, budget, omitted);
 
-  return {
-    chunks: admitted,
-    omitted,
-    truncated: omitted.some(
-      (omission) => omission.reason === "budget_exhausted",
-    ),
-    policyVersion: EVIDENCE_ASSEMBLY_POLICY_VERSION,
-    budget,
-  };
+  return { chunks: admitted, omitted };
 }
 
 /**
@@ -131,7 +152,7 @@ export function assembleDocumentEvidence(
  */
 function dropRepeats(
   ranked: readonly EvidenceChunk[],
-  omitted: EvidenceOmission[],
+  omitted: OmittedChunk[],
 ): readonly EvidenceChunk[] {
   const seenRevisions = new Set<string>();
   const seenDigests = new Set<string>();
@@ -166,7 +187,7 @@ function dropRepeats(
 function applyBudget(
   distinct: readonly EvidenceChunk[],
   budget: EvidenceBudget,
-  omitted: EvidenceOmission[],
+  omitted: OmittedChunk[],
 ): readonly EvidenceChunk[] {
   const admitted: EvidenceChunk[] = [];
   let usedCharacters = 0;
@@ -199,12 +220,8 @@ function applyBudget(
 function omission(
   chunk: EvidenceChunk,
   reason: EvidenceOmission["reason"],
-): EvidenceOmission {
-  return {
-    chunkId: chunk.chunkId,
-    chunkRevisionId: chunk.chunkRevisionId,
-    reason,
-  };
+): OmittedChunk {
+  return { chunk, reason };
 }
 
 function compareChunks(left: EvidenceChunk, right: EvidenceChunk): number {

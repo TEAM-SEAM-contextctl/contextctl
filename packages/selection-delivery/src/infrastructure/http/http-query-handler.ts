@@ -1,8 +1,8 @@
 import {
-  selectContext,
-  type SelectContextOptions,
-  type SelectContextPorts,
-} from "../../application/select-context.js";
+  resolveContext,
+  type ResolveContextOptions,
+  type ResolveContextPorts,
+} from "../../application/resolve-context.js";
 import { EmptyQueryError } from "../../application/errors.js";
 import type { ApprovedCard, ApprovedScope } from "../../domain/card-catalog.js";
 import { DEFAULT_EVIDENCE_BUDGET } from "../../domain/evidence-assembly.js";
@@ -51,7 +51,7 @@ const CARDS_PATH = "/v1/context/cards";
  *
  * A closed set, and deliberately coarse: a code names what the caller has to do
  * differently, never what went wrong inside. `internal_error` in particular
- * carries no detail at all — see `runSelection`.
+ * carries no detail at all — see `runResolution`.
  */
 type DeliveryErrorCode =
   | "invalid_json"
@@ -79,8 +79,8 @@ interface ApprovedCardSummary {
  * selection policy into a request parameter.
  */
 export function createHttpQueryHandler(
-  ports: SelectContextPorts,
-  options?: SelectContextOptions,
+  ports: ResolveContextPorts,
+  options?: ResolveContextOptions,
 ): DeliveryHttpHandler {
   return async (request: DeliveryHttpRequest): Promise<DeliveryHttpResponse> => {
     const path = stripQueryString(request.path);
@@ -93,7 +93,7 @@ export function createHttpQueryHandler(
       if (request.method !== "POST") {
         return errorResponse(405, "method_not_allowed");
       }
-      return runSelection(ports, options, request.body);
+      return runResolution(ports, options, request.body);
     }
 
     if (path === CARDS_PATH) {
@@ -108,7 +108,7 @@ export function createHttpQueryHandler(
 }
 
 /**
- * Decodes a selection request, runs the use case, and reduces every failure to
+ * Decodes a resolution request, runs the use case, and reduces every failure to
  * a code.
  *
  * The catch is total on purpose. `EmptyQueryError` and
@@ -116,12 +116,13 @@ export function createHttpQueryHandler(
  * to a caller, and anything else is a fault the caller cannot act on: it
  * becomes `internal_error` with no message attached, because an exception
  * raised deep in an adapter names hosts, paths and credentials, and a delivery
- * response is exactly the wrong place for them. `select-context.ts` keeps the
- * same rule for retrieval faults.
+ * response is exactly the wrong place for them. `resolve-context.ts` keeps the
+ * same rule for retrieval faults: a Scope that could not be read becomes a
+ * `failed` item carrying a code, never a message.
  */
-async function runSelection(
-  ports: SelectContextPorts,
-  options: SelectContextOptions | undefined,
+async function runResolution(
+  ports: ResolveContextPorts,
+  options: ResolveContextOptions | undefined,
   body: string,
 ): Promise<DeliveryHttpResponse> {
   let parsed: unknown;
@@ -154,8 +155,12 @@ async function runSelection(
   const effectiveOptions = withBudgetOverride(options, requestedCharacters);
 
   try {
-    const result = await selectContext(ports, query, effectiveOptions);
-    return { status: 200, body: JSON.stringify(result) };
+    // Serialized whole and unexamined. The `ContextResolution` type is what
+    // decides what a consumer may see — `ManagedDocumentGuide` omits the
+    // connector id and access handle on purpose — so re-picking fields here
+    // would only create a second place for that decision to drift.
+    const resolution = await resolveContext(ports, query, effectiveOptions);
+    return { status: 200, body: JSON.stringify(resolution) };
   } catch (cause: unknown) {
     if (cause instanceof EmptyQueryError) {
       return errorResponse(400, "empty_query");
@@ -179,9 +184,9 @@ async function runSelection(
  * let the two drift apart.
  */
 function withBudgetOverride(
-  options: SelectContextOptions | undefined,
+  options: ResolveContextOptions | undefined,
   requestedCharacters: number | undefined,
-): SelectContextOptions {
+): ResolveContextOptions {
   if (requestedCharacters === undefined) {
     return options ?? {};
   }
@@ -204,7 +209,7 @@ function withBudgetOverride(
  * because they tell a caller what shape of answer a Card can produce.
  */
 async function listCards(
-  ports: SelectContextPorts,
+  ports: ResolveContextPorts,
 ): Promise<DeliveryHttpResponse> {
   try {
     const cards = await ports.catalog.listApprovedCards();

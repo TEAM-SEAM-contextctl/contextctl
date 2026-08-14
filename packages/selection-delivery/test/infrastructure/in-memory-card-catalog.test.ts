@@ -4,7 +4,7 @@ import type { ApprovedCard } from "../../src/domain/card-catalog.js";
 import { InMemoryCardCatalog } from "../../src/infrastructure/in-memory-card-catalog.js";
 import {
   createDemoCardSet,
-  createInventoryCard,
+  createPaymentsTableCard,
   createRefundPolicyCard,
 } from "../fixtures/approved-card.fixture.js";
 
@@ -18,7 +18,7 @@ describe("InMemoryCardCatalog", () => {
 
     expect(cardIdsOf(await catalog.listApprovedCards())).toEqual([
       "card_refund_policy",
-      "card_inventory",
+      "card_payments_table",
       "card_payment_api",
     ]);
   });
@@ -36,7 +36,7 @@ describe("InMemoryCardCatalog", () => {
 
     expect(cardIdsOf(await catalog.listApprovedCards())).toEqual([
       "card_refund_policy",
-      "card_inventory",
+      "card_payments_table",
       "card_payment_api",
     ]);
   });
@@ -45,7 +45,7 @@ describe("InMemoryCardCatalog", () => {
     const source: ApprovedCard[] = [createRefundPolicyCard()];
     const catalog = new InMemoryCardCatalog(source);
 
-    source.push(createInventoryCard());
+    source.push(createPaymentsTableCard());
 
     expect(cardIdsOf(await catalog.listApprovedCards())).toEqual([
       "card_refund_policy",

@@ -1,9 +1,9 @@
 import { EmptyQueryError } from "../../application/errors.js";
 import {
-  selectContext,
-  type SelectContextOptions,
-  type SelectContextPorts,
-} from "../../application/select-context.js";
+  resolveContext,
+  type ResolveContextOptions,
+  type ResolveContextPorts,
+} from "../../application/resolve-context.js";
 import type { ApprovedCard, ApprovedScope } from "../../domain/card-catalog.js";
 import { EvidenceBudgetInvariantError } from "../../domain/errors.js";
 import { DEFAULT_EVIDENCE_BUDGET } from "../../domain/evidence-assembly.js";
@@ -36,7 +36,7 @@ export const MCP_PROTOCOL_VERSION = "2025-06-18";
  */
 export const SELECTION_MCP_TOOL_NAMES = [
   "list_context_cards",
-  "select_context",
+  "resolve_context",
 ] as const;
 
 /** A JSON-RPC endpoint over one message at a time; transport-agnostic. */
@@ -58,13 +58,13 @@ interface McpToolDefinition {
 const TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
   {
     name: SELECTION_MCP_TOOL_NAMES[0],
-    description: "List the approved context cards available for selection.",
+    description: "List the approved context cards available for resolution.",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: SELECTION_MCP_TOOL_NAMES[1],
     description:
-      "Select context cards for a query and return document evidence and retrieval coordinates.",
+      "Resolve a query into the approved scopes it may be answered from, each with its retrieval guide and, for a managed document, the retrieved context.",
     inputSchema: {
       type: "object",
       properties: {
@@ -77,17 +77,17 @@ const TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
 ];
 
 /**
- * An MCP server over the selection use case, exposing queries only.
+ * An MCP server over the resolution use case, exposing queries only.
  *
  * The server owns no state beyond the ports and options it was built with, so
  * two messages never interfere and a transport may hand it one message at a
  * time in any order. Assembly of the ports themselves stays with the daemon.
  */
 export function createMcpQueryServer(
-  ports: SelectContextPorts,
-  options?: SelectContextOptions,
+  ports: ResolveContextPorts,
+  options?: ResolveContextOptions,
 ): McpQueryServer {
-  const baseOptions: SelectContextOptions = options ?? {};
+  const baseOptions: ResolveContextOptions = options ?? {};
 
   return {
     async handleMessage(rawMessage: string): Promise<string | undefined> {
@@ -126,8 +126,8 @@ export function createMcpQueryServer(
 }
 
 async function handleToolCall(
-  ports: SelectContextPorts,
-  baseOptions: SelectContextOptions,
+  ports: ResolveContextPorts,
+  baseOptions: ResolveContextOptions,
   id: JsonRpcId,
   params: unknown,
 ): Promise<string> {
@@ -149,8 +149,8 @@ async function handleToolCall(
   switch (name) {
     case "list_context_cards":
       return await runTool(id, async () => summarizeCatalog(await listCards(ports)));
-    case "select_context":
-      return await callSelectContext(ports, baseOptions, id, toolArguments);
+    case "resolve_context":
+      return await callResolveContext(ports, baseOptions, id, toolArguments);
     default:
       return formatJsonRpcError(
         id,
@@ -160,9 +160,9 @@ async function handleToolCall(
   }
 }
 
-async function callSelectContext(
-  ports: SelectContextPorts,
-  baseOptions: SelectContextOptions,
+async function callResolveContext(
+  ports: ResolveContextPorts,
+  baseOptions: ResolveContextOptions,
   id: JsonRpcId,
   toolArguments: Readonly<Record<string, unknown>>,
 ): Promise<string> {
@@ -171,7 +171,7 @@ async function callSelectContext(
     return formatJsonRpcError(
       id,
       JSON_RPC_INVALID_PARAMS,
-      'Tool "select_context" requires a string "query".',
+      'Tool "resolve_context" requires a string "query".',
     );
   }
 
@@ -186,14 +186,14 @@ async function callSelectContext(
     return formatJsonRpcError(
       id,
       JSON_RPC_INVALID_PARAMS,
-      'Tool "select_context" requires "maxEvidenceCharacters" to be a number.',
+      'Tool "resolve_context" requires "maxEvidenceCharacters" to be a number.',
     );
   }
 
   // Only the character ceiling is overridden; the chunk ceiling stays whatever
   // the server was assembled with, so a caller cannot widen a limit it was
   // never given control of.
-  const callOptions: SelectContextOptions =
+  const callOptions: ResolveContextOptions =
     maxEvidenceCharacters === undefined
       ? baseOptions
       : {
@@ -204,10 +204,10 @@ async function callSelectContext(
           },
         };
 
-  return await runTool(id, () => selectContext(ports, query, callOptions));
+  return await runTool(id, () => resolveContext(ports, query, callOptions));
 }
 
-function listCards(ports: SelectContextPorts): Promise<readonly ApprovedCard[]> {
+function listCards(ports: ResolveContextPorts): Promise<readonly ApprovedCard[]> {
   return ports.catalog.listApprovedCards();
 }
 
@@ -247,7 +247,7 @@ function distinctScopeKinds(
  * only judgement here — a domain error states a rule the caller broke and is
  * safe to repeat, while anything else may carry adapter-internal detail (a
  * host, a path, a store's own wording) and is reduced to a fixed string. This
- * matches how `select-context.ts` treats a retriever's own exception.
+ * matches how `resolve-context.ts` treats a retriever's own exception.
  */
 async function runTool(id: JsonRpcId, execute: () => Promise<unknown>): Promise<string> {
   try {
