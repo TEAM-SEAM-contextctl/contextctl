@@ -2,7 +2,6 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { CardDecisionPorts } from "../../src/application/approve-card-version.js";
 import {
   appendCardVersion,
   type CardVersion,
@@ -12,10 +11,14 @@ import {
   withCardVersions,
   type ContextCard,
 } from "../../src/domain/context-card.js";
-import { runOperatorCommand } from "../../src/infrastructure/cli/operator-command.js";
+import {
+  runOperatorCommand,
+  type OperatorCommandPorts,
+} from "../../src/infrastructure/cli/operator-command.js";
 import { openRegistryDatabase } from "../../src/infrastructure/sqlite/registry-database.js";
 import { SqliteCardStore } from "../../src/infrastructure/sqlite/sqlite-card-store.js";
 import { SqliteLifecycleEventStore } from "../../src/infrastructure/sqlite/sqlite-lifecycle-event-store.js";
+import { SqliteScopeReachabilityStore } from "../../src/infrastructure/sqlite/sqlite-scope-reachability-store.js";
 import { createDocumentCardVersion } from "../fixtures/card-version.fixture.js";
 
 const meaning = {
@@ -49,7 +52,7 @@ function version(
 
 describe("runOperatorCommand", () => {
   let database: DatabaseSync;
-  let ports: CardDecisionPorts;
+  let ports: OperatorCommandPorts;
   let events: SqliteLifecycleEventStore;
 
   beforeEach(async () => {
@@ -59,6 +62,7 @@ describe("runOperatorCommand", () => {
     let nextId = 0;
     ports = {
       cards: store,
+      scopes: new SqliteScopeReachabilityStore(database),
       clock: { now: () => "2026-08-10T00:00:00.000Z" },
       ids: {
         nextId: () => {
@@ -259,5 +263,169 @@ describe("runOperatorCommand", () => {
     expect(tooMany.output).toContain("disable takes 1 argument(s), got 2");
     expect(tooFew.status).toBe("usage_error");
     expect(tooFew.output).toContain("approve takes 2 argument(s), got 1");
+  });
+
+  describe("reachability", () => {
+    // A Card of its own, carrying exactly one version. The shared fixture Card
+    // also holds a draft over the same Scope version, and a draft outranks
+    // every unreachable state — correct, but it would hide what these cases
+    // are about.
+    let soloPorts: OperatorCommandPorts;
+
+    beforeEach(async () => {
+      const soloDatabase = openRegistryDatabase(":memory:");
+      const store = new SqliteCardStore(soloDatabase);
+      soloPorts = {
+        ...ports,
+        cards: store,
+        scopes: new SqliteScopeReachabilityStore(soloDatabase),
+      };
+      await store.saveCard(
+        cardWith("unit_solo", [version("cv_solo", "unit_solo", "validated")]),
+        [],
+      );
+    });
+
+    async function approveSolo(): Promise<void> {
+      await runOperatorCommand(soloPorts, [
+        "approve",
+        "unit_solo",
+        "cv_solo",
+        "--by",
+        "operator@example.test",
+      ]);
+    }
+
+    async function disableSolo(note?: string): Promise<void> {
+      await runOperatorCommand(soloPorts, [
+        "disable",
+        "unit_solo",
+        "--by",
+        "operator@example.test",
+        ...(note === undefined ? [] : ["--note", note]),
+      ]);
+    }
+
+    it("summarises the states and passes the gate when nothing is unreachable", async () => {
+      await approveSolo();
+
+      const result = await runOperatorCommand(soloPorts, ["reachability"]);
+
+      expect(result.status).toBe("ok");
+      expect(result.output).toContain("reachable");
+      expect(result.output).toContain("coverage 100%");
+      expect(result.output).toContain("gate registry-reachability-v1: passed");
+    });
+
+    it("fails the gate when a Card was disabled with no reason", async () => {
+      await approveSolo();
+      await disableSolo();
+
+      const result = await runOperatorCommand(soloPorts, ["reachability"]);
+
+      // No note, so nobody can tell later whether the Scope was dropped on
+      // purpose. That is the state the gate refuses to ship.
+      expect(result.status).toBe("gate_failed");
+      expect(result.output).toContain("orphaned");
+      expect(result.output).toContain("FAILED");
+    });
+
+    it("passes the gate once that same decision records a reason", async () => {
+      await approveSolo();
+      await disableSolo("정책 핸드북으로 대체됨");
+
+      const result = await runOperatorCommand(soloPorts, ["reachability"]);
+
+      expect(result.status).toBe("ok");
+      expect(result.output).toContain("intentionally_unexposed");
+    });
+
+    it("names the scope versions in one state, with the reason when there is one", async () => {
+      await approveSolo();
+      await disableSolo("정책 핸드북으로 대체됨");
+
+      const result = await runOperatorCommand(soloPorts, [
+        "reachability",
+        "--state",
+        "intentionally_unexposed",
+      ]);
+
+      expect(result.status).toBe("ok");
+      expect(result.output).toContain("scope_payment_failures@scpv_aaaa");
+      expect(result.output).toContain("정책 핸드북으로 대체됨");
+    });
+
+    it("keeps a draft ahead of the unreachable states", async () => {
+      // The shared fixture Card carries a validated version and a draft over
+      // one Scope version. Withdrawing the served version leaves the draft, so
+      // the Scope is awaiting approval rather than orphaned.
+      await runOperatorCommand(ports, [
+        "approve",
+        "unit_a",
+        "cv_a",
+        "--by",
+        "operator@example.test",
+      ]);
+      await runOperatorCommand(ports, [
+        "disable",
+        "unit_a",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      const result = await runOperatorCommand(ports, ["reachability"]);
+
+      expect(result.status).toBe("ok");
+      expect(result.output).toContain("pending_approval");
+    });
+
+    it("says so rather than printing nothing when a state has no scopes", async () => {
+      const result = await runOperatorCommand(soloPorts, [
+        "reachability",
+        "--state",
+        "broken",
+      ]);
+
+      expect(result.status).toBe("ok");
+      expect(result.output).toBe("no scope versions are broken");
+    });
+
+    it("rejects a state name that does not exist", async () => {
+      const result = await runOperatorCommand(soloPorts, [
+        "reachability",
+        "--state",
+        "unreachable",
+      ]);
+
+      expect(result.status).toBe("usage_error");
+      expect(result.output).toContain("unknown state: unreachable");
+    });
+
+    it("rejects options it does not take", async () => {
+      const result = await runOperatorCommand(soloPorts, [
+        "reachability",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      // Reading decides nothing, so there is no actor to record.
+      expect(result.status).toBe("usage_error");
+      expect(result.output).toContain("unknown option: --by");
+    });
+
+    it("reports an empty registry as unprocessed rather than clean", async () => {
+      const emptyDatabase = openRegistryDatabase(":memory:");
+      const result = await runOperatorCommand(
+        {
+          ...ports,
+          cards: new SqliteCardStore(emptyDatabase),
+          scopes: new SqliteScopeReachabilityStore(emptyDatabase),
+        },
+        ["reachability"],
+      );
+
+      expect(result.status).toBe("ok");
+      expect(result.output).toContain("no scope versions have been processed yet");
+    });
   });
 });

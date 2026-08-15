@@ -113,6 +113,7 @@ export type { PublicationRepository } from "./ports/publication-repository.js";
 export type { ScopeReachabilityStore } from "./ports/scope-reachability-store.js";
 export {
   runOperatorCommand,
+  type OperatorCommandPorts,
   type OperatorCommandResult,
 } from "./infrastructure/cli/operator-command.js";
 export { DeterministicCardMeaningGenerator } from "./infrastructure/deterministic-card-meaning-generator.js";
