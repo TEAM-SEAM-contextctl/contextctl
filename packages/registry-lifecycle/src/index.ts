@@ -22,7 +22,18 @@ export {
   toCardCatalogEntry,
   type CardCatalogEntry,
 } from "./domain/card-catalog.js";
-export { CardVersionInvariantError } from "./domain/errors.js";
+export {
+  judgeScopeReachability,
+  type ScopeCarrier,
+  type ScopeDecision,
+  type ScopeObservation,
+  type ScopeReachability,
+  type ScopeReachabilityState,
+} from "./domain/scope-reachability.js";
+export {
+  CardVersionInvariantError,
+  ScopeReachabilityInvariantError,
+} from "./domain/errors.js";
 export type { CardLineage } from "./domain/lineage.js";
 export {
   translatePublishedScope,
