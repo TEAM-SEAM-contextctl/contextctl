@@ -23,12 +23,19 @@ export {
   type CardCatalogEntry,
 } from "./domain/card-catalog.js";
 export {
+  collectScopeObservations,
   judgeScopeReachability,
+  reachabilityGateViolations,
+  summarizeScopeReachability,
+  toScopeDecisions,
+  type ReachabilityGateViolation,
+  type ReachabilityReport,
   type ScopeCarrier,
   type ScopeDecision,
   type ScopeObservation,
   type ScopeReachability,
   type ScopeReachabilityState,
+  type ScopeSighting,
 } from "./domain/scope-reachability.js";
 export {
   CardVersionInvariantError,
@@ -79,6 +86,10 @@ export {
   type PublicationImpactAssessment,
 } from "./application/assess-publication-impact.js";
 export {
+  buildReachabilityReport,
+  type BuildReachabilityReportPorts,
+} from "./application/build-reachability-report.js";
+export {
   approveCardVersion,
   disableCard,
   rejectCardVersion,
@@ -99,6 +110,7 @@ export type { ConsumerCheckpointStore } from "./ports/consumer-checkpoint-store.
 export type { IdGenerator } from "./ports/id-generator.js";
 export type { LifecycleEventStore } from "./ports/lifecycle-event-store.js";
 export type { PublicationRepository } from "./ports/publication-repository.js";
+export type { ScopeReachabilityStore } from "./ports/scope-reachability-store.js";
 export {
   runOperatorCommand,
   type OperatorCommandResult,
@@ -108,3 +120,4 @@ export { openRegistryDatabase } from "./infrastructure/sqlite/registry-database.
 export { SqliteCardStore } from "./infrastructure/sqlite/sqlite-card-store.js";
 export { SqliteConsumerCheckpointStore } from "./infrastructure/sqlite/sqlite-consumer-checkpoint-store.js";
 export { SqliteLifecycleEventStore } from "./infrastructure/sqlite/sqlite-lifecycle-event-store.js";
+export { SqliteScopeReachabilityStore } from "./infrastructure/sqlite/sqlite-scope-reachability-store.js";

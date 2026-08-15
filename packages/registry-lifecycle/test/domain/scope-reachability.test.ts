@@ -65,6 +65,7 @@ function decision(overrides: Partial<ScopeDecision> = {}): ScopeDecision {
   return {
     kind: "withdrawn",
     cardId: "card_payment_failures",
+    versionId: "cv_1",
     occurredAt: "2026-08-02T00:00:00.000Z",
     note: undefined,
     ...overrides,
@@ -167,6 +168,39 @@ describe("judgeScopeReachability", () => {
     });
 
     expect(judgeScopeReachability(withdrawn).state).not.toBe("reachable");
+  });
+
+  it("does not read a withdrawn version as awaiting approval", () => {
+    // Withdrawing moves the current pointer and leaves the version validated,
+    // so its state alone reads as promotable. Treating that as pending_approval
+    // would hide a Scope nobody serves behind a review that is not happening.
+    const result = judgeScopeReachability(
+      observe({
+        carriers: [carrier({ validationState: "validated", isCurrent: false })],
+        decisions: [decision({ kind: "withdrawn", versionId: "cv_1" })],
+      }),
+    );
+
+    expect(result.state).toBe("orphaned");
+  });
+
+  it("still awaits approval for a fresh draft added after a withdrawal", () => {
+    const result = judgeScopeReachability(
+      observe({
+        carriers: [
+          carrier({ versionId: "cv_1", validationState: "validated" }),
+          carrier({
+            versionId: "cv_2",
+            validationState: "draft",
+            createdAt: "2026-08-03T00:00:00.000Z",
+          }),
+        ],
+        decisions: [decision({ kind: "withdrawn", versionId: "cv_1" })],
+      }),
+    );
+
+    expect(result.state).toBe("pending_approval");
+    expect(result.cardVersionIds).toEqual(["cv_2"]);
   });
 
   it("keeps a Scope out of pending_approval once it is reachable", () => {
