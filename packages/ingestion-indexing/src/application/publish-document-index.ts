@@ -1,4 +1,4 @@
-import type { PublishedDocumentScope } from "@contextctl/contracts";
+import type { PublishedDocumentScopeV2 as PublishedDocumentScope } from "@contextctl/contracts";
 
 import type { ChunkEmbedding } from "./embed-managed-chunks.js";
 import {
@@ -29,16 +29,17 @@ import { canonicalJson } from "../domain/revision-identity.js";
 import { createVectorRecordId } from "../domain/vector-index.js";
 import {
   IndexPublicationStoreConflict,
-  type IndexPublicationStore,
-  type PublishedIndexVersion,
+  type IndexPublicationStoreV2 as IndexPublicationStore,
+  type PublishedIndexVersionV2 as PublishedIndexVersion,
 } from "../ports/index-publication-store.js";
 import type {
-  VectorIndexCompatibility,
+  VectorIndexCompatibilityV2 as VectorIndexCompatibility,
   VectorIndexPort,
   VectorIndexStoredRecord,
 } from "../ports/vector-index.js";
 
 export interface PublishDocumentIndexCommand {
+  readonly stateNamespaceId: string;
   readonly document: NormalizedDocument;
   readonly semanticUnits: readonly DocumentSemanticUnit[];
   readonly chunks: readonly ManagedChunk[];
@@ -104,6 +105,7 @@ export class DocumentIndexPublisher {
     }
 
     const compatibility: VectorIndexCompatibility = {
+      stateNamespaceId: command.stateNamespaceId,
       securityDomain: command.securityDomain,
       embeddingProfile: command.embeddingProfile,
       payloadSchemaVersion: 2,
@@ -111,8 +113,6 @@ export class DocumentIndexPublisher {
     const vectorTarget = await this.#vectorIndex.prepare(compatibility);
     const scopes = createPublishedDocumentScopes({
       manifest: prepared.manifestDraft,
-      connectorId: command.connectorId,
-      accessHandle: vectorTarget.accessHandle,
       ...(command.semanticScopes === undefined
         ? {}
         : { semanticScopes: command.semanticScopes }),
@@ -164,9 +164,16 @@ export class DocumentIndexPublisher {
 
     const publication: PublishedIndexVersion = {
       manifest,
-      securityDomain: command.securityDomain,
       documentIndex: scopes[0]!.documentIndex,
       scopes,
+      binding: {
+        stateNamespaceId: command.stateNamespaceId,
+        documentIndexId: manifest.documentIndexId,
+        indexVersion: manifest.indexVersion,
+        connectorId: command.connectorId,
+        accessHandle: vectorTarget.accessHandle,
+        securityDomain: command.securityDomain,
+      },
     };
     try {
       return (await this.#publications.commitCurrent(publication)).publication;
@@ -200,6 +207,9 @@ function preparePublication(
   command: PublishDocumentIndexCommand,
 ): PreparedPublication {
   if (
+    command.stateNamespaceId.trim() === "" ||
+    command.securityDomain.trim() === "" ||
+    command.connectorId.trim() === "" ||
     command.semanticUnits.length === 0 ||
     command.chunks.length === 0 ||
     command.embeddings.length !== command.chunks.length
@@ -246,6 +256,7 @@ function preparePublication(
     }
     return {
       recordId: createVectorRecordId(
+        command.stateNamespaceId,
         documentIndexId,
         indexVersion,
         chunk.revisionId,
@@ -255,6 +266,8 @@ function preparePublication(
       retrievalText: chunk.text,
       metadata: {
         payloadSchemaVersion: 2,
+        stateNamespaceId: command.stateNamespaceId,
+        securityDomain: command.securityDomain,
         sourceId: command.document.sourceId,
         observationId: command.document.observationId,
         documentId: command.document.documentId,
@@ -271,6 +284,8 @@ function preparePublication(
     throw new DocumentIndexPublicationError("invalid_input");
   }
   const manifestDraft = {
+    stateNamespaceId: command.stateNamespaceId,
+    securityDomain: command.securityDomain,
     documentIndexId,
     indexVersion,
     sourceId: command.document.sourceId,
@@ -299,8 +314,6 @@ function preparePublication(
   };
   const requestedScopes = createPublishedDocumentScopes({
     manifest: manifestDraft,
-    connectorId: command.connectorId,
-    accessHandle: "opaque:pending",
     ...(command.semanticScopes === undefined
       ? {}
       : { semanticScopes: command.semanticScopes }),
@@ -329,8 +342,9 @@ function matchesRequestedPublication(
   } = prepared.manifestDraft;
   return (
     canonicalJson(manifest) === canonicalJson(draft) &&
-    existing.securityDomain === prepared.securityDomain &&
-    existing.documentIndex.connectorId === prepared.connectorId &&
+    existing.binding.securityDomain === prepared.securityDomain &&
+    existing.binding.stateNamespaceId === prepared.manifestDraft.stateNamespaceId &&
+    existing.binding.connectorId === prepared.connectorId &&
     canonicalJson(existing.scopes.map(scopeShape)) ===
       canonicalJson(prepared.requestedScopeShape)
   );

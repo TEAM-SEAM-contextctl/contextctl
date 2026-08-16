@@ -76,6 +76,7 @@ export {
   type BatchManagedDocumentSearchTarget,
   type DocumentSearchHit,
   type ManagedDocumentSearchCommand,
+  type ManagedDocumentSearchV2Command,
   type ManagedDocumentSearchDependencies,
   type ManagedDocumentSearchErrorCode,
   type ManagedDocumentSearchFailure,
@@ -174,6 +175,7 @@ export {
 } from "./infrastructure/in-memory-vector-index-adapter.js";
 export {
   InMemoryIndexPublicationStore,
+  InMemoryIndexPublicationStoreV2,
 } from "./infrastructure/in-memory-index-publication-store.js";
 export {
   InMemoryIngestionPublicationStore,
@@ -264,6 +266,8 @@ export {
   type PreparedVectorIndex,
   type RehydratedVectorIndex,
   type VectorIndexCompatibility,
+  type VectorIndexCompatibilityInput,
+  type VectorIndexCompatibilityV2,
   type VectorIndexFaultCode,
   type VectorIndexPort,
   type VectorIndexRetentionLease,
@@ -288,8 +292,12 @@ export {
   IndexPublicationStoreConflict,
   type IndexCatalogFaultCode,
   type CommitIndexPublicationResult,
+  type CommitIndexPublicationV2Result,
   type IndexPublicationStore,
+  type IndexPublicationStoreV2,
   type PublishedIndexVersion,
+  type PublishedIndexVersionV2,
+  type PublishedScopeCatalogEntry,
 } from "./ports/index-publication-store.js";
 export {
   IngestionPublicationStoreConflict,

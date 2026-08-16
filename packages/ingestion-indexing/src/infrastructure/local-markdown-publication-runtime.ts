@@ -13,7 +13,7 @@ import type {
   IngestionPublicationStore,
   MarkdownPublicationCheckpointStore,
 } from "../ports/markdown-publication.js";
-import type { IndexPublicationStore } from "../ports/index-publication-store.js";
+import type { IndexPublicationStoreV2 as IndexPublicationStore } from "../ports/index-publication-store.js";
 import type {
   CredentialResolver,
   SourceConfigurationResolver,
@@ -21,7 +21,7 @@ import type {
 } from "../ports/source-adapter.js";
 import type { VectorIndexPort } from "../ports/vector-index.js";
 import { DeterministicEmbeddingAdapter } from "./deterministic-embedding-adapter.js";
-import { InMemoryIndexPublicationStore } from "./in-memory-index-publication-store.js";
+import { InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore } from "./in-memory-index-publication-store.js";
 import { InMemoryIngestionPublicationStore } from "./in-memory-ingestion-publication-store.js";
 import { InMemoryMarkdownPublicationCheckpointStore } from "./in-memory-markdown-publication-checkpoint-store.js";
 import { InMemoryMarkdownPublicationEventSink } from "./in-memory-markdown-publication-event-sink.js";
@@ -40,6 +40,7 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly credentials?: Readonly<Record<string, unknown>>;
   readonly embeddingProfile: EmbeddingProfile;
   readonly connectorId: string;
+  readonly stateNamespaceId: string;
   readonly securityDomain: string;
   readonly embeddingProvider?: EmbeddingPort;
   readonly vectorIndex?: VectorIndexPort;
@@ -119,6 +120,7 @@ export function createLocalMarkdownPublicationRuntime(
     readyNotifier: options.readyNotifier ?? readyNotifications,
     events,
     embeddingProfile: options.embeddingProfile,
+    stateNamespaceId: options.stateNamespaceId,
     securityDomain: options.securityDomain,
     clock,
   });

@@ -1,9 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
-  parseIngestionPublication,
+  assertIngestionPublicationV2Transition as assertIngestionPublicationTransition,
+  parseIngestionPublicationV2 as parseIngestionPublication,
   parsePublicationReady,
-  type IngestionPublication,
+  type IngestionPublicationV2 as IngestionPublication,
   type PublicationReady,
 } from "@contextctl/contracts";
 
@@ -50,13 +51,46 @@ export class SqliteIngestionPublicationStore
         }
         const latest = this.database
           .prepare(
-            "SELECT publication_id FROM latest_ingestion_publications WHERE source_id = ?",
+            `SELECT publications.*
+               FROM latest_ingestion_publications latest
+               JOIN ingestion_publications publications
+                 ON publications.publication_id = latest.publication_id
+              WHERE latest.source_id = ?`,
           )
-          .get(publication.sourceId) as
-          | { readonly publication_id: string }
-          | undefined;
-        if (publication.previousPublicationId !== latest?.publication_id) {
+          .get(publication.sourceId) as PublicationRow | undefined;
+        const previous = latest === undefined ? undefined : parseRow(latest);
+        if (publication.previousPublicationId !== previous?.publicationId) {
           throw new IngestionPublicationStoreConflict();
+        }
+        try {
+          assertIngestionPublicationTransition(previous, publication);
+        } catch {
+          throw new IngestionPublicationStoreConflict();
+        }
+        for (const unit of publication.knowledgeUnits) {
+          for (const scope of unit.publishedScopes) {
+            const definition = canonicalJson(scope);
+            const stored = this.database
+              .prepare(
+                `SELECT scope_json FROM publication_scope_definitions
+                 WHERE scope_id = ? AND scope_version = ?`,
+              )
+              .get(scope.scopeId, scope.scopeVersion) as
+              | { readonly scope_json: string }
+              | undefined;
+            if (stored !== undefined && stored.scope_json !== definition) {
+              throw new IngestionPublicationStoreConflict();
+            }
+            if (stored === undefined) {
+              this.database
+                .prepare(
+                  `INSERT INTO publication_scope_definitions (
+                     scope_id, scope_version, scope_json
+                   ) VALUES (?, ?, ?)`,
+                )
+                .run(scope.scopeId, scope.scopeVersion, definition);
+            }
+          }
         }
         this.database
           .prepare(

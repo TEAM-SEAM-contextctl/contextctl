@@ -144,6 +144,8 @@ export function createManagedChunkFixture(): readonly ManagedChunk[] {
 
 export function createIndexManifestFixture(): IndexManifest {
   return {
+    stateNamespaceId: "state_test",
+    securityDomain: "test-tenant",
     documentIndexId: "didx_payments",
     indexVersion: "idxv_aaaa",
     sourceId: "src_payments",
@@ -192,6 +194,8 @@ export function createVectorRecordFixture(): readonly VectorIndexRecord[] {
       retrievalText: chunkText,
       metadata: {
         payloadSchemaVersion: 2,
+        stateNamespaceId: "state_test",
+        securityDomain: "test-tenant",
         sourceId: "src_payments",
         observationId: "obs_initial",
         documentId: "doc_payments",

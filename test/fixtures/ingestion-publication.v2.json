@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 2,
+  "publicationId": "pub_initial",
+  "sourceId": "src_payments",
+  "observationId": "obs_initial",
+  "producedAt": "2026-07-29T00:00:00.000Z",
+  "knowledgeUnits": [
+    {
+      "id": "unit_payment_failures",
+      "kind": "section",
+      "sourceCoordinate": {
+        "kind": "document",
+        "sourceId": "src_payments",
+        "documentId": "doc_payments",
+        "semanticUnitId": "unit_payment_failures"
+      },
+      "facts": [
+        { "name": "document.media_type", "value": "text/markdown" },
+        { "name": "section.label", "value": "Payment failures" },
+        { "name": "structure.block_count", "value": 1 },
+        { "name": "unit.kind", "value": "section" }
+      ],
+      "publishedScopes": [
+        {
+          "scopeId": "scope_payment_failures",
+          "scopeVersion": "scpv_aaaa",
+          "kind": "managed_document",
+          "documentIndex": {
+            "documentIndexId": "didx_payments",
+            "sourceId": "src_payments",
+            "documentId": "doc_payments",
+            "indexVersion": "idxv_aaaa"
+          },
+          "selector": {
+            "kind": "semantic_units",
+            "semanticUnitIds": ["unit_payment_failures"]
+          }
+        }
+      ],
+      "provenance": {
+        "observationId": "obs_initial",
+        "producer": { "id": "markdown.parser", "version": "1.0.0" },
+        "policyVersions": {
+          "chunking": "managed-chunk-v1",
+          "segmentation": "semantic-unit-v1"
+        }
+      },
+      "contentDigest": "sha256:fdd1b3b318ec682594615228dc6f822f562e87f2cdcd38dea37f8a052a4139c0"
+    }
+  ],
+  "changes": [
+    {
+      "kind": "added",
+      "knowledgeUnitId": "unit_payment_failures",
+      "currentContentDigest": "sha256:fdd1b3b318ec682594615228dc6f822f562e87f2cdcd38dea37f8a052a4139c0"
+    }
+  ]
+}

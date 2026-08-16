@@ -37,6 +37,22 @@ export {
   type PublishedChange,
 } from "./ingestion-registry/ingestion-publication.js";
 export {
+  IngestionPublicationSchema as IngestionPublicationV2Schema,
+  INGESTION_PUBLICATION_SCHEMA_VERSION,
+  MAX_PUBLICATION_BYTES,
+  MAX_PUBLICATION_CHANGES,
+  MAX_PUBLICATION_UNITS,
+  assertIngestionPublicationTransition as assertIngestionPublicationV2Transition,
+  changedKnowledgeUnitFields as changedKnowledgeUnitV2Fields,
+  computePublicationChanges as computePublicationV2Changes,
+  parseIngestionPublication as parseIngestionPublicationV2,
+  PublishedChangedFieldSchema as PublishedChangedFieldV2Schema,
+  PublishedChangeSchema as PublishedChangeV2Schema,
+  type IngestionPublication as IngestionPublicationV2,
+  type PublishedChangedField as PublishedChangedFieldV2,
+  type PublishedChange as PublishedChangeV2,
+} from "./ingestion-registry/ingestion-publication-v2.js";
+export {
   parsePublicationReady,
   PublicationReadySchema,
   type PublicationReady,
@@ -56,6 +72,26 @@ export {
   type PublishedSqlScope,
 } from "./ingestion-registry/publication-scope.js";
 export {
+  groupPublishedSqlColumns,
+  HttpParameterRefSchema as HttpParameterRefV2Schema,
+  MAX_PUBLISHED_SCOPE_BYTES,
+  MAX_SCOPE_SET_SIZE,
+  MAX_SQL_COORDINATE_COLUMNS,
+  PublishedDocumentIndexRefSchema as PublishedDocumentIndexRefV2Schema,
+  PublishedDocumentScopeSchema as PublishedDocumentScopeV2Schema,
+  PublishedHttpScopeSchema as PublishedHttpScopeV2Schema,
+  PublishedScopeRefSchema as PublishedScopeRefV2Schema,
+  PublishedScopeSchema as PublishedScopeV2Schema,
+  PublishedSqlScopeSchema as PublishedSqlScopeV2Schema,
+  type HttpParameterRef as HttpParameterRefV2,
+  type PublishedDocumentIndexRef as PublishedDocumentIndexRefV2,
+  type PublishedDocumentScope as PublishedDocumentScopeV2,
+  type PublishedHttpScope as PublishedHttpScopeV2,
+  type PublishedScope as PublishedScopeV2,
+  type PublishedScopeRef as PublishedScopeRefV2,
+  type PublishedSqlScope as PublishedSqlScopeV2,
+} from "./ingestion-registry/publication-scope-v2.js";
+export {
   PublicationProvenanceSchema,
   PublishedFactSchema,
   PublishedKnowledgeUnitSchema,
@@ -65,3 +101,17 @@ export {
   type PublishedKnowledgeUnit,
   type PublishedSourceCoordinate,
 } from "./ingestion-registry/published-knowledge-unit.js";
+export {
+  PublicationProvenanceSchema as PublicationProvenanceV2Schema,
+  PublicationFactNameSchema as PublicationFactNameV2Schema,
+  PublicationPolicyNameSchema as PublicationPolicyNameV2Schema,
+  computePublishedKnowledgeUnitDigest as computePublishedKnowledgeUnitV2Digest,
+  PublishedFactSchema as PublishedFactV2Schema,
+  PublishedKnowledgeUnitSchema as PublishedKnowledgeUnitV2Schema,
+  PublishedSourceCoordinateSchema as PublishedSourceCoordinateV2Schema,
+  type PublicationProvenance as PublicationProvenanceV2,
+  type PublicationFactName as PublicationFactNameV2,
+  type PublishedFact as PublishedFactV2,
+  type PublishedKnowledgeUnit as PublishedKnowledgeUnitV2,
+  type PublishedSourceCoordinate as PublishedSourceCoordinateV2,
+} from "./ingestion-registry/published-knowledge-unit-v2.js";

@@ -22,6 +22,7 @@ const profile: EmbeddingProfile = {
 };
 
 const compatibility = {
+  stateNamespaceId: "state_test",
   securityDomain: "test-tenant",
   embeddingProfile: profile,
   payloadSchemaVersion: 2 as const,
@@ -71,6 +72,7 @@ describe("VectorIndexPort contract", () => {
     const nextVersion = {
       ...first,
       recordId: createVectorRecordId(
+        first.metadata.stateNamespaceId,
         first.metadata.documentIndexId,
         "idxv_bbbb",
         first.chunkRevisionId,
@@ -230,6 +232,7 @@ describe("Qdrant vector index adapter", () => {
       accessHandle: prepared.accessHandle,
       compatibility: {
         payloadSchemaVersion: 2,
+        stateNamespaceId: compatibility.stateNamespaceId,
         embeddingProfile: {
           distance: profile.distance,
           dimensions: profile.dimensions,
@@ -429,6 +432,7 @@ describe("Qdrant vector index adapter", () => {
         payload: {
           recordKind: "chunk",
           recordId: createVectorRecordId(
+            value.metadata.stateNamespaceId,
             value.metadata.documentIndexId,
             value.metadata.indexVersion,
             "crv_bbbb",
@@ -486,12 +490,14 @@ function record(
   const chunkRevisionId = `crv_${revision}`;
   const retrievalText = `${document}:${unit}:${revision}`;
   return {
-    recordId: createVectorRecordId(documentIndexId, indexVersion, chunkRevisionId),
+    recordId: createVectorRecordId("state_test", documentIndexId, indexVersion, chunkRevisionId),
     chunkRevisionId,
     embedding,
     retrievalText,
     metadata: {
       payloadSchemaVersion: 2,
+      stateNamespaceId: "state_test",
+      securityDomain: "test-tenant",
       sourceId: `src_${document}`,
       observationId: `obs_${document}`,
       documentId: `doc_${document}`,

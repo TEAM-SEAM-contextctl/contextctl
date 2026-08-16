@@ -6,15 +6,15 @@ import { DatabaseSync } from "node:sqlite";
 
 import type {
   PublicationReady,
-  PublishedDocumentIndexRef,
-  PublishedDocumentScope,
+  PublishedDocumentIndexRefV2 as PublishedDocumentIndexRef,
+  PublishedDocumentScopeV2 as PublishedDocumentScope,
 } from "@contextctl/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   DeterministicEmbeddingAdapter,
   INGESTION_DATABASE_SCHEMA_VERSION,
-  InMemoryIndexPublicationStore,
+  InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
   InMemoryPublicationReadyNotifier,
   InMemoryVectorIndexAdapter,
   IndexCatalogFault,
@@ -32,9 +32,9 @@ import {
   openIngestionDatabase,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
-  type IndexPublicationStore,
+  type IndexPublicationStoreV2 as IndexPublicationStore,
   type PublicationReadyNotifier,
-  type PublishedIndexVersion,
+  type PublishedIndexVersionV2 as PublishedIndexVersion,
   type PublishMarkdownSourceCommand,
   type VectorIndexPort,
 } from "../src/index.js";
@@ -44,6 +44,7 @@ const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
 );
 const NOW = "2026-08-14T00:00:00.000Z";
+const STATE_NAMESPACE_ID = "state_test";
 const profile = {
   id: "durable-index-test",
   version: "1.0.0",
@@ -83,11 +84,33 @@ describe("durable Index control plane", () => {
     const directory = await mkdtemp(join(tmpdir(), "contextctl-schema-"));
     temporaryDirectories.push(directory);
     const healthyPath = join(directory, "healthy.sqlite");
-    const healthy = openIngestionDatabase(healthyPath);
+    const healthy = openTestDatabase(healthyPath);
     expect(
       healthy.prepare("PRAGMA user_version").get(),
     ).toEqual({ user_version: INGESTION_DATABASE_SCHEMA_VERSION });
     healthy.close();
+    expect(() =>
+      openIngestionDatabase({
+        location: healthyPath,
+        stateNamespaceId: "state_other",
+        securityDomain: "tenant-a",
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
+        code: "identity_mismatch",
+      }),
+    );
+    expect(() =>
+      openIngestionDatabase({
+        location: healthyPath,
+        stateNamespaceId: STATE_NAMESPACE_ID,
+        securityDomain: "tenant-b",
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
+        code: "identity_mismatch",
+      }),
+    );
 
     const newerPath = join(directory, "newer.sqlite");
     const newer = new DatabaseSync(newerPath);
@@ -97,7 +120,7 @@ describe("durable Index control plane", () => {
       )}`,
     );
     newer.close();
-    expect(() => openIngestionDatabase(newerPath)).toThrowError(
+    expect(() => openTestDatabase(newerPath)).toThrowError(
       expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
         code: "schema_newer",
       }),
@@ -110,7 +133,31 @@ describe("durable Index control plane", () => {
       PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)};
     `);
     malformed.close();
-    expect(() => openIngestionDatabase(malformedPath)).toThrowError(
+    expect(() => openTestDatabase(malformedPath)).toThrowError(
+      expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
+        code: "schema_invalid",
+      }),
+    );
+
+    const legacyPath = join(directory, "legacy-with-state.sqlite");
+    const legacy = new DatabaseSync(legacyPath);
+    legacy.exec(`
+      CREATE TABLE index_versions (
+        document_index_id TEXT NOT NULL,
+        index_version TEXT NOT NULL,
+        payload_schema_version INTEGER NOT NULL,
+        publication_json TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        published_at TEXT NOT NULL,
+        PRIMARY KEY (document_index_id, index_version)
+      );
+      INSERT INTO index_versions VALUES (
+        'didx_legacy', 'idxv_aaaa', 2, '{}', 'legacy', '${NOW}'
+      );
+      PRAGMA user_version = 1;
+    `);
+    legacy.close();
+    expect(() => openTestDatabase(legacyPath)).toThrowError(
       expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
         code: "schema_invalid",
       }),
@@ -121,7 +168,7 @@ describe("durable Index control plane", () => {
     "preserves immutable versions and an idempotent current pointer in %s",
     async (adapter) => {
       const database =
-        adapter === "sqlite" ? openIngestionDatabase(":memory:") : undefined;
+        adapter === "sqlite" ? openTestDatabase(":memory:") : undefined;
       const store: IndexPublicationStore =
         database === undefined
           ? new InMemoryIndexPublicationStore()
@@ -148,7 +195,10 @@ describe("durable Index control plane", () => {
         latest,
       );
       await expect(
-        store.commitCurrent({ ...initial, securityDomain: "" }),
+        store.commitCurrent({
+          ...initial,
+          binding: { ...initial.binding, securityDomain: "" },
+        }),
       ).rejects.toMatchObject({ name: "IndexPublicationStoreConflict" });
       database?.close();
     },
@@ -162,7 +212,7 @@ describe("durable Index control plane", () => {
     const embeddings = new RecordingEmbeddingPort(
       new DeterministicEmbeddingAdapter(),
     );
-    const firstDatabase = openIngestionDatabase(fixture.databasePath);
+    const firstDatabase = openTestDatabase(fixture.databasePath);
     const first = createDurableRuntime(
       fixture.markdownPath,
       firstDatabase,
@@ -173,15 +223,15 @@ describe("durable Index control plane", () => {
     const published = await first.workflow.publish(command());
     const publication = requiredValue(published.publication);
     const retryUnit = publication.knowledgeUnits.find((unit) =>
-      unit.evidence.some(
-        (fact) => fact.name === "title" && fact.value === "재시도",
+      unit.facts.some(
+        (fact) => fact.name === "section.label" && fact.value === "재시도",
       ),
     );
     const scope = requiredManagedScope(retryUnit?.publishedScopes[0]);
     const callsAfterPublish = embeddings.requests.length;
     firstDatabase.close();
 
-    const secondDatabase = openIngestionDatabase(fixture.databasePath);
+    const secondDatabase = openTestDatabase(fixture.databasePath);
     const second = createDurableRuntime(
       fixture.markdownPath,
       secondDatabase,
@@ -192,7 +242,7 @@ describe("durable Index control plane", () => {
     const hits = await second.search.search({
       queryText: "결제 재시도 절차",
       securityDomain: "tenant-a",
-      scope,
+      scopeRef: scopeRef(scope),
       limit: 5,
     });
 
@@ -211,7 +261,7 @@ describe("durable Index control plane", () => {
   });
 
   it("rolls back a new version when the atomic current transition fails", async () => {
-    const database = openIngestionDatabase(":memory:");
+    const database = openTestDatabase(":memory:");
     const store = new SqliteIndexPublicationStore(database);
     const initial = publishedVersion("aaaa", NOW);
     const interrupted = publishedVersion(
@@ -244,7 +294,7 @@ describe("durable Index control plane", () => {
 
   it("shares query embedding and binding rehydration per request while isolating target failures", async () => {
     const fixture = await createTemporaryFixture();
-    const database = openIngestionDatabase(fixture.databasePath);
+    const database = openTestDatabase(fixture.databasePath);
     const vectorIndex = new RecordingVectorIndex(
       new InMemoryVectorIndexAdapter(),
     );
@@ -267,6 +317,7 @@ describe("durable Index control plane", () => {
 
     const items = await runtime.search.searchBatch({
       queryText: "결제 재시도",
+      securityDomain: "tenant-a",
       targets: [
         target("document", scopes[0]!),
         target("section", scopes[1]!),
@@ -290,7 +341,7 @@ describe("durable Index control plane", () => {
 
   it("bounds batch size, query input, and concurrent target searches", async () => {
     const fixture = await createTemporaryFixture();
-    const database = openIngestionDatabase(fixture.databasePath);
+    const database = openTestDatabase(fixture.databasePath);
     const vectorIndex = new RecordingVectorIndex(
       new InMemoryVectorIndexAdapter(),
       5,
@@ -319,6 +370,7 @@ describe("durable Index control plane", () => {
 
     const items = await managedSearch.searchBatch({
       queryText: "결제 재시도",
+      securityDomain: "tenant-a",
       targets: Array.from({ length: 12 }, (_, index) =>
         target(`bounded-${String(index)}`, scope),
       ),
@@ -329,6 +381,7 @@ describe("durable Index control plane", () => {
     await expect(
       managedSearch.searchBatch({
         queryText: "bounded batch",
+        securityDomain: "tenant-a",
         targets: Array.from(
           { length: MAX_MANAGED_SEARCH_BATCH_TARGETS + 1 },
           (_, index) => target(`overflow-${String(index)}`, scope),
@@ -339,6 +392,7 @@ describe("durable Index control plane", () => {
     const callsBeforeOversizedQuery = embeddings.requests.length;
     const oversized = await managedSearch.searchBatch({
       queryText: "a".repeat(profile.maxInputTokens * 4 + 1),
+      securityDomain: "tenant-a",
       targets: [target("oversized-query", scope)],
     });
     expect(oversized[0]).toMatchObject({
@@ -357,11 +411,13 @@ describe("durable Index control plane", () => {
       new InMemoryVectorIndexAdapter(),
     );
     const tenantA = await vectorIndex.prepare({
+      stateNamespaceId: STATE_NAMESPACE_ID,
       securityDomain: "tenant-a",
       embeddingProfile: profile,
       payloadSchemaVersion: 2,
     });
     const tenantB = await vectorIndex.prepare({
+      stateNamespaceId: STATE_NAMESPACE_ID,
       securityDomain: "tenant-b",
       embeddingProfile: profile,
       payloadSchemaVersion: 2,
@@ -406,23 +462,26 @@ describe("durable Index control plane", () => {
       publications: catalog,
     });
 
-    const results = await managedSearch.searchBatch({
-      queryText: "shared query text",
-      targets: [
-        {
-          targetKey: "tenant-a",
+    const results = (
+      await Promise.all([
+        managedSearch.searchBatch({
+          queryText: "shared query text",
           securityDomain: "tenant-a",
-          scope: publicationA.scopes[0]!,
-          limit: 5,
-        },
-        {
-          targetKey: "tenant-b",
+          targets: [target("tenant-a", publicationA.scopes[0]!)],
+        }),
+        managedSearch.searchBatch({
+          queryText: "shared query text",
           securityDomain: "tenant-b",
-          scope: publicationB.scopes[0]!,
-          limit: 5,
-        },
-      ],
-    });
+          targets: [
+            {
+              targetKey: "tenant-b",
+              scopeRef: scopeRef(publicationB.scopes[0]!),
+              limit: 5,
+            },
+          ],
+        }),
+      ])
+    ).flat();
 
     expect(results.every((item) => item.status === "fulfilled")).toBe(true);
     expect(tenantAEmbeddings.requests).toHaveLength(1);
@@ -466,7 +525,7 @@ describe("durable Index control plane", () => {
 
   it("fails closed for a disallowed provider, missing binding, and corrupt catalog record", async () => {
     const fixture = await createTemporaryFixture();
-    const database = openIngestionDatabase(fixture.databasePath);
+    const database = openTestDatabase(fixture.databasePath);
     const vectorIndex = new RecordingVectorIndex(
       new InMemoryVectorIndexAdapter(),
     );
@@ -537,7 +596,7 @@ describe("durable Index control plane", () => {
 
   it("rejects a payload v1 catalog target and serves its v2 replacement", async () => {
     const fixture = await createTemporaryFixture();
-    const database = openIngestionDatabase(fixture.databasePath);
+    const database = openTestDatabase(fixture.databasePath);
     const vectorIndex = new RecordingVectorIndex(
       new InMemoryVectorIndexAdapter(),
     );
@@ -578,6 +637,20 @@ describe("durable Index control plane", () => {
         JSON.stringify(v1),
         NOW,
       );
+    database
+      .prepare(
+        `INSERT INTO published_scope_catalog (
+           scope_id, scope_version, document_index_id, index_version,
+           scope_json, publication_fingerprint
+         ) VALUES (?, ?, ?, ?, ?, 'legacy-v1')`,
+      )
+      .run(
+        v1Scope.scopeId,
+        v1Scope.scopeVersion,
+        v1Scope.documentIndex.documentIndexId,
+        v1Scope.documentIndex.indexVersion,
+        JSON.stringify(v1Scope),
+      );
 
     await expect(search(runtime.search, v1Scope)).rejects.toMatchObject({
       code: "index_schema_unsupported",
@@ -589,7 +662,7 @@ describe("durable Index control plane", () => {
   it("rediscovers and delivers a committed ready notification after restart", async () => {
     const fixture = await createTemporaryFixture();
     const vectorIndex = new InMemoryVectorIndexAdapter();
-    const firstDatabase = openIngestionDatabase(fixture.databasePath);
+    const firstDatabase = openTestDatabase(fixture.databasePath);
     const first = createDurableRuntime(
       fixture.markdownPath,
       firstDatabase,
@@ -606,7 +679,7 @@ describe("durable Index control plane", () => {
     expect(pending).toHaveLength(1);
     firstDatabase.close();
 
-    const secondDatabase = openIngestionDatabase(fixture.databasePath);
+    const secondDatabase = openTestDatabase(fixture.databasePath);
     const publications = new SqliteIngestionPublicationStore(secondDatabase);
     const notifier = new InMemoryPublicationReadyNotifier();
     const reconciled = await new PublicationReadyReconciler({
@@ -637,6 +710,7 @@ function createDurableRuntime(
     embeddingProvider,
     vectorIndex,
     connectorId: "vector.local",
+    stateNamespaceId: STATE_NAMESPACE_ID,
     securityDomain: "tenant-a",
     checkpoints: new SqliteMarkdownPublicationCheckpointStore(database),
     publications: new SqliteIngestionPublicationStore(database),
@@ -675,7 +749,7 @@ function target(
   targetKey: string,
   scope: PublishedDocumentScope,
 ) {
-  return { targetKey, securityDomain: "tenant-a", scope, limit: 5 };
+  return { targetKey, scopeRef: scopeRef(scope), limit: 5 };
 }
 
 function search(
@@ -685,7 +759,7 @@ function search(
   return managedSearch.search({
     queryText: "결제 재시도",
     securityDomain: "tenant-a",
-    scope,
+    scopeRef: scopeRef(scope),
     limit: 5,
   });
 }
@@ -721,12 +795,13 @@ function publishedVersion(
     sourceId: manifest.sourceId,
     documentId: manifest.documentId,
     indexVersion: manifest.indexVersion,
-    connectorId: "vector.main",
-    accessHandle: "memory:v1:durable-fixture",
   };
   return {
-    manifest,
-    securityDomain: "tenant-a",
+    manifest: {
+      ...manifest,
+      stateNamespaceId: STATE_NAMESPACE_ID,
+      securityDomain: "tenant-a",
+    },
     documentIndex,
     scopes: [
       {
@@ -737,6 +812,14 @@ function publishedVersion(
         selector: { kind: "document" },
       },
     ],
+    binding: {
+      stateNamespaceId: STATE_NAMESPACE_ID,
+      documentIndexId: manifest.documentIndexId,
+      indexVersion: manifest.indexVersion,
+      connectorId: "vector.main",
+      accessHandle: "memory:v1:durable-fixture",
+      securityDomain: "tenant-a",
+    },
   };
 }
 
@@ -762,12 +845,9 @@ function domainPublishedVersion(
     sourceId: manifest.sourceId,
     documentId: manifest.documentId,
     indexVersion: manifest.indexVersion,
-    connectorId: "vector.main",
-    accessHandle,
   };
   return {
-    manifest,
-    securityDomain,
+    manifest: { ...manifest, stateNamespaceId: STATE_NAMESPACE_ID, securityDomain },
     documentIndex,
     scopes: [
       {
@@ -778,7 +858,27 @@ function domainPublishedVersion(
         selector: { kind: "document" },
       },
     ],
+    binding: {
+      stateNamespaceId: STATE_NAMESPACE_ID,
+      documentIndexId: manifest.documentIndexId,
+      indexVersion: manifest.indexVersion,
+      connectorId: "vector.main",
+      accessHandle,
+      securityDomain,
+    },
   };
+}
+
+function scopeRef(scope: PublishedDocumentScope) {
+  return { scopeId: scope.scopeId, scopeVersion: scope.scopeVersion };
+}
+
+function openTestDatabase(location: string): DatabaseSync {
+  return openIngestionDatabase({
+    location,
+    stateNamespaceId: STATE_NAMESPACE_ID,
+    securityDomain: "tenant-a",
+  });
 }
 
 function downgradeToV1(

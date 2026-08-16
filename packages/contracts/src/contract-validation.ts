@@ -57,3 +57,26 @@ export function validateSortedUnique(
     });
   }
 }
+
+/** Deterministic JSON used by versioned contracts and their size limits. */
+export function canonicalContractJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalContractJson(item)).join(",")}]`;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  return `{${Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${canonicalContractJson(record[key])}`,
+    )
+    .join(",")}}`;
+}
+
+export function canonicalContractByteLength(value: unknown): number {
+  return new TextEncoder().encode(canonicalContractJson(value)).byteLength;
+}

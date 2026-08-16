@@ -10,6 +10,8 @@ import {
 
 const qdrantUrl = process.env.CONTEXTCTL_QDRANT_URL;
 const integration = qdrantUrl === undefined ? describe.skip : describe;
+const stateNamespaceId = `state-integration-${String(Date.now())}`;
+const securityDomain = `integration-${String(Date.now())}`;
 
 const profile: EmbeddingProfile = {
   id: "qdrant-integration",
@@ -25,7 +27,8 @@ integration("QdrantVectorIndexAdapter integration", () => {
   it("publishes, filters, retains and deletes immutable versions", async () => {
     const adapter = new QdrantVectorIndexAdapter({ url: requiredUrl() });
     const prepared = await adapter.prepare({
-      securityDomain: `integration-${String(Date.now())}`,
+      stateNamespaceId,
+      securityDomain,
       embeddingProfile: profile,
       payloadSchemaVersion: 2,
     });
@@ -145,12 +148,14 @@ function record(
   const chunkRevisionId = `crv_${revision}`;
   const retrievalText = `${document}:${unit}:${revision}`;
   return {
-    recordId: createVectorRecordId(documentIndexId, indexVersion, chunkRevisionId),
+    recordId: createVectorRecordId(stateNamespaceId, documentIndexId, indexVersion, chunkRevisionId),
     chunkRevisionId,
     embedding,
     retrievalText,
     metadata: {
       payloadSchemaVersion: 2,
+      stateNamespaceId,
+      securityDomain,
       sourceId: `src_${document}`,
       observationId: `obs_${document}`,
       documentId: `doc_${document}`,
