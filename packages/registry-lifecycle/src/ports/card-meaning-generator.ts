@@ -14,10 +14,12 @@ export interface CardMeaningRequest {
  * trusted: `groundCardVersion` re-checks it against the observed source before
  * a version may be validated.
  *
- * The port stays provider-agnostic. An implementation that needs an endpoint,
- * a model name, or a credential belongs in the daemon, which owns
- * configuration and secrets; one that needs none of those can live beside this
- * port, the way Selection keeps its own fixture adapters in `infrastructure/`.
+ * The port stays provider-agnostic. Implementations live in `infrastructure/`
+ * beside it, including the ones that call a model over the network: the daemon
+ * owns loading configuration and resolving credentials, and an adapter that
+ * takes those as constructor arguments never learns where they came from. It
+ * is the same split as `SqliteCardStore`, which writes to a database the
+ * daemon opened.
  */
 export interface CardMeaningGenerator {
   generate(request: CardMeaningRequest): Promise<CardMeaning>;
