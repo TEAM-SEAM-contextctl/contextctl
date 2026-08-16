@@ -28,6 +28,8 @@ import {
  * vector store's physical collection layout.
  */
 export interface IndexManifest {
+  readonly stateNamespaceId: string;
+  readonly securityDomain: string;
   readonly documentIndexId: string;
   readonly indexVersion: string;
   readonly sourceId: string;
@@ -67,6 +69,8 @@ export interface VectorIndexRecord {
 
 export interface VectorIndexRecordMetadata {
   readonly payloadSchemaVersion: 2;
+  readonly stateNamespaceId: string;
+  readonly securityDomain: string;
   readonly sourceId: string;
   readonly observationId: string;
   readonly documentId: string;
@@ -156,6 +160,8 @@ export function validateIndexManifest(
   const issues: ModelValidationIssue[] = [];
 
   validateId(manifest.documentIndexId, "didx", "documentIndexId", issues);
+  validateNonEmpty(manifest.stateNamespaceId, "stateNamespaceId", issues);
+  validateNonEmpty(manifest.securityDomain, "securityDomain", issues);
   validateRevision(manifest.indexVersion, "idxv", "indexVersion", issues);
   validateId(manifest.sourceId, "src", "sourceId", issues);
   validateId(manifest.observationId, "obs", "observationId", issues);
@@ -471,6 +477,8 @@ export function validateVectorIndexRecords(
     const metadata = record.metadata;
     const matches =
       metadata.payloadSchemaVersion === manifest.payloadSchemaVersion &&
+      metadata.stateNamespaceId === manifest.stateNamespaceId &&
+      metadata.securityDomain === manifest.securityDomain &&
       metadata.sourceId === manifest.sourceId &&
       metadata.observationId === manifest.observationId &&
       metadata.documentId === manifest.documentId &&

@@ -1,8 +1,15 @@
 import { DatabaseSync } from "node:sqlite";
 
-export const INGESTION_DATABASE_SCHEMA_VERSION = 1;
+export const INGESTION_DATABASE_SCHEMA_VERSION = 2;
+
+export interface OpenIngestionDatabaseOptions {
+  readonly location: string;
+  readonly stateNamespaceId: string;
+  readonly securityDomain: string;
+}
 
 export type IngestionDatabaseSchemaErrorCode =
+  | "identity_mismatch"
   | "schema_invalid"
   | "schema_newer";
 
@@ -14,7 +21,10 @@ export class IngestionDatabaseSchemaError extends Error {
 }
 
 /** Opens the Ingestion control-plane database and validates its schema. */
-export function openIngestionDatabase(location: string): DatabaseSync {
+export function openIngestionDatabase(
+  options: OpenIngestionDatabaseOptions,
+): DatabaseSync {
+  const { location, stateNamespaceId, securityDomain } = options;
   if (location.trim() === "") {
     throw new TypeError("Ingestion database location is invalid");
   }
@@ -26,7 +36,10 @@ export function openIngestionDatabase(location: string): DatabaseSync {
       database.exec("PRAGMA journal_mode = WAL");
       database.exec("PRAGMA synchronous = NORMAL");
     }
-    migrate(database);
+    if (stateNamespaceId.trim() === "" || securityDomain.trim() === "") {
+      throw new TypeError("Ingestion database identity is invalid");
+    }
+    migrate(database, stateNamespaceId, securityDomain);
     assertHealthy(database);
     return database;
   } catch (error) {
@@ -35,22 +48,99 @@ export function openIngestionDatabase(location: string): DatabaseSync {
   }
 }
 
-function migrate(database: DatabaseSync): void {
+function migrate(
+  database: DatabaseSync,
+  stateNamespaceId: string,
+  securityDomain: string,
+): void {
   const version = readSchemaVersion(database);
   if (version > INGESTION_DATABASE_SCHEMA_VERSION) {
     throw new IngestionDatabaseSchemaError("schema_newer");
   }
   if (version === INGESTION_DATABASE_SCHEMA_VERSION) {
     assertExpectedSchema(database);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     return;
   }
   inIngestionTransaction(database, () => {
     createSchemaV1(database);
+    if (version === 1 && hasLegacyState(database)) {
+      throw new IngestionDatabaseSchemaError("schema_invalid");
+    }
+    createSchemaV2(database);
+    database
+      .prepare(
+        `INSERT INTO ingestion_metadata (
+           singleton, state_namespace_id, security_domain
+         ) VALUES (1, ?, ?)`,
+      )
+      .run(stateNamespaceId, securityDomain);
     assertExpectedSchema(database);
     database.exec(
       `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
     );
   });
+}
+
+function createSchemaV2(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ingestion_metadata (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      state_namespace_id TEXT NOT NULL,
+      security_domain TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS published_scope_catalog (
+      scope_id TEXT NOT NULL,
+      scope_version TEXT NOT NULL,
+      document_index_id TEXT NOT NULL,
+      index_version TEXT NOT NULL,
+      scope_json TEXT NOT NULL,
+      publication_fingerprint TEXT NOT NULL,
+      PRIMARY KEY (scope_id, scope_version),
+      FOREIGN KEY (document_index_id, index_version)
+        REFERENCES index_versions (document_index_id, index_version)
+    );
+
+    CREATE TABLE IF NOT EXISTS publication_scope_definitions (
+      scope_id TEXT NOT NULL,
+      scope_version TEXT NOT NULL,
+      scope_json TEXT NOT NULL,
+      PRIMARY KEY (scope_id, scope_version)
+    );
+  `);
+}
+
+function hasLegacyState(database: DatabaseSync): boolean {
+  for (const table of [
+    "index_versions",
+    "ingestion_publications",
+    "markdown_publication_checkpoints",
+  ]) {
+    const row = database.prepare(`SELECT 1 AS present FROM ${table} LIMIT 1`).get();
+    if (row !== undefined) return true;
+  }
+  return false;
+}
+
+function assertDatabaseIdentity(
+  database: DatabaseSync,
+  stateNamespaceId: string,
+  securityDomain: string,
+): void {
+  const row = database
+    .prepare(
+      "SELECT state_namespace_id, security_domain FROM ingestion_metadata WHERE singleton = 1",
+    )
+    .get() as
+    | { readonly state_namespace_id?: unknown; readonly security_domain?: unknown }
+    | undefined;
+  if (
+    row?.state_namespace_id !== stateNamespaceId ||
+    row.security_domain !== securityDomain
+  ) {
+    throw new IngestionDatabaseSchemaError("identity_mismatch");
+  }
 }
 
 function createSchemaV1(database: DatabaseSync): void {
@@ -110,6 +200,11 @@ function readSchemaVersion(database: DatabaseSync): number {
 }
 
 const EXPECTED_SCHEMA = {
+  ingestion_metadata: [
+    ["singleton", "INTEGER", 0, 1],
+    ["state_namespace_id", "TEXT", 1, 0],
+    ["security_domain", "TEXT", 1, 0],
+  ],
   index_versions: [
     ["document_index_id", "TEXT", 1, 1],
     ["index_version", "TEXT", 1, 2],
@@ -140,6 +235,19 @@ const EXPECTED_SCHEMA = {
     ["source_type", "TEXT", 1, 0],
     ["document_id", "TEXT", 1, 0],
     ["checkpoint_json", "TEXT", 1, 0],
+  ],
+  published_scope_catalog: [
+    ["scope_id", "TEXT", 1, 1],
+    ["scope_version", "TEXT", 1, 2],
+    ["document_index_id", "TEXT", 1, 0],
+    ["index_version", "TEXT", 1, 0],
+    ["scope_json", "TEXT", 1, 0],
+    ["publication_fingerprint", "TEXT", 1, 0],
+  ],
+  publication_scope_definitions: [
+    ["scope_id", "TEXT", 1, 1],
+    ["scope_version", "TEXT", 1, 2],
+    ["scope_json", "TEXT", 1, 0],
   ],
 } as const;
 

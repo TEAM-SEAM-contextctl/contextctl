@@ -13,11 +13,13 @@ import {
 import { revisionIdentity } from "./revision-identity.js";
 
 export function createVectorRecordId(
+  stateNamespaceId: string,
   documentIndexId: string,
   indexVersion: string,
   chunkRevisionId: string,
 ): string {
   return revisionIdentity("vrec", {
+    stateNamespaceId,
     documentIndexId,
     indexVersion,
     chunkRevisionId,
@@ -45,12 +47,15 @@ export function assertValidVectorRecordBatch(
       !isRevisionId(record.chunkRevisionId, "crv") ||
       record.recordId !==
         createVectorRecordId(
+          metadata.stateNamespaceId,
           metadata.documentIndexId,
           metadata.indexVersion,
           record.chunkRevisionId,
         ) ||
       metadata.chunkRevisionId !== record.chunkRevisionId ||
       metadata.documentIndexId !== first.metadata.documentIndexId ||
+      metadata.stateNamespaceId !== first.metadata.stateNamespaceId ||
+      metadata.securityDomain !== first.metadata.securityDomain ||
       metadata.indexVersion !== first.metadata.indexVersion ||
       metadata.documentId !== first.metadata.documentId ||
       metadata.sourceId !== first.metadata.sourceId ||
@@ -73,6 +78,8 @@ export function assertValidVectorRecordMetadata(
 ): void {
   if (
     metadata.payloadSchemaVersion !== 2 ||
+    metadata.stateNamespaceId.trim() === "" ||
+    metadata.securityDomain.trim() === "" ||
     !isId(metadata.sourceId, "src") ||
     !isId(metadata.observationId, "obs") ||
     !isId(metadata.documentId, "doc") ||

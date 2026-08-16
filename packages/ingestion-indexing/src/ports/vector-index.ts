@@ -6,11 +6,25 @@ import type {
 
 export const MAX_VECTOR_SEARCH_LIMIT = 1_000;
 
-export interface VectorIndexCompatibility {
+interface VectorIndexCompatibilityBase {
   readonly securityDomain: string;
   readonly embeddingProfile: EmbeddingProfile;
   readonly payloadSchemaVersion: 2;
 }
+
+/** @deprecated Pre-release shape retained for the downstream daemon migration. */
+export interface VectorIndexCompatibility extends VectorIndexCompatibilityBase {
+  readonly stateNamespaceId?: never;
+}
+
+export interface VectorIndexCompatibilityV2
+  extends VectorIndexCompatibilityBase {
+  readonly stateNamespaceId: string;
+}
+
+export type VectorIndexCompatibilityInput =
+  | VectorIndexCompatibility
+  | VectorIndexCompatibilityV2;
 
 export interface PreparedVectorIndex {
   readonly accessHandle: string;
@@ -54,14 +68,16 @@ export interface VectorIndexRetentionLease {
 
 /** Outbound storage contract owned by the Ingestion indexing workflow. */
 export interface VectorIndexPort {
-  prepare(compatibility: VectorIndexCompatibility): Promise<PreparedVectorIndex>;
+  prepare(
+    compatibility: VectorIndexCompatibilityInput,
+  ): Promise<PreparedVectorIndex>;
   /**
    * Restores a published opaque binding after process-local adapter state was
    * lost. Unlike prepare, this operation must not create missing storage.
    */
   rehydrate(input: {
     readonly accessHandle: string;
-    readonly compatibility: VectorIndexCompatibility;
+    readonly compatibility: VectorIndexCompatibilityInput;
   }): Promise<RehydratedVectorIndex>;
   upsertRecords(input: {
     readonly accessHandle: string;

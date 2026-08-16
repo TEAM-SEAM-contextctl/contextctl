@@ -1,6 +1,8 @@
 import {
-  PublishedDocumentScopeSchema,
-  type PublishedDocumentScope,
+  PublishedScopeRefV2Schema as PublishedScopeRefSchema,
+  type PublishedDocumentScope as LegacyPublishedDocumentScope,
+  type PublishedDocumentScopeV2 as PublishedDocumentScope,
+  type PublishedScopeRefV2 as PublishedScopeRef,
 } from "@contextctl/contracts";
 
 import { sha256Digest } from "../domain/document-capture.js";
@@ -14,8 +16,11 @@ import { createVectorRecordId } from "../domain/vector-index.js";
 import { EmbeddingProviderFault } from "../ports/embedding.js";
 import {
   IndexCatalogFault,
-  type IndexPublicationStore,
-  type PublishedIndexVersion,
+  type IndexPublicationStore as LegacyIndexPublicationStore,
+  type IndexPublicationStoreV2 as IndexPublicationStore,
+  type PublishedIndexVersion as LegacyPublishedIndexVersion,
+  type PublishedIndexVersionV2 as PublishedIndexVersion,
+  type PublishedScopeCatalogEntry,
 } from "../ports/index-publication-store.js";
 import type {
   QueryEmbeddingProviderBinding,
@@ -25,7 +30,7 @@ import type {
 import {
   MAX_VECTOR_SEARCH_LIMIT,
   VectorIndexFault,
-  type VectorIndexCompatibility,
+  type VectorIndexCompatibilityV2 as VectorIndexCompatibility,
   type VectorIndexPort,
   type VectorIndexScope,
   type VectorIndexSearchHit,
@@ -36,23 +41,32 @@ export const MAX_MANAGED_SEARCH_BATCH_TARGETS = 64;
 export const DEFAULT_MANAGED_SEARCH_CONCURRENCY = 8;
 export const MAX_MANAGED_SEARCH_QUERY_CHARACTERS = 32_768;
 
+/** @deprecated Use ManagedDocumentSearchV2Command after daemon migration. */
 export interface ManagedDocumentSearchCommand {
   readonly queryText: string;
   readonly securityDomain: string;
-  readonly scope: PublishedDocumentScope;
+  readonly scope: LegacyPublishedDocumentScope;
+  readonly limit: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface ManagedDocumentSearchV2Command {
+  readonly queryText: string;
+  readonly securityDomain: string;
+  readonly scopeRef: PublishedScopeRef;
   readonly limit: number;
   readonly signal?: AbortSignal;
 }
 
 export interface BatchManagedDocumentSearchTarget {
   readonly targetKey: string;
-  readonly securityDomain: string;
-  readonly scope: PublishedDocumentScope;
+  readonly scopeRef: PublishedScopeRef;
   readonly limit: number;
 }
 
 export interface BatchManagedDocumentSearchCommand {
   readonly queryText: string;
+  readonly securityDomain: string;
   readonly targets: readonly BatchManagedDocumentSearchTarget[];
   readonly signal?: AbortSignal;
 }
@@ -91,7 +105,7 @@ export type BatchManagedDocumentSearchItem =
 export interface ManagedDocumentSearchDependencies {
   readonly embeddingProviders: QueryEmbeddingProviderResolver;
   readonly vectorIndexes: VectorIndexConnectorResolver;
-  readonly publications: IndexPublicationStore;
+  readonly publications: IndexPublicationStore | LegacyIndexPublicationStore;
   readonly maxConcurrency?: number;
 }
 
@@ -126,7 +140,9 @@ export class ManagedDocumentSearchError extends Error {
 interface SearchRequestContext {
   readonly queryText: string;
   readonly signal: AbortSignal;
-  readonly catalog: Map<string, Promise<PublishedIndexVersion | undefined>>;
+  readonly securityDomain: string;
+  readonly catalog: Map<string, Promise<PublishedScopeCatalogEntry | undefined>>;
+  readonly legacyScopes: ReadonlyMap<string, LegacyPublishedDocumentScope>;
   readonly embeddings: Map<string, Promise<readonly number[]>>;
   readonly bindings: Map<string, Promise<VectorIndexPort>>;
 }
@@ -161,19 +177,31 @@ export class ManagedDocumentSearch {
 
   async search(
     command: ManagedDocumentSearchCommand,
+  ): Promise<readonly DocumentSearchHit[]>;
+  async search(
+    command: ManagedDocumentSearchV2Command,
+  ): Promise<readonly DocumentSearchHit[]>;
+  async search(
+    command: ManagedDocumentSearchCommand | ManagedDocumentSearchV2Command,
   ): Promise<readonly DocumentSearchHit[]> {
-    const items = await this.searchBatch({
+    const scopeRef = "scopeRef" in command
+      ? command.scopeRef
+      : { scopeId: command.scope.scopeId, scopeVersion: command.scope.scopeVersion };
+    const legacyScopes = "scope" in command
+      ? new Map([[scopeKey(scopeRef), command.scope]])
+      : new Map<string, LegacyPublishedDocumentScope>();
+    const items = await this.#searchBatch({
       queryText: command.queryText,
+      securityDomain: command.securityDomain,
       targets: [
         {
           targetKey: "single-target",
-          securityDomain: command.securityDomain,
-          scope: command.scope,
+          scopeRef,
           limit: command.limit,
         },
       ],
       ...(command.signal === undefined ? {} : { signal: command.signal }),
-    });
+    }, legacyScopes);
     const item = items[0];
     if (item === undefined) {
       throw new ManagedDocumentSearchError("unexpected_failure");
@@ -190,11 +218,20 @@ export class ManagedDocumentSearch {
   async searchBatch(
     command: BatchManagedDocumentSearchCommand,
   ): Promise<readonly BatchManagedDocumentSearchItem[]> {
+    return this.#searchBatch(command, new Map());
+  }
+
+  async #searchBatch(
+    command: BatchManagedDocumentSearchCommand,
+    legacyScopes: ReadonlyMap<string, LegacyPublishedDocumentScope>,
+  ): Promise<readonly BatchManagedDocumentSearchItem[]> {
     validateBatchCommand(command);
     const context: SearchRequestContext = {
       queryText: command.queryText,
+      securityDomain: command.securityDomain,
       signal: command.signal ?? new AbortController().signal,
       catalog: new Map(),
+      legacyScopes,
       embeddings: new Map(),
       bindings: new Map(),
     };
@@ -225,7 +262,7 @@ export class ManagedDocumentSearch {
     let hits: readonly VectorIndexSearchHit[];
     try {
       hits = await resolved.vectorIndex.search({
-        accessHandle: resolved.publication.documentIndex.accessHandle,
+        accessHandle: resolved.publication.binding.accessHandle,
         scope: resolved.vectorScope,
         queryVector: resolved.queryVector,
         limit: resolved.target.limit,
@@ -235,11 +272,20 @@ export class ManagedDocumentSearch {
     }
     if (
       hits.length > resolved.target.limit ||
-      new Set(hits.map((hit) => hit.recordId)).size !== hits.length
+      new Set(hits.map((hit) => hit.recordId)).size !== hits.length ||
+      hits.some((hit) => !Number.isFinite(hit.score))
     ) {
       throw new ManagedDocumentSearchError("search_result_invalid");
     }
-    return hits.map((hit, index) =>
+    const ranked = [...hits].sort(
+      (left, right) =>
+        right.score - left.score ||
+        compareText(
+          left.metadata.chunkRevisionId,
+          right.metadata.chunkRevisionId,
+        ),
+    );
+    return ranked.map((hit, index) =>
       projectHit(
         hit,
         index + 1,
@@ -253,12 +299,16 @@ export class ManagedDocumentSearch {
     target: BatchManagedDocumentSearchTarget,
     context: SearchRequestContext,
   ): Promise<ResolvedTarget> {
-    const scope = parseTarget(target);
-    const publication = await this.#catalogPublication(scope, context);
-    if (publication === undefined) {
+    const scopeRef = parseTarget(target);
+    const entry = await this.#catalogScope(scopeRef, context);
+    if (entry === undefined) {
       throw new ManagedDocumentSearchError("scope_not_published");
     }
-    if (publication.securityDomain !== target.securityDomain) {
+    const { publication, scope } = entry;
+    if (
+      publication.binding.securityDomain !== context.securityDomain ||
+      publication.manifest.securityDomain !== context.securityDomain
+    ) {
       throw new ManagedDocumentSearchError("security_domain_mismatch");
     }
     if (
@@ -290,7 +340,7 @@ export class ManagedDocumentSearch {
     }
 
     const provider = this.#dependencies.embeddingProviders.resolve({
-      securityDomain: target.securityDomain,
+      securityDomain: context.securityDomain,
       embeddingProfile: publication.manifest.embeddingProfile,
     });
     if (provider === undefined) {
@@ -299,28 +349,29 @@ export class ManagedDocumentSearch {
       );
     }
     const vectorIndex = this.#dependencies.vectorIndexes.resolve(
-      publication.documentIndex.connectorId,
+      publication.binding.connectorId,
     );
     if (vectorIndex === undefined) {
       throw new ManagedDocumentSearchError("index_binding_unavailable");
     }
 
     const compatibility: VectorIndexCompatibility = {
-      securityDomain: target.securityDomain,
+      stateNamespaceId: publication.binding.stateNamespaceId,
+      securityDomain: context.securityDomain,
       embeddingProfile: publication.manifest.embeddingProfile,
       payloadSchemaVersion: 2,
     };
     const [rehydrated, queryVector] = await Promise.all([
       this.#rehydrateBinding(
         vectorIndex,
-        publication.documentIndex.connectorId,
-        publication.documentIndex.accessHandle,
+        publication.binding.connectorId,
+        publication.binding.accessHandle,
         compatibility,
         context,
       ),
       this.#queryEmbedding(
         provider,
-        target.securityDomain,
+        context.securityDomain,
         publication.manifest.embeddingProfile,
         context,
       ),
@@ -343,17 +394,16 @@ export class ManagedDocumentSearch {
     };
   }
 
-  async #catalogPublication(
-    scope: PublishedDocumentScope,
+  async #catalogScope(
+    scopeRef: PublishedScopeRef,
     context: SearchRequestContext,
-  ): Promise<PublishedIndexVersion | undefined> {
-    const key = `${scope.documentIndex.documentIndexId}\u0000${scope.documentIndex.indexVersion}`;
+  ): Promise<PublishedScopeCatalogEntry | undefined> {
+    const key = `${scopeRef.scopeId}\u0000${scopeRef.scopeVersion}`;
     let pending = context.catalog.get(key);
     if (pending === undefined) {
-      pending = this.#dependencies.publications.findVersion({
-        documentIndexId: scope.documentIndex.documentIndexId,
-        indexVersion: scope.documentIndex.indexVersion,
-      });
+      pending = isV2PublicationStore(this.#dependencies.publications)
+        ? this.#dependencies.publications.findScope(scopeRef)
+        : this.#legacyCatalogScope(scopeRef, context);
       context.catalog.set(key, pending);
     }
     try {
@@ -361,6 +411,20 @@ export class ManagedDocumentSearch {
     } catch (error) {
       throw mapCatalogError(error);
     }
+  }
+
+  async #legacyCatalogScope(
+    scopeRef: PublishedScopeRef,
+    context: SearchRequestContext,
+  ): Promise<PublishedScopeCatalogEntry | undefined> {
+    const scope = context.legacyScopes.get(scopeKey(scopeRef));
+    if (scope === undefined) return undefined;
+    const publication = await this.#dependencies.publications.findVersion({
+      documentIndexId: scope.documentIndex.documentIndexId,
+      indexVersion: scope.documentIndex.indexVersion,
+    });
+    if (publication === undefined || "binding" in publication) return undefined;
+    return normalizeLegacyCatalogEntry(publication, scope);
   }
 
   async #rehydrateBinding(
@@ -447,6 +511,7 @@ async function embedQuery(
 function validateBatchCommand(command: BatchManagedDocumentSearchCommand): void {
   if (
     command.queryText.trim() === "" ||
+    command.securityDomain.trim() === "" ||
     command.queryText.length > MAX_MANAGED_SEARCH_QUERY_CHARACTERS ||
     command.targets.length === 0 ||
     command.targets.length > MAX_MANAGED_SEARCH_BATCH_TARGETS ||
@@ -484,11 +549,10 @@ async function mapWithConcurrency<T, R>(
 
 function parseTarget(
   target: BatchManagedDocumentSearchTarget,
-): PublishedDocumentScope {
-  const parsedScope = PublishedDocumentScopeSchema.safeParse(target.scope);
+): PublishedScopeRef {
+  const parsedScope = PublishedScopeRefSchema.safeParse(target.scopeRef);
   if (
     !parsedScope.success ||
-    target.securityDomain.trim() === "" ||
     !Number.isSafeInteger(target.limit) ||
     target.limit <= 0 ||
     target.limit > MAX_VECTOR_SEARCH_LIMIT
@@ -496,6 +560,70 @@ function parseTarget(
     throw new ManagedDocumentSearchError("invalid_request");
   }
   return parsedScope.data;
+}
+
+function scopeKey(scopeRef: PublishedScopeRef): string {
+  return `${scopeRef.scopeId}\u0000${scopeRef.scopeVersion}`;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isV2PublicationStore(
+  store: IndexPublicationStore | LegacyIndexPublicationStore,
+): store is IndexPublicationStore {
+  return "findScope" in store && typeof store.findScope === "function";
+}
+
+function normalizeLegacyCatalogEntry(
+  publication: LegacyPublishedIndexVersion,
+  requestedScope: LegacyPublishedDocumentScope,
+): PublishedScopeCatalogEntry | undefined {
+  const documentIndex = {
+    documentIndexId: publication.documentIndex.documentIndexId,
+    sourceId: publication.documentIndex.sourceId,
+    documentId: publication.documentIndex.documentId,
+    indexVersion: publication.documentIndex.indexVersion,
+  };
+  const scopes: PublishedDocumentScope[] = publication.scopes.map((scope) => ({
+    scopeId: scope.scopeId,
+    scopeVersion: scope.scopeVersion,
+    kind: "managed_document",
+    documentIndex: {
+      documentIndexId: scope.documentIndex.documentIndexId,
+      sourceId: scope.documentIndex.sourceId,
+      documentId: scope.documentIndex.documentId,
+      indexVersion: scope.documentIndex.indexVersion,
+    },
+    selector: structuredClone(scope.selector),
+  }));
+  const scope = scopes.find(
+    (candidate) =>
+      candidate.scopeId === requestedScope.scopeId &&
+      candidate.scopeVersion === requestedScope.scopeVersion,
+  );
+  if (scope === undefined) return undefined;
+  return {
+    publication: {
+      manifest: {
+        ...publication.manifest,
+        stateNamespaceId: "legacy-v1",
+        securityDomain: publication.securityDomain,
+      },
+      documentIndex,
+      scopes,
+      binding: {
+        stateNamespaceId: "legacy-v1",
+        securityDomain: publication.securityDomain,
+        documentIndexId: publication.documentIndex.documentIndexId,
+        indexVersion: publication.documentIndex.indexVersion,
+        connectorId: publication.documentIndex.connectorId,
+        accessHandle: publication.documentIndex.accessHandle,
+      },
+    },
+    scope,
+  };
 }
 
 function mapCatalogError(error: unknown): ManagedDocumentSearchError {
@@ -560,6 +688,8 @@ function projectHit(
   rank: number,
   manifest: {
     readonly payloadSchemaVersion: 2;
+    readonly stateNamespaceId: string;
+    readonly securityDomain: string;
     readonly sourceId: string;
     readonly observationId: string;
     readonly documentId: string;
@@ -573,6 +703,8 @@ function projectHit(
   const metadata = hit.metadata;
   if (
     metadata.payloadSchemaVersion !== 2 ||
+    metadata.stateNamespaceId !== manifest.stateNamespaceId ||
+    metadata.securityDomain !== manifest.securityDomain ||
     metadata.sourceId !== manifest.sourceId ||
     metadata.observationId !== manifest.observationId ||
     metadata.documentId !== manifest.documentId ||
@@ -580,6 +712,7 @@ function projectHit(
     metadata.indexVersion !== manifest.indexVersion ||
     hit.recordId !==
       createVectorRecordId(
+        metadata.stateNamespaceId,
         metadata.documentIndexId,
         metadata.indexVersion,
         metadata.chunkRevisionId,

@@ -1,7 +1,8 @@
 import {
-  parseIngestionPublication,
+  assertIngestionPublicationV2Transition as assertIngestionPublicationTransition,
+  parseIngestionPublicationV2 as parseIngestionPublication,
   parsePublicationReady,
-  type IngestionPublication,
+  type IngestionPublicationV2 as IngestionPublication,
   type PublicationReady,
 } from "@contextctl/contracts";
 
@@ -22,6 +23,7 @@ export class InMemoryIngestionPublicationStore
 {
   readonly #publications = new Map<string, StoredPublication>();
   readonly #latestBySource = new Map<string, string>();
+  readonly #scopeDefinitions = new Map<string, string>();
 
   async commitReady(
     input: IngestionPublication,
@@ -48,11 +50,41 @@ export class InMemoryIngestionPublicationStore
     if (publication.previousPublicationId !== latestId) {
       throw new IngestionPublicationStoreConflict();
     }
+    const previous =
+      latestId === undefined
+        ? undefined
+        : this.#publications.get(latestId)?.publication;
+    try {
+      assertIngestionPublicationTransition(previous, publication);
+      for (const unit of publication.knowledgeUnits) {
+        for (const scope of unit.publishedScopes) {
+          const key = `${scope.scopeId}\u0000${scope.scopeVersion}`;
+          const definition = canonicalJson(scope);
+          const existingDefinition = this.#scopeDefinitions.get(key);
+          if (
+            existingDefinition !== undefined &&
+            existingDefinition !== definition
+          ) {
+            throw new IngestionPublicationStoreConflict();
+          }
+        }
+      }
+    } catch {
+      throw new IngestionPublicationStoreConflict();
+    }
     this.#publications.set(publication.publicationId, {
       publication: structuredClone(publication),
       notified: false,
     });
     this.#latestBySource.set(publication.sourceId, publication.publicationId);
+    for (const unit of publication.knowledgeUnits) {
+      for (const scope of unit.publishedScopes) {
+        this.#scopeDefinitions.set(
+          `${scope.scopeId}\u0000${scope.scopeVersion}`,
+          canonicalJson(scope),
+        );
+      }
+    }
     return { status: "published", publication: structuredClone(publication) };
   }
 

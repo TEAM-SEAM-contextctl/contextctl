@@ -1,8 +1,8 @@
 import {
-  PublishedDocumentIndexRefSchema,
-  PublishedDocumentScopeSchema,
-  type PublishedDocumentIndexRef,
-  type PublishedDocumentScope,
+  PublishedDocumentIndexRefV2Schema as PublishedDocumentIndexRefSchema,
+  PublishedDocumentScopeV2Schema as PublishedDocumentScopeSchema,
+  type PublishedDocumentIndexRefV2 as PublishedDocumentIndexRef,
+  type PublishedDocumentScopeV2 as PublishedDocumentScope,
 } from "@contextctl/contracts";
 
 import type { IndexManifest } from "../domain/index-manifest.js";
@@ -17,8 +17,6 @@ export interface SemanticPublishedScopeInput {
 
 export interface CreatePublishedDocumentScopesInput {
   readonly manifest: IndexManifest;
-  readonly connectorId: string;
-  readonly accessHandle: string;
   readonly semanticScopes?: readonly SemanticPublishedScopeInput[];
 }
 
@@ -36,7 +34,7 @@ export class PublishedDocumentScopeError extends Error {
 
 /**
  * Produces the contract boundary values for one verified Manifest. The
- * physical store remains hidden behind the connector-owned opaque handle.
+ * physical store remains hidden in the Indexing-owned catalog binding.
  */
 export function createPublishedDocumentScopes(
   input: CreatePublishedDocumentScopesInput,
@@ -46,8 +44,6 @@ export function createPublishedDocumentScopes(
     sourceId: input.manifest.sourceId,
     documentId: input.manifest.documentId,
     indexVersion: input.manifest.indexVersion,
-    connectorId: input.connectorId,
-    accessHandle: input.accessHandle,
   });
   const selectors: Array<
     | { readonly kind: "document" }
@@ -73,9 +69,9 @@ export function createPublishedDocumentScopes(
   selectors.sort((left, right) => {
     if (left.kind === "document") return -1;
     if (right.kind === "document") return 1;
-    return left.semanticUnitIds.join("\u0000").localeCompare(
-      right.semanticUnitIds.join("\u0000"),
-    );
+    const leftKey = left.semanticUnitIds.join("\u0000");
+    const rightKey = right.semanticUnitIds.join("\u0000");
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
   });
 
   const seen = new Set<string>();

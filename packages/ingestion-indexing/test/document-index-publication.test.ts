@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DocumentIndexPublisher,
-  InMemoryIndexPublicationStore,
+  InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
   InMemoryVectorIndexAdapter,
   PublishedDocumentScopeError,
   computeRecordSetDigest,
@@ -50,7 +50,7 @@ describe("DocumentIndexPublisher", () => {
     expect(result.manifest.recordSetDigest).toBe(
       computeRecordSetDigest(
         (await vectorIndex.listVersionRecords({
-          accessHandle: result.documentIndex.accessHandle,
+          accessHandle: result.binding.accessHandle,
           documentIndexId: result.manifest.documentIndexId,
           indexVersion: result.manifest.indexVersion,
         })).map((record) => ({
@@ -100,7 +100,7 @@ describe("DocumentIndexPublisher", () => {
     expect(vectorIndex.upsertCalls).toBe(callsAfterFirst);
     expect(
       await delegate.listVersionRecords({
-        accessHandle: first.documentIndex.accessHandle,
+        accessHandle: first.binding.accessHandle,
         documentIndexId: first.manifest.documentIndexId,
         indexVersion: first.manifest.indexVersion,
       }),
@@ -236,7 +236,7 @@ describe("DocumentIndexPublisher", () => {
     }).publish(createCommand(3));
     expect(
       await delegate.listVersionRecords({
-        accessHandle: retried.documentIndex.accessHandle,
+        accessHandle: retried.binding.accessHandle,
         documentIndexId: retried.manifest.documentIndexId,
         indexVersion: retried.manifest.indexVersion,
       }),
@@ -373,6 +373,7 @@ function createCommand(chunkCount: number): PublishDocumentIndexCommand {
     createChunk(index, chunkCount),
   );
   return {
+    stateNamespaceId: "state_test",
     document,
     semanticUnits,
     chunks,
@@ -438,6 +439,7 @@ function conflictingStoredRecord(
   const chunk = command.chunks[0]!;
   return {
     recordId: createVectorRecordId(
+      command.stateNamespaceId,
       identity.documentIndexId,
       identity.indexVersion,
       chunk.revisionId,
@@ -445,6 +447,8 @@ function conflictingStoredRecord(
     retrievalText: chunk.text,
     metadata: {
       payloadSchemaVersion: 2,
+      stateNamespaceId: command.stateNamespaceId,
+      securityDomain: command.securityDomain,
       sourceId: command.document.sourceId,
       observationId: command.document.observationId,
       documentId: command.document.documentId,

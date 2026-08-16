@@ -1,8 +1,10 @@
 import {
-  PublishedDocumentIndexRefSchema,
-  PublishedDocumentScopeSchema,
   type PublishedDocumentIndexRef,
   type PublishedDocumentScope,
+  PublishedDocumentIndexRefV2Schema as PublishedDocumentIndexRefSchema,
+  PublishedDocumentScopeV2Schema as PublishedDocumentScopeSchema,
+  type PublishedDocumentIndexRefV2,
+  type PublishedDocumentScopeV2,
 } from "@contextctl/contracts";
 
 import { validateEmbeddingProfile } from "./embedding-profile.js";
@@ -15,13 +17,30 @@ import {
 } from "./model-validation.js";
 import { canonicalDigest, canonicalJson } from "./revision-identity.js";
 
-/** Immutable catalog record made visible by one atomic current transition. */
+/** @deprecated Pre-release v1 shape retained only for downstream migration. */
 export interface PublishedIndexVersion {
-  readonly manifest: IndexManifest;
-  /** Internal isolation key; never serialized into a Published Scope. */
+  readonly manifest: Omit<IndexManifest, "stateNamespaceId" | "securityDomain">;
   readonly securityDomain: string;
   readonly documentIndex: PublishedDocumentIndexRef;
   readonly scopes: readonly PublishedDocumentScope[];
+}
+
+/** Immutable v2 catalog record made visible by one atomic current transition. */
+export interface PublishedIndexVersionV2 {
+  readonly manifest: IndexManifest;
+  readonly documentIndex: PublishedDocumentIndexRefV2;
+  readonly scopes: readonly PublishedDocumentScopeV2[];
+  /** Internal physical binding; never serialized into a Published Scope. */
+  readonly binding: PublishedIndexBinding;
+}
+
+export interface PublishedIndexBinding {
+  readonly stateNamespaceId: string;
+  readonly documentIndexId: string;
+  readonly indexVersion: string;
+  readonly connectorId: string;
+  readonly accessHandle: string;
+  readonly securityDomain: string;
 }
 
 export type PublishedIndexVersionValidationErrorCode =
@@ -38,7 +57,7 @@ export class PublishedIndexVersionValidationError extends Error {
 /** Validates untrusted durable catalog data before it reaches search. */
 export function parsePublishedIndexVersion(
   input: unknown,
-): PublishedIndexVersion {
+): PublishedIndexVersionV2 {
   if (!isRecord(input) || !hasExactKeys(input, PUBLICATION_KEYS)) {
     throw new PublishedIndexVersionValidationError("corrupt_record");
   }
@@ -56,30 +75,38 @@ export function parsePublishedIndexVersion(
     }
     return parsed.data;
   });
-  if (typeof input.securityDomain !== "string") {
+  const binding = parseBinding(input.binding);
+  if (binding === undefined) {
     throw new PublishedIndexVersionValidationError("corrupt_record");
   }
-  const publication: PublishedIndexVersion = {
+  const publication: PublishedIndexVersionV2 = {
     manifest,
-    securityDomain: input.securityDomain,
     documentIndex: documentIndex.data,
     scopes,
+    binding,
   };
   assertConsistentPublishedIndexVersion(publication);
   return publication;
 }
 
 export function assertConsistentPublishedIndexVersion(
-  publication: PublishedIndexVersion,
+  publication: PublishedIndexVersionV2,
 ): void {
-  const { manifest, documentIndex, scopes } = publication;
+  const { manifest, documentIndex, scopes, binding } = publication;
   if (
-    publication.securityDomain.trim() === "" ||
+    binding.stateNamespaceId !== manifest.stateNamespaceId ||
+    binding.securityDomain !== manifest.securityDomain ||
+    binding.documentIndexId !== manifest.documentIndexId ||
+    binding.indexVersion !== manifest.indexVersion ||
+    binding.connectorId.trim() === "" ||
+    binding.accessHandle.trim() === "" ||
     documentIndex.documentIndexId !== manifest.documentIndexId ||
     documentIndex.sourceId !== manifest.sourceId ||
     documentIndex.documentId !== manifest.documentId ||
     documentIndex.indexVersion !== manifest.indexVersion ||
     scopes.length === 0 ||
+    new Set(scopes.map((scope) => `${scope.scopeId}\u0000${scope.scopeVersion}`))
+      .size !== scopes.length ||
     scopes.some(
       (scope) =>
         canonicalJson(scope.documentIndex) !== canonicalJson(documentIndex),
@@ -93,22 +120,22 @@ export function assertConsistentPublishedIndexVersion(
 }
 
 export function publishedIndexVersionFingerprint(
-  publication: PublishedIndexVersion,
+  publication: PublishedIndexVersionV2,
 ): string {
   const { publishedAt: _publishedAt, ...manifest } = publication.manifest;
   return canonicalDigest({
     manifest,
-    securityDomain: publication.securityDomain,
+    binding: publication.binding,
     documentIndex: publication.documentIndex,
     scopes: publication.scopes,
   });
 }
 
 const PUBLICATION_KEYS = [
+  "binding",
   "documentIndex",
   "manifest",
   "scopes",
-  "securityDomain",
 ] as const;
 
 const MANIFEST_KEYS = [
@@ -132,6 +159,8 @@ const MANIFEST_KEYS = [
   "segmentationPolicyVersion",
   "semanticUnitRevisions",
   "sourceId",
+  "stateNamespaceId",
+  "securityDomain",
   "textMeasureProfileVersion",
 ] as const;
 
@@ -162,6 +191,8 @@ function parseManifest(input: unknown): IndexManifest {
   );
   const fallbackCounts = parseNumberRecord(input.fallbackCounts);
   const documentIndexId = requiredString(input.documentIndexId);
+  const stateNamespaceId = requiredString(input.stateNamespaceId);
+  const securityDomain = requiredString(input.securityDomain);
   const indexVersion = requiredString(input.indexVersion);
   const sourceId = requiredString(input.sourceId);
   const observationId = requiredString(input.observationId);
@@ -200,6 +231,8 @@ function parseManifest(input: unknown): IndexManifest {
     throw new PublishedIndexVersionValidationError("corrupt_record");
   }
   return {
+    stateNamespaceId,
+    securityDomain,
     documentIndexId,
     indexVersion,
     sourceId,
@@ -222,6 +255,37 @@ function parseManifest(input: unknown): IndexManifest {
     fallbackCounts,
     publishedAt,
   };
+}
+
+function parseBinding(input: unknown): PublishedIndexBinding | undefined {
+  if (
+    !isRecord(input) ||
+    !hasExactKeys(input, [
+      "accessHandle",
+      "connectorId",
+      "documentIndexId",
+      "indexVersion",
+      "securityDomain",
+      "stateNamespaceId",
+    ])
+  ) {
+    return undefined;
+  }
+  const binding = {
+    accessHandle: requiredString(input.accessHandle),
+    connectorId: requiredString(input.connectorId),
+    documentIndexId: requiredString(input.documentIndexId),
+    indexVersion: requiredString(input.indexVersion),
+    securityDomain: requiredString(input.securityDomain),
+    stateNamespaceId: requiredString(input.stateNamespaceId),
+  };
+  if (
+    !isId(binding.documentIndexId, "didx") ||
+    !isRevisionId(binding.indexVersion, "idxv")
+  ) {
+    throw new PublishedIndexVersionValidationError("corrupt_record");
+  }
+  return binding;
 }
 
 function parseEmbeddingProfile(input: unknown): IndexManifest["embeddingProfile"] {

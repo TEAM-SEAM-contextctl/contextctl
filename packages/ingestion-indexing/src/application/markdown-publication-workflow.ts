@@ -1,4 +1,4 @@
-import type { IngestionPublication } from "@contextctl/contracts";
+import type { IngestionPublicationV2 as IngestionPublication } from "@contextctl/contracts";
 
 import { buildMarkdownPublication } from "./build-markdown-publication.js";
 import type { EmbeddingPipeline } from "./embed-managed-chunks.js";
@@ -99,6 +99,8 @@ export interface MarkdownPublicationWorkflowDependencies {
   readonly readyNotifier: PublicationReadyNotifier;
   readonly events: MarkdownPublicationEventSink;
   readonly embeddingProfile: EmbeddingProfile;
+  /** Stable identity of the durable daemon state this workflow belongs to. */
+  readonly stateNamespaceId: string;
   /** One workflow instance is bound to exactly one provider security domain. */
   readonly securityDomain: string;
   readonly indexingPolicy?: DocumentIndexingPolicySet;
@@ -116,7 +118,10 @@ export class MarkdownPublicationWorkflow {
   #nextOperation = 1;
 
   constructor(dependencies: MarkdownPublicationWorkflowDependencies) {
-    if (dependencies.securityDomain.trim() === "") {
+    if (
+      dependencies.securityDomain.trim() === "" ||
+      dependencies.stateNamespaceId.trim() === ""
+    ) {
       throw new TypeError("Markdown publication security domain is invalid");
     }
     this.#dependencies = dependencies;
@@ -292,6 +297,7 @@ export class MarkdownPublicationWorkflow {
     );
     const indexed = await operation.run("index_publication", () =>
       this.#dependencies.indexPublisher.publish({
+        stateNamespaceId: this.#dependencies.stateNamespaceId,
         document,
         semanticUnits,
         chunks,
@@ -316,6 +322,9 @@ export class MarkdownPublicationWorkflow {
         manifest: indexed.manifest,
         scopes: indexed.scopes,
         ...(previous === undefined ? {} : { previous }),
+        ...(checkpoint.semanticUnits === undefined
+          ? {}
+          : { previousSemanticUnits: checkpoint.semanticUnits }),
       });
       const result = await this.#dependencies.publications.commitReady(
         publication,

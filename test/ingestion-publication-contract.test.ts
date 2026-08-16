@@ -1,14 +1,28 @@
 import { readFile } from "node:fs/promises";
 
 import {
+  assertIngestionPublicationV2Transition,
+  computePublicationV2Changes,
+  computePublishedKnowledgeUnitV2Digest,
   ContractValidationError,
-  parseIngestionPublication,
+  parseIngestionPublication as parseIngestionPublicationV1,
+  parseIngestionPublicationV2 as parseIngestionPublication,
   parsePublicationReady,
-  type IngestionPublication,
+  type IngestionPublicationV2 as IngestionPublication,
+  type PublishedKnowledgeUnitV2,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 async function loadIngestionProducerFixture(): Promise<unknown> {
+  return JSON.parse(
+    await readFile(
+      new URL("./fixtures/ingestion-publication.v2.json", import.meta.url),
+      "utf8",
+    ),
+  ) as unknown;
+}
+
+async function loadLegacyFixture(): Promise<unknown> {
   return JSON.parse(
     await readFile(
       new URL("./fixtures/ingestion-publication.v1.json", import.meta.url),
@@ -47,6 +61,180 @@ describe("IngestionPublication contract", () => {
         ],
       },
     ]);
+  });
+
+  it("keeps v1 and v2 parsing explicit during downstream migration", async () => {
+    const legacy = await loadLegacyFixture();
+    const current = await loadIngestionProducerFixture();
+    expect(parseIngestionPublicationV1(legacy).schemaVersion).toBe(1);
+    expect(() => parseIngestionPublication(legacy)).toThrow(
+      ContractValidationError,
+    );
+    expect(() => parseIngestionPublicationV1(current)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects physical bindings and free-form content side channels", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{
+        facts: Array<Record<string, unknown>>;
+        publishedScopes: Array<{
+          documentIndex: Record<string, unknown>;
+        }>;
+      }>;
+    };
+    const unit = fixture.knowledgeUnits[0];
+    expect(unit).toBeDefined();
+    if (unit === undefined) return;
+    unit.facts.push({
+      name: "raw_document_text",
+      value: "the original document must never cross this boundary",
+    });
+    unit.publishedScopes[0]!.documentIndex.connectorId = "vector.private";
+    unit.publishedScopes[0]!.documentIndex.accessHandle = "secret/collection";
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("recomputes publication-unit-v2 digests instead of trusting producers", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{ contentDigest: string }>;
+    };
+    fixture.knowledgeUnits[0]!.contentDigest = `sha256:${"0".repeat(64)}`;
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("preserves segment as its own unit kind", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{
+        kind: string;
+        facts: Array<{ name: string; value: unknown }>;
+        contentDigest: string;
+      }>;
+      changes: Array<{ currentContentDigest?: string }>;
+    };
+    const unit = fixture.knowledgeUnits[0]!;
+    unit.kind = "segment";
+    const kindFact = unit.facts.find((fact) => fact.name === "unit.kind")!;
+    kindFact.value = "segment";
+    unit.contentDigest = computePublishedKnowledgeUnitV2Digest(
+      unit as PublishedKnowledgeUnitV2,
+    );
+    fixture.changes[0]!.currentContentDigest = unit.contentDigest;
+
+    expect(parseIngestionPublication(fixture).knowledgeUnits[0]?.kind).toBe(
+      "segment",
+    );
+  });
+
+  it("accepts an empty initial snapshot and an exact all-removed successor", async () => {
+    const previous = parseIngestionPublication(
+      await loadIngestionProducerFixture(),
+    );
+    const emptyInitial = parseIngestionPublication({
+      schemaVersion: 2,
+      publicationId: "pub_empty_initial",
+      sourceId: "src_empty",
+      observationId: "obs_empty",
+      producedAt: "2026-08-16T00:00:00.000Z",
+      knowledgeUnits: [],
+      changes: [],
+    });
+    expect(emptyInitial.knowledgeUnits).toEqual([]);
+
+    const current = parseIngestionPublication({
+      schemaVersion: 2,
+      publicationId: "pub_all_removed",
+      sourceId: previous.sourceId,
+      observationId: "obs_all_removed",
+      previousPublicationId: previous.publicationId,
+      producedAt: "2026-08-16T00:01:00.000Z",
+      knowledgeUnits: [],
+      changes: computePublicationV2Changes(previous, []),
+    });
+    expect(() =>
+      assertIngestionPublicationV2Transition(previous, current),
+    ).not.toThrow();
+    expect(current.changes).toEqual([
+      {
+        kind: "removed",
+        knowledgeUnitId: "unit_payment_failures",
+        previousContentDigest:
+          previous.knowledgeUnits[0]!.contentDigest,
+      },
+    ]);
+  });
+
+  it("canonicalizes reordered root arrays without changing retry content", () => {
+    const publication = parseIngestionPublication({
+      schemaVersion: 2,
+      publicationId: "pub_reordered_retry",
+      sourceId: "src_payments",
+      observationId: "obs_reordered_retry",
+      previousPublicationId: "pub_predecessor",
+      producedAt: "2026-08-16T00:01:30.000Z",
+      knowledgeUnits: [],
+      changes: [
+        {
+          kind: "removed",
+          knowledgeUnitId: "unit_zeta",
+          previousContentDigest: `sha256:${"2".repeat(64)}`,
+        },
+        {
+          kind: "removed",
+          knowledgeUnitId: "unit_alpha",
+          previousContentDigest: `sha256:${"3".repeat(64)}`,
+        },
+      ],
+    });
+
+    expect(publication.changes.map((change) => change.knowledgeUnitId)).toEqual(
+      ["unit_alpha", "unit_zeta"],
+    );
+  });
+
+  it("preserves unchanged units byte-for-byte and rejects a false delta", async () => {
+    const previous = parseIngestionPublication(
+      await loadIngestionProducerFixture(),
+    );
+    const unchanged = parseIngestionPublication({
+      schemaVersion: 2,
+      publicationId: "pub_unchanged",
+      sourceId: previous.sourceId,
+      observationId: "obs_new",
+      previousPublicationId: previous.publicationId,
+      producedAt: "2026-08-16T00:02:00.000Z",
+      knowledgeUnits: structuredClone(previous.knowledgeUnits),
+      changes: [],
+    });
+    expect(() =>
+      assertIngestionPublicationV2Transition(previous, unchanged),
+    ).not.toThrow();
+
+    const falseDelta = {
+      ...unchanged,
+      changes: [
+        {
+          kind: "updated",
+          knowledgeUnitId: previous.knowledgeUnits[0]!.id,
+          previousContentDigest: previous.knowledgeUnits[0]!.contentDigest,
+          currentContentDigest: `sha256:${"1".repeat(64)}`,
+          changedFields: ["facts"],
+        },
+      ],
+    };
+    expect(() =>
+      assertIngestionPublicationV2Transition(
+        previous,
+        falseDelta as IngestionPublication,
+      ),
+    ).toThrow(ContractValidationError);
   });
 
   it("rejects unknown scope discriminators and reports a stable path", async () => {
@@ -189,6 +377,7 @@ describe("IngestionPublication contract", () => {
         connector: "http.main",
         method: "GET",
         path: "/payments",
+        parameters: [],
       },
     ];
 
@@ -220,6 +409,7 @@ describe("IngestionPublication contract", () => {
         scopeVersion: "scpv_aaaa",
         kind: "sql_source",
         connector: "postgres.main",
+        schema: "public",
         table: "unrelated",
         columns: ["secret"],
       },
@@ -245,6 +435,7 @@ describe("IngestionPublication contract", () => {
       sourceId: "src_payments",
       method: "GET",
       path: "/payments",
+      parameters: [],
     };
     unit.publishedScopes = [
       {
@@ -254,6 +445,7 @@ describe("IngestionPublication contract", () => {
         connector: "http.main",
         method: "DELETE",
         path: "/unrelated",
+        parameters: [],
       },
     ];
 
@@ -266,7 +458,7 @@ describe("IngestionPublication contract", () => {
     const fixture = (await loadIngestionProducerFixture()) as {
       schemaVersion: number;
     };
-    fixture.schemaVersion = 2;
+    fixture.schemaVersion = 1;
 
     expect(() => parseIngestionPublication(fixture)).toThrow(
       ContractValidationError,

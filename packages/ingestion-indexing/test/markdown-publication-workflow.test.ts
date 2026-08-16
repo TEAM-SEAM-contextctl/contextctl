@@ -2,8 +2,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   type PublicationReady,
-  parseIngestionPublication,
-  type IngestionPublication,
+  parseIngestionPublicationV2 as parseIngestionPublication,
+  type IngestionPublicationV2 as IngestionPublication,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -42,6 +42,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
+      stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
       clock: () => NOW,
@@ -72,8 +73,8 @@ describe("MarkdownPublicationWorkflow", () => {
     );
 
     const retryUnit = publication.knowledgeUnits.find((unit) =>
-      unit.evidence.some(
-        (fact) => fact.name === "title" && fact.value === "재시도",
+      unit.facts.some(
+        (fact) => fact.name === "section.label" && fact.value === "재시도",
       ),
     );
     expect(retryUnit).toBeDefined();
@@ -85,7 +86,7 @@ describe("MarkdownPublicationWorkflow", () => {
     const hits = await runtime.search.search({
       queryText: "결제 재시도 절차",
       securityDomain: "tenant-a",
-      scope,
+      scopeRef: { scopeId: scope.scopeId, scopeVersion: scope.scopeVersion },
       limit: 5,
     });
     expect(hits.length).toBeGreaterThan(0);
@@ -130,6 +131,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
+      stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
       clock: () => NOW,
@@ -185,6 +187,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
+      stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       clock: () => NOW,
     });
@@ -223,6 +226,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
+      stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
       clock: () => NOW,
@@ -257,6 +261,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       connectorId: "vector.local",
+      stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       readyNotifier: notifier,
       clock: () => NOW,

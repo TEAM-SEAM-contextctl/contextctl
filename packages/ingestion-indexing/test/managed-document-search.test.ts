@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
   DocumentIndexPublisher,
-  InMemoryIndexPublicationStore,
+  InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
   InMemoryVectorIndexAdapter,
   ManagedDocumentSearch,
   StaticQueryEmbeddingProviderRegistry,
@@ -12,7 +12,7 @@ import {
   sha256Digest,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
-  type PublishedIndexVersion,
+  type PublishedIndexVersionV2 as PublishedIndexVersion,
   type VectorIndexPort,
   type VectorIndexRecord,
 } from "../src/index.js";
@@ -55,7 +55,7 @@ describe("ManagedDocumentSearch", () => {
       const hits = await harness.search.search({
         queryText: "When should failed payments be retried?",
         securityDomain: "tenant-a",
-        scope,
+        scopeRef: ref(scope),
         limit: 5,
       });
       const chunk = createManagedChunkFixture()[0]!;
@@ -85,7 +85,7 @@ describe("ManagedDocumentSearch", () => {
 
   it("excludes other documents and immutable versions in the same collection", async () => {
     const harness = await createHarness();
-    const accessHandle = harness.publication.documentIndex.accessHandle;
+    const accessHandle = harness.publication.binding.accessHandle;
     await harness.vectorIndex.upsertRecords({
       accessHandle,
       embeddingProfile: profile,
@@ -124,7 +124,7 @@ describe("ManagedDocumentSearch", () => {
     const hits = await harness.search.search({
       queryText: "payment retry",
       securityDomain: "tenant-a",
-      scope: requiredScope(harness.publication, "document"),
+      scopeRef: ref(requiredScope(harness.publication, "document")),
       limit: 10,
     });
 
@@ -143,7 +143,7 @@ describe("ManagedDocumentSearch", () => {
       .search({
         queryText: "payment retry",
         securityDomain: "tenant-b",
-        scope,
+        scopeRef: ref(scope),
         limit: 5,
       })
       .catch((error: unknown) => error);
@@ -158,7 +158,7 @@ describe("ManagedDocumentSearch", () => {
       harness.search.search({
         queryText: "payment retry",
         securityDomain: "tenant-a",
-        scope: { ...scope, scopeId: "scope_not_published" },
+        scopeRef: { ...ref(scope), scopeId: "scope_not_published" },
         limit: 5,
       }),
     ).rejects.toMatchObject({ code: "scope_not_published" });
@@ -174,7 +174,7 @@ describe("ManagedDocumentSearch", () => {
       harness.search.search({
         queryText: "payment retry",
         securityDomain: "tenant-a",
-        scope: requiredScope(harness.publication, "document"),
+        scopeRef: ref(requiredScope(harness.publication, "document")),
         limit: 5,
       }),
     ).rejects.toMatchObject({ code: "search_result_invalid" });
@@ -191,6 +191,7 @@ async function createHarness() {
     publications,
     clock: () => "2026-08-13T00:00:00.000Z",
   }).publish({
+    stateNamespaceId: "state_test",
     document: createDocumentFixture(),
     semanticUnits: createSemanticUnitFixture(),
     chunks,
@@ -250,6 +251,10 @@ function requiredScope(
   return scope;
 }
 
+function ref(scope: { readonly scopeId: string; readonly scopeVersion: string }) {
+  return { scopeId: scope.scopeId, scopeVersion: scope.scopeVersion };
+}
+
 function record(input: {
   readonly documentIndexId: string;
   readonly indexVersion: string;
@@ -263,6 +268,7 @@ function record(input: {
 }): VectorIndexRecord {
   return {
     recordId: createVectorRecordId(
+      "state_test",
       input.documentIndexId,
       input.indexVersion,
       input.chunkRevisionId,
@@ -272,6 +278,8 @@ function record(input: {
     retrievalText: input.retrievalText,
     metadata: {
       payloadSchemaVersion: 2,
+      stateNamespaceId: "state_test",
+      securityDomain: "tenant-a",
       sourceId: input.sourceId,
       observationId: input.observationId,
       documentId: input.documentId,

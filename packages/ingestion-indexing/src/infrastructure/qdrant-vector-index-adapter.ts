@@ -23,7 +23,7 @@ import {
   MAX_VECTOR_SEARCH_LIMIT,
   VectorIndexFault,
   type PreparedVectorIndex,
-  type VectorIndexCompatibility,
+  type VectorIndexCompatibilityInput as VectorIndexCompatibility,
   type VectorIndexPort,
   type VectorIndexRetentionLease,
   type VectorIndexScope,
@@ -33,6 +33,8 @@ import {
 
 const REQUIRED_PAYLOAD_INDEXES = {
   recordKind: "keyword",
+  stateNamespaceId: "keyword",
+  securityDomain: "keyword",
   sourceId: "keyword",
   observationId: "keyword",
   documentId: "keyword",
@@ -369,6 +371,7 @@ function collectionName(compatibility: VectorIndexCompatibility): string {
 function compatibilityDigest(compatibility: VectorIndexCompatibility): string {
   return createHash("sha256")
     .update(canonicalJson({
+      stateNamespaceId: compatibility.stateNamespaceId,
       securityDomain: compatibility.securityDomain,
       embeddingProfile: compatibility.embeddingProfile,
       payloadSchemaVersion: compatibility.payloadSchemaVersion,
@@ -518,6 +521,7 @@ function parseSearchHits(result: unknown, scope: VectorIndexScope): VectorIndexS
     const recordId = requiredString(payload.recordId);
     if (
       recordId !== createVectorRecordId(
+        metadata.stateNamespaceId,
         metadata.documentIndexId,
         metadata.indexVersion,
         metadata.chunkRevisionId,
@@ -558,6 +562,7 @@ function parseScrollPage(
       metadata.indexVersion !== version.indexVersion ||
       recordId !==
         createVectorRecordId(
+          metadata.stateNamespaceId,
           metadata.documentIndexId,
           metadata.indexVersion,
           metadata.chunkRevisionId,
@@ -580,6 +585,8 @@ function parseMetadata(payload: Record<string, unknown>): VectorIndexRecordMetad
   }
   const metadata: VectorIndexRecordMetadata = {
     payloadSchemaVersion: 2,
+    stateNamespaceId: requiredString(payload.stateNamespaceId),
+    securityDomain: requiredString(payload.securityDomain),
     sourceId: requiredString(payload.sourceId),
     observationId: requiredString(payload.observationId),
     documentId: requiredString(payload.documentId),
@@ -643,7 +650,12 @@ function assertInput(assertion: () => void): void {
 
 function assertCompatibility(compatibility: VectorIndexCompatibility): void {
   assertValidEmbeddingProfile(compatibility.embeddingProfile);
-  if (compatibility.securityDomain.trim() === "" || compatibility.payloadSchemaVersion !== 2) {
+  if (
+    compatibility.stateNamespaceId === undefined ||
+    compatibility.stateNamespaceId.trim() === "" ||
+    compatibility.securityDomain.trim() === "" ||
+    compatibility.payloadSchemaVersion !== 2
+  ) {
     throw new TypeError("invalid vector index compatibility");
   }
 }

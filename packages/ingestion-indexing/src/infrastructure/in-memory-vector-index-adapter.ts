@@ -16,7 +16,7 @@ import {
   MAX_VECTOR_SEARCH_LIMIT,
   VectorIndexFault,
   type PreparedVectorIndex,
-  type VectorIndexCompatibility,
+  type VectorIndexCompatibilityInput as VectorIndexCompatibility,
   type VectorIndexPort,
   type VectorIndexRetentionLease,
   type VectorIndexScope,
@@ -29,6 +29,8 @@ interface MemoryCollection {
   readonly records: Map<string, VectorIndexRecord>;
   readonly leases: Map<string, VectorIndexRetentionLease>;
 }
+
+const LEGACY_STATE_NAMESPACE_ID = "legacy-v1";
 
 export class InMemoryVectorIndexAdapter implements VectorIndexPort {
   readonly #collections = new Map<string, MemoryCollection>();
@@ -63,6 +65,8 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
         input.compatibility.embeddingProfile,
       );
       if (
+        effectiveStateNamespace(collection.compatibility) !==
+          effectiveStateNamespace(input.compatibility) ||
         collection.compatibility.securityDomain !==
           input.compatibility.securityDomain ||
         collection.compatibility.payloadSchemaVersion !==
@@ -83,6 +87,17 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
     assertInput(() => {
       assertSameProfile(collection.compatibility.embeddingProfile, input.embeddingProfile);
       assertValidVectorRecordBatch(input.embeddingProfile, input.records);
+      if (
+        input.records.some(
+          (record) =>
+            record.metadata.stateNamespaceId !==
+              effectiveStateNamespace(collection.compatibility) ||
+            record.metadata.securityDomain !==
+              collection.compatibility.securityDomain,
+        )
+      ) {
+        throw new TypeError("vector record isolation metadata is incompatible");
+      }
     });
     for (const record of input.records) {
       collection.records.set(record.recordId, structuredClone(record));
@@ -200,6 +215,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
 function compatibilityHandle(compatibility: VectorIndexCompatibility): string {
   const digest = createHash("sha256")
     .update(canonicalJson({
+      stateNamespaceId: effectiveStateNamespace(compatibility),
       securityDomain: compatibility.securityDomain,
       profile: compatibility.embeddingProfile,
       payloadSchemaVersion: compatibility.payloadSchemaVersion,
@@ -211,9 +227,19 @@ function compatibilityHandle(compatibility: VectorIndexCompatibility): string {
 
 function assertCompatibility(compatibility: VectorIndexCompatibility): void {
   assertValidEmbeddingProfile(compatibility.embeddingProfile);
-  if (compatibility.securityDomain.trim() === "" || compatibility.payloadSchemaVersion !== 2) {
+  if (
+    effectiveStateNamespace(compatibility).trim() === "" ||
+    compatibility.securityDomain.trim() === "" ||
+    compatibility.payloadSchemaVersion !== 2
+  ) {
     throw new VectorIndexFault("invalid_request", false);
   }
+}
+
+function effectiveStateNamespace(
+  compatibility: VectorIndexCompatibility,
+): string {
+  return compatibility.stateNamespaceId ?? LEGACY_STATE_NAMESPACE_ID;
 }
 
 function assertSameProfile(left: EmbeddingProfile, right: EmbeddingProfile): void {

@@ -1,15 +1,18 @@
 import { readFile } from "node:fs/promises";
 
 import {
-  PublishedDocumentScopeSchema,
-  type PublishedDocumentScope,
+  groupPublishedSqlColumns,
+  PublishedDocumentScopeV2Schema as PublishedDocumentScopeSchema,
+  PublishedHttpScopeV2Schema,
+  PublishedSqlScopeV2Schema,
+  type PublishedDocumentScopeV2 as PublishedDocumentScope,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 async function loadFixture(): Promise<unknown> {
   return JSON.parse(
     await readFile(
-      new URL("./fixtures/published-document-scopes.v1.json", import.meta.url),
+      new URL("./fixtures/published-document-scopes.v2.json", import.meta.url),
       "utf8",
     ),
   ) as unknown;
@@ -52,7 +55,7 @@ describe("Published document Scope contract fixture", () => {
       },
     ]);
     expect(JSON.stringify(scopes)).not.toMatch(
-      /collection|namespace|vendor|filter|credential|api.?key/i,
+      /collection|namespace|vendor|filter|credential|api.?key|connectorId|accessHandle/i,
     );
   });
 
@@ -67,5 +70,66 @@ describe("Published document Scope contract fixture", () => {
     };
 
     expect(() => PublishedDocumentScopeSchema.parse(candidate)).toThrow();
+  });
+
+  it("requires SQL schema and rejects oversized column sets without truncation", () => {
+    const base = {
+      scopeId: "scope_sql_orders",
+      scopeVersion: "scpv_aaaa",
+      kind: "sql_source" as const,
+      connector: "postgres.main",
+      schema: "billing",
+      table: "orders",
+      columns: ["id"],
+    };
+    expect(PublishedSqlScopeV2Schema.parse(base).schema).toBe("billing");
+    expect(() =>
+      PublishedSqlScopeV2Schema.parse({ ...base, schema: undefined }),
+    ).toThrow();
+    expect(() =>
+      PublishedSqlScopeV2Schema.parse({
+        ...base,
+        columns: Array.from(
+          { length: 257 },
+          (_, index) => `column_${String(index).padStart(3, "0")}`,
+        ),
+      }),
+    ).toThrow();
+
+    const wideColumns = Array.from(
+      { length: 300 },
+      (_, index) => `column_${String(299 - index).padStart(3, "0")}`,
+    );
+    const groups = groupPublishedSqlColumns(wideColumns);
+    expect(groups.map((group) => group.length)).toEqual([256, 44]);
+    expect(groups.flat()).toEqual([...wideColumns].sort());
+  });
+
+  it("allows only GET HTTP scopes with exact path parameters", () => {
+    const base = {
+      scopeId: "scope_http_order",
+      scopeVersion: "scpv_bbbb",
+      kind: "http_source" as const,
+      connector: "http.main",
+      method: "GET" as const,
+      path: "/orders/{orderId}",
+      operationId: "getOrder",
+      parameters: [
+        { location: "path" as const, name: "orderId", required: true },
+      ],
+    };
+    expect(PublishedHttpScopeV2Schema.parse(base).method).toBe("GET");
+    expect(() =>
+      PublishedHttpScopeV2Schema.parse({ ...base, method: "POST" }),
+    ).toThrow();
+    expect(() =>
+      PublishedHttpScopeV2Schema.parse({ ...base, parameters: [] }),
+    ).toThrow();
+    expect(() =>
+      PublishedHttpScopeV2Schema.parse({
+        ...base,
+        requiredHeaders: ["authorization"],
+      }),
+    ).toThrow();
   });
 });
