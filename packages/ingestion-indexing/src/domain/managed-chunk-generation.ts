@@ -135,7 +135,7 @@ export function generateManagedChunks(
       } as const;
       chunks.push({
         ...common,
-        revisionId: chunkRevisionId(common),
+        revisionId: createManagedChunkRevisionId(common),
         ...(ordinal === 0 ? {} : { previousChunkId: requiredAt(ids, ordinal - 1) }),
         ...(ordinal === plans.length - 1
           ? {}
@@ -584,7 +584,7 @@ function allocateChunkIds(
   return ids;
 }
 
-function chunkRevisionId(
+export function createManagedChunkRevisionId(
   chunk: Omit<ManagedChunk, "nextChunkId" | "previousChunkId" | "revisionId">,
 ): string {
   const value = {
