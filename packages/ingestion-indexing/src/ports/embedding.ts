@@ -16,8 +16,11 @@ export interface EmbeddingProviderOutput {
   readonly vector: readonly number[];
 }
 
+export type EmbeddingProviderKind = "local" | "remote" | "test";
+
 /** Outbound port owned by the Ingestion embedding workflow. */
 export interface EmbeddingPort {
+  readonly providerKind?: EmbeddingProviderKind;
   embed(
     request: EmbeddingProviderRequest,
   ): Promise<readonly EmbeddingProviderOutput[]>;
@@ -25,6 +28,8 @@ export interface EmbeddingPort {
 
 export type EmbeddingProviderFaultCode =
   | "authentication_failed"
+  | "embedding_artifact_unavailable"
+  | "input_limit_exceeded"
   | "invalid_request"
   | "invalid_response"
   | "provider_unavailable"

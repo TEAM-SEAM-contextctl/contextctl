@@ -95,10 +95,17 @@ export {
 } from "./application/published-document-scope.js";
 export {
   assertValidEmbeddingProfile,
+  documentEmbeddingProfileChangeRequiresFullRebuild,
   embeddingProfilesMatch,
+  isDocumentRetrievalEmbeddingProfile,
+  validateDocumentRetrievalEmbeddingProfile,
   validateEmbeddingProfile,
+  type DocumentEmbeddingExecution,
+  type DocumentRetrievalEmbeddingProfile,
   type EmbeddingDistance,
   type EmbeddingProfile,
+  type LocalDocumentEmbeddingExecution,
+  type RemoteDocumentEmbeddingExecution,
 } from "./domain/embedding-profile.js";
 export {
   type ChunkSourceSlice,
@@ -223,6 +230,21 @@ export {
   type OpenAiCompatibleEmbeddingAdapterOptions,
 } from "./infrastructure/openai-compatible-embedding-adapter.js";
 export {
+  assertProductionEmbeddingProvider,
+  DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+  LOCAL_EMBEDDING_ASSET_MANIFEST_FILE,
+  serializeLocalEmbeddingAssetManifest,
+  TransformersJsLocalEmbeddingAdapter,
+  verifyLocalEmbeddingAssets,
+  type LocalEmbeddingAssetFile,
+  type LocalEmbeddingAssetManifest,
+  type LocalFeatureExtractionRuntime,
+  type LocalFeatureExtractionRuntimeFactory,
+  type TransformersJsLocalEmbeddingAdapterOptions,
+} from "./infrastructure/transformers-js-local-embedding-adapter.js";
+export {
   QdrantVectorIndexAdapter,
   type QdrantVectorIndexAdapterOptions,
 } from "./infrastructure/qdrant-vector-index-adapter.js";
@@ -255,6 +277,7 @@ export {
 export {
   EmbeddingProviderFault,
   type EmbeddingPort,
+  type EmbeddingProviderKind,
   type EmbeddingProviderFaultCode,
   type EmbeddingProviderInput,
   type EmbeddingProviderOutput,

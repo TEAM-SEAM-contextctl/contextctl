@@ -289,8 +289,30 @@ function parseBinding(input: unknown): PublishedIndexBinding | undefined {
 }
 
 function parseEmbeddingProfile(input: unknown): IndexManifest["embeddingProfile"] {
-  if (!isRecord(input) || !hasExactKeys(input, EMBEDDING_PROFILE_KEYS)) {
+  if (
+    !isRecord(input) ||
+    (!hasExactKeys(input, EMBEDDING_PROFILE_KEYS) &&
+      !hasExactKeys(input, DOCUMENT_EMBEDDING_PROFILE_KEYS))
+  ) {
     throw new PublishedIndexVersionValidationError("corrupt_record");
+  }
+  if (hasExactKeys(input, DOCUMENT_EMBEDDING_PROFILE_KEYS)) {
+    if (
+      !isRecord(input.admissionLimit) ||
+      !hasExactKeys(input.admissionLimit, [
+        "maxUnits",
+        "textMeasureProfileVersion",
+      ]) ||
+      !isRecord(input.execution) ||
+      !(
+        (input.execution.kind === "local" &&
+          hasExactKeys(input.execution, LOCAL_EMBEDDING_EXECUTION_KEYS)) ||
+        (input.execution.kind === "remote" &&
+          hasExactKeys(input.execution, REMOTE_EMBEDDING_EXECUTION_KEYS))
+      )
+    ) {
+      throw new PublishedIndexVersionValidationError("corrupt_record");
+    }
   }
   const profile = input as unknown as IndexManifest["embeddingProfile"];
   if (validateEmbeddingProfile(profile).length > 0) {
@@ -394,4 +416,35 @@ const EMBEDDING_PROFILE_KEYS = [
   "model",
   "textMeasureProfileVersion",
   "version",
+] as const;
+
+const DOCUMENT_EMBEDDING_PROFILE_KEYS = [
+  ...EMBEDDING_PROFILE_KEYS,
+  "admissionLimit",
+  "documentInputTransformVersion",
+  "execution",
+  "modelMaxTokens",
+  "modelRevision",
+  "normalization",
+  "pooling",
+  "queryInputTransformVersion",
+] as const;
+
+const LOCAL_EMBEDDING_EXECUTION_KEYS = [
+  "adapter",
+  "adapterVersion",
+  "artifactPath",
+  "artifactRepository",
+  "artifactRevision",
+  "artifactSha256",
+  "assetManifestSha256",
+  "kind",
+  "precision",
+] as const;
+
+const REMOTE_EMBEDDING_EXECUTION_KEYS = [
+  "adapter",
+  "adapterVersion",
+  "kind",
+  "model",
 ] as const;

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
   DocumentIndexPublisher,
+  EmbeddingProviderFault,
   InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
   InMemoryVectorIndexAdapter,
   ManagedDocumentSearch,
@@ -179,9 +180,34 @@ describe("ManagedDocumentSearch", () => {
       }),
     ).rejects.toMatchObject({ code: "search_result_invalid" });
   });
+
+  it.each([
+    ["embedding_artifact_unavailable", "embedding_artifact_unavailable"],
+    ["input_limit_exceeded", "query_input_limit_exceeded"],
+  ] as const)(
+    "preserves the typed %s query embedding failure",
+    async (providerCode, searchCode) => {
+      const harness = await createHarness({
+        embed: async () => {
+          throw new EmbeddingProviderFault(providerCode, false);
+        },
+      });
+
+      await expect(
+        harness.search.search({
+          queryText: "payment retry",
+          securityDomain: "tenant-a",
+          scopeRef: ref(requiredScope(harness.publication, "document")),
+          limit: 5,
+        }),
+      ).rejects.toMatchObject({ code: searchCode, retriable: false });
+    },
+  );
 });
 
-async function createHarness() {
+async function createHarness(
+  embeddingDelegate: EmbeddingPort = new DeterministicEmbeddingAdapter(),
+) {
   const delegate = new InMemoryVectorIndexAdapter();
   const vectorIndex = new RecordingVectorIndex(delegate);
   const publications = new InMemoryIndexPublicationStore();
@@ -213,7 +239,7 @@ async function createHarness() {
     ],
   });
   const embeddings = new RecordingEmbeddingPort(
-    new DeterministicEmbeddingAdapter(),
+    embeddingDelegate,
   );
   return {
     embeddings,
