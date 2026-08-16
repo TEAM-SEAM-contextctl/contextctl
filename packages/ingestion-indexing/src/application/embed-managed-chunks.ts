@@ -62,6 +62,7 @@ export interface EmbeddingPipelineDependencies {
 
 export type EmbeddingPipelineErrorCode =
   | "cancelled"
+  | "embedding_artifact_unavailable"
   | "input_limit_exceeded"
   | "invalid_chunk_set"
   | "invalid_profile"
@@ -205,6 +206,12 @@ export class EmbeddingPipeline {
         }
         if (error.code === "invalid_response") {
           throw new EmbeddingPipelineError("invalid_provider_response");
+        }
+        if (error.code === "embedding_artifact_unavailable") {
+          throw new EmbeddingPipelineError("embedding_artifact_unavailable");
+        }
+        if (error.code === "input_limit_exceeded") {
+          throw new EmbeddingPipelineError("input_limit_exceeded");
         }
         if (!error.retriable) {
           throw new EmbeddingPipelineError("provider_failure");

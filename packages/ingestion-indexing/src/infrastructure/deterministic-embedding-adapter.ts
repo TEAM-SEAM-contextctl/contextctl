@@ -8,6 +8,8 @@ import type {
 
 /** Network-free adapter for deterministic CI and local integration tests. */
 export class DeterministicEmbeddingAdapter implements EmbeddingPort {
+  readonly providerKind = "test" as const;
+
   async embed(
     request: EmbeddingProviderRequest,
   ): Promise<readonly EmbeddingProviderOutput[]> {

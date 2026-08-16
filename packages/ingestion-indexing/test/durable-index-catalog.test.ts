@@ -12,6 +12,7 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DeterministicEmbeddingAdapter,
   INGESTION_DATABASE_SCHEMA_VERSION,
   InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
@@ -203,6 +204,30 @@ describe("durable Index control plane", () => {
       database?.close();
     },
   );
+
+  it("round-trips the complete production embedding profile through durable catalog state", async () => {
+    const database = openTestDatabase(":memory:");
+    const store = new SqliteIndexPublicationStore(database);
+    const publication = publishedVersion("aaaa", NOW);
+    const productionPublication: PublishedIndexVersion = {
+      ...publication,
+      manifest: {
+        ...publication.manifest,
+        embeddingProfile: DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+      },
+    };
+
+    await store.commitCurrent(productionPublication);
+    const restored = await store.findVersion({
+      documentIndexId: productionPublication.manifest.documentIndexId,
+      indexVersion: productionPublication.manifest.indexVersion,
+    });
+
+    expect(restored?.manifest.embeddingProfile).toEqual(
+      DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+    );
+    database.close();
+  });
 
   it("recreates the Markdown composition and searches the same durable version and Scope", async () => {
     const fixture = await createTemporaryFixture();

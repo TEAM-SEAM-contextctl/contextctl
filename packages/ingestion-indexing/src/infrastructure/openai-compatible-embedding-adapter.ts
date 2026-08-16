@@ -21,6 +21,8 @@ export interface OpenAiCompatibleEmbeddingAdapterOptions {
 
 /** Configured adapter for OpenAI-compatible `/embeddings` endpoints. */
 export class OpenAiCompatibleEmbeddingAdapter implements EmbeddingPort {
+  readonly providerKind = "remote" as const;
+
   readonly #endpoint: string;
   readonly #headers: Readonly<Record<string, string>>;
   readonly #fetch: typeof globalThis.fetch;

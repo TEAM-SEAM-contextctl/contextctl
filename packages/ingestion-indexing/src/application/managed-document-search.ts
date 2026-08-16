@@ -111,6 +111,7 @@ export interface ManagedDocumentSearchDependencies {
 
 export type ManagedDocumentSearchErrorCode =
   | "cancelled"
+  | "embedding_artifact_unavailable"
   | "embedding_provider_not_allowed"
   | "index_binding_invalid"
   | "index_binding_unavailable"
@@ -489,6 +490,14 @@ async function embedQuery(
       throw new ManagedDocumentSearchError("cancelled");
     }
     if (error instanceof EmbeddingProviderFault) {
+      if (error.code === "embedding_artifact_unavailable") {
+        throw new ManagedDocumentSearchError(
+          "embedding_artifact_unavailable",
+        );
+      }
+      if (error.code === "input_limit_exceeded") {
+        throw new ManagedDocumentSearchError("query_input_limit_exceeded");
+      }
       throw new ManagedDocumentSearchError(
         "query_embedding_failed",
         error.retriable,
