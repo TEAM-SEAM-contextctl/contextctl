@@ -41,11 +41,30 @@ export {
 } from "./domain/document-capture.js";
 export {
   generateManagedChunks,
+  createManagedChunkRevisionId,
   ManagedChunkGenerationError,
   type GenerateManagedChunksInput,
   type ManagedChunkGenerationErrorCode,
   type ManagedChunkIdSource,
 } from "./domain/managed-chunk-generation.js";
+export {
+  decideDocumentCapture,
+  DocumentIncrementalUpdateError,
+  planDocumentIncrementalUpdate,
+  type AffectedChunkClosure,
+  type DocumentBlockChange,
+  type DocumentCaptureDecision,
+  type DocumentFullRebuildReason,
+  type DocumentIncrementalUpdateErrorCode,
+  type DocumentIncrementalUpdateMetrics,
+  type DocumentIncrementalUpdateOperations,
+  type DocumentIncrementalUpdatePlan,
+  type DocumentIndexingSnapshot,
+  type DocumentSemanticUnitChange,
+  type DocumentSourceChangeSignal,
+  type PlanDocumentIncrementalUpdateInput,
+  type PlannedChunkRevision,
+} from "./domain/document-incremental-update.js";
 export {
   EmbeddingPipeline,
   EmbeddingPipelineError,

@@ -245,7 +245,86 @@ function matchBlockIds(
     matches,
     usedPreviousIds,
   );
+  matchAnchoredReplacements(
+    candidates,
+    previousDocument.blocks,
+    matches,
+    usedPreviousIds,
+  );
   return matches;
+}
+
+/**
+ * A conservative final Patience-Diff gap rule. When two stable anchors (or a
+ * document edge and one anchor) enclose exactly one unmatched Block of the
+ * same kind on each side, the pair is one logical replacement. Larger or
+ * anchorless gaps remain deliberately unresolved instead of guessing.
+ */
+function matchAnchoredReplacements(
+  candidates: readonly PreparedCandidate[],
+  previousBlocks: readonly DocumentBlock[],
+  matches: Map<number, string>,
+  usedPreviousIds: Set<string>,
+): void {
+  const previousIndexById = new Map(
+    previousBlocks.map((block, index) => [block.id, index]),
+  );
+  const anchors = [...matches]
+    .flatMap(([candidateIndex, previousId]) => {
+      const previousIndex = previousIndexById.get(previousId);
+      return previousIndex === undefined
+        ? []
+        : [{ candidateIndex, previousIndex }];
+    })
+    .sort((left, right) => left.candidateIndex - right.candidateIndex);
+  if (anchors.length === 0) {
+    return;
+  }
+
+  const boundaries = [
+    { candidateIndex: -1, previousIndex: -1 },
+    ...anchors,
+    {
+      candidateIndex: candidates.length,
+      previousIndex: previousBlocks.length,
+    },
+  ];
+  for (let index = 1; index < boundaries.length; index += 1) {
+    const left = boundaries[index - 1];
+    const right = boundaries[index];
+    if (
+      left === undefined ||
+      right === undefined ||
+      left.previousIndex >= right.previousIndex
+    ) {
+      continue;
+    }
+    const currentGap = candidates.filter(
+      (candidate) =>
+        candidate.index > left.candidateIndex &&
+        candidate.index < right.candidateIndex &&
+        !matches.has(candidate.index),
+    );
+    const previousGap = previousBlocks.filter(
+      (block, previousIndex) =>
+        previousIndex > left.previousIndex &&
+        previousIndex < right.previousIndex &&
+        !usedPreviousIds.has(block.id),
+    );
+    const current = currentGap[0];
+    const previous = previousGap[0];
+    if (
+      currentGap.length !== 1 ||
+      previousGap.length !== 1 ||
+      current === undefined ||
+      previous === undefined ||
+      current.candidate.kind !== previous.kind
+    ) {
+      continue;
+    }
+    matches.set(current.index, previous.id);
+    usedPreviousIds.add(previous.id);
+  }
 }
 
 function matchPatienceSequence(
