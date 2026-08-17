@@ -357,6 +357,8 @@ class RecordingVectorIndex implements VectorIndexPort {
       : records;
   }
 
+  readVersionVectors: VectorIndexPort["readVersionVectors"] = (input) =>
+    this.delegate.readVersionVectors(input);
   search: VectorIndexPort["search"] = (input) => this.delegate.search(input);
   retainVersion: VectorIndexPort["retainVersion"] = (input) =>
     this.delegate.retainVersion(input);

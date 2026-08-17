@@ -22,6 +22,11 @@ export interface BuildMarkdownPublicationInput {
   readonly scopes: readonly PublishedDocumentScope[];
   readonly previous?: IngestionPublication;
   readonly previousSemanticUnits?: readonly DocumentSemanticUnit[];
+  /**
+   * Units the producer proved may keep their predecessor Scope. When omitted,
+   * an unchanged Unit revision alone decides inheritance.
+   */
+  readonly inheritableUnitIds?: readonly string[];
 }
 
 /** Builds and contract-validates the sole Registry-facing lifecycle payload. */
@@ -34,6 +39,10 @@ export function buildMarkdownPublication(
   const previousPublishedById = new Map(
     (input.previous?.knowledgeUnits ?? []).map((unit) => [unit.id, unit]),
   );
+  const inheritable =
+    input.inheritableUnitIds === undefined
+      ? undefined
+      : new Set(input.inheritableUnitIds);
   const knowledgeUnits = input.semanticUnits
     .map((unit) => {
       const previousSemantic = previousSemanticById.get(unit.id);
@@ -41,7 +50,8 @@ export function buildMarkdownPublication(
       if (
         previousSemantic !== undefined &&
         previousPublished !== undefined &&
-        previousSemantic.revisionId === unit.revisionId
+        previousSemantic.revisionId === unit.revisionId &&
+        (inheritable === undefined || inheritable.has(unit.id))
       ) {
         return previousPublished;
       }

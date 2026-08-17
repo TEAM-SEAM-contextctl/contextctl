@@ -127,6 +127,25 @@ export function assertValidVectorVersion(input: {
   }
 }
 
+export function assertValidVectorVectorRead(
+  input: {
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+    readonly chunkRevisionIds: readonly string[];
+  },
+  maxChunkRevisionIds: number,
+): void {
+  assertValidVectorVersion(input);
+  if (
+    input.chunkRevisionIds.length === 0 ||
+    input.chunkRevisionIds.length > maxChunkRevisionIds ||
+    new Set(input.chunkRevisionIds).size !== input.chunkRevisionIds.length ||
+    input.chunkRevisionIds.some((revisionId) => !isRevisionId(revisionId, "crv"))
+  ) {
+    throw new TypeError("invalid vector index vector read");
+  }
+}
+
 export function assertValidVectorDeletion(input: {
   readonly documentIndexId: string;
   readonly indexVersion: string;
