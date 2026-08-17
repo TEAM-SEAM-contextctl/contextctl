@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   generateManagedChunks,
+  LINEAGE_POLICY_VERSION,
   MarkdownCapture,
   measureText,
   RemarkMarkdownParser,
@@ -402,7 +403,7 @@ function createFixture(
     title: "Chunk fixture",
     parser: { id: "fixture-parser", version: "1.0.0" },
     normalizationPolicyVersion: "document-normalization-v1",
-    lineagePolicyVersion: "lineage-policy-v1",
+    lineagePolicyVersion: LINEAGE_POLICY_VERSION,
     contentDigest: sha256Digest(canonicalText),
     completeness: { status: "complete", diagnostics: [] },
     blocks,
