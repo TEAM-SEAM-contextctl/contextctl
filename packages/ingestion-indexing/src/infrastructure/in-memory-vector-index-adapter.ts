@@ -10,10 +10,12 @@ import {
   assertValidVectorDeletion,
   assertValidVectorIndexScope,
   assertValidVectorRecordBatch,
+  assertValidVectorVectorRead,
   assertValidVectorVersion,
 } from "../domain/vector-index.js";
 import {
   MAX_VECTOR_SEARCH_LIMIT,
+  MAX_VECTOR_VECTOR_READ,
   VectorIndexFault,
   type PreparedVectorIndex,
   type VectorIndexCompatibilityInput as VectorIndexCompatibility,
@@ -22,6 +24,7 @@ import {
   type VectorIndexScope,
   type VectorIndexSearchHit,
   type VectorIndexStoredRecord,
+  type VectorIndexStoredVector,
 } from "../ports/vector-index.js";
 
 interface MemoryCollection {
@@ -144,6 +147,32 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
         recordId: record.recordId,
         retrievalText: record.retrievalText,
         metadata: structuredClone(record.metadata),
+      }))
+      .sort((left, right) => left.recordId.localeCompare(right.recordId));
+  }
+
+  async readVersionVectors(input: {
+    readonly accessHandle: string;
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+    readonly chunkRevisionIds: readonly string[];
+  }): Promise<readonly VectorIndexStoredVector[]> {
+    assertInput(() =>
+      assertValidVectorVectorRead(input, MAX_VECTOR_VECTOR_READ),
+    );
+    const requested = new Set(input.chunkRevisionIds);
+    return [...this.#requiredCollection(input.accessHandle).records.values()]
+      .filter(
+        (record) =>
+          record.metadata.documentIndexId === input.documentIndexId &&
+          record.metadata.indexVersion === input.indexVersion &&
+          requested.has(record.chunkRevisionId),
+      )
+      .map((record) => ({
+        recordId: record.recordId,
+        chunkRevisionId: record.chunkRevisionId,
+        contentDigest: record.metadata.contentDigest,
+        embedding: [...record.embedding],
       }))
       .sort((left, right) => left.recordId.localeCompare(right.recordId));
   }

@@ -972,6 +972,8 @@ class RecordingVectorIndex implements VectorIndexPort {
     this.delegate.upsertRecords(input);
   listVersionRecords: VectorIndexPort["listVersionRecords"] = (input) =>
     this.delegate.listVersionRecords(input);
+  readVersionVectors: VectorIndexPort["readVersionVectors"] = (input) =>
+    this.delegate.readVersionVectors(input);
   retainVersion: VectorIndexPort["retainVersion"] = (input) =>
     this.delegate.retainVersion(input);
   releaseRetentionLease: VectorIndexPort["releaseRetentionLease"] = (input) =>

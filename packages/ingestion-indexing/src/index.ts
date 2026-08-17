@@ -49,7 +49,9 @@ export {
 } from "./domain/managed-chunk-generation.js";
 export {
   decideDocumentCapture,
+  documentIndexEquivalenceViolations,
   DocumentIncrementalUpdateError,
+  inheritableScopeUnitIds,
   planDocumentIncrementalUpdate,
   type AffectedChunkClosure,
   type DocumentBlockChange,
@@ -64,6 +66,7 @@ export {
   type DocumentSourceChangeSignal,
   type PlanDocumentIncrementalUpdateInput,
   type PlannedChunkRevision,
+  type PublishedDocumentContentView,
 } from "./domain/document-incremental-update.js";
 export {
   EmbeddingPipeline,
@@ -84,6 +87,16 @@ export {
   type DocumentIndexPublicationErrorCode,
   type PublishDocumentIndexCommand,
 } from "./application/publish-document-index.js";
+export {
+  IncrementalDocumentReindexer,
+  ReindexDocumentError,
+  type IncrementalDocumentReindexerDependencies,
+  type ReindexDocumentCommand,
+  type ReindexDocumentErrorCode,
+  type ReindexDocumentMetrics,
+  type ReindexDocumentResult,
+  type VectorReuseDegradation,
+} from "./application/reindex-document-incrementally.js";
 export {
   ManagedDocumentSearch,
   ManagedDocumentSearchError,
@@ -304,6 +317,7 @@ export {
 } from "./ports/embedding.js";
 export {
   MAX_VECTOR_SEARCH_LIMIT,
+  MAX_VECTOR_VECTOR_READ,
   VectorIndexFault,
   type PreparedVectorIndex,
   type RehydratedVectorIndex,
@@ -316,6 +330,7 @@ export {
   type VectorIndexScope,
   type VectorIndexSearchHit,
   type VectorIndexStoredRecord,
+  type VectorIndexStoredVector,
 } from "./ports/vector-index.js";
 export {
   createVectorRecordId,

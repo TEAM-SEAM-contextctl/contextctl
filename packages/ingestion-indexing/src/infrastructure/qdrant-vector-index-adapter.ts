@@ -17,10 +17,12 @@ import {
   assertValidVectorIndexScope,
   assertValidVectorRecordMetadata,
   assertValidVectorRecordBatch,
+  assertValidVectorVectorRead,
   assertValidVectorVersion,
 } from "../domain/vector-index.js";
 import {
   MAX_VECTOR_SEARCH_LIMIT,
+  MAX_VECTOR_VECTOR_READ,
   VectorIndexFault,
   type PreparedVectorIndex,
   type VectorIndexCompatibilityInput as VectorIndexCompatibility,
@@ -29,6 +31,7 @@ import {
   type VectorIndexScope,
   type VectorIndexSearchHit,
   type VectorIndexStoredRecord,
+  type VectorIndexStoredVector,
 } from "../ports/vector-index.js";
 
 const REQUIRED_PAYLOAD_INDEXES = {
@@ -256,6 +259,42 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       return records.sort((left, right) =>
         left.recordId.localeCompare(right.recordId),
       );
+    } catch (error) {
+      throw translateQdrantFault(error);
+    }
+  }
+
+  async readVersionVectors(input: {
+    readonly accessHandle: string;
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+    readonly chunkRevisionIds: readonly string[];
+  }): Promise<readonly VectorIndexStoredVector[]> {
+    const collection = parseAccessHandle(input.accessHandle);
+    assertInput(() =>
+      assertValidVectorVectorRead(input, MAX_VECTOR_VECTOR_READ),
+    );
+    const profile = this.#profiles.get(input.accessHandle);
+    if (profile === undefined) {
+      throw new VectorIndexFault("index_unavailable", false);
+    }
+    try {
+      const result = await this.#client.query(collection, {
+        filter: {
+          must: [
+            keyword("recordKind", "chunk"),
+            ...versionMust(input.documentIndexId, input.indexVersion),
+            {
+              key: "chunkRevisionId",
+              match: { any: [...input.chunkRevisionIds] },
+            },
+          ],
+        },
+        limit: input.chunkRevisionIds.length,
+        with_payload: true,
+        with_vector: true,
+      });
+      return parseStoredVectors(result, input, profile.dimensions);
     } catch (error) {
       throw translateQdrantFault(error);
     }
@@ -577,6 +616,59 @@ function parseScrollPage(
     records,
     nextOffset: nextOffset === null ? undefined : nextOffset,
   };
+}
+
+function parseStoredVectors(
+  result: unknown,
+  version: {
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+    readonly chunkRevisionIds: readonly string[];
+  },
+  dimensions: number,
+): readonly VectorIndexStoredVector[] {
+  if (!isRecord(result) || !Array.isArray(result.points)) {
+    throw new VectorIndexFault("storage_unavailable", false);
+  }
+  const requested = new Set(version.chunkRevisionIds);
+  const seen = new Set<string>();
+  const vectors = result.points.map((point) => {
+    if (!isRecord(point) || !isRecord(point.payload)) {
+      throw new VectorIndexFault("storage_unavailable", false);
+    }
+    const metadata = parseMetadata(point.payload);
+    const recordId = requiredString(point.payload.recordId);
+    const embedding = point.vector;
+    if (
+      point.payload.recordKind !== "chunk" ||
+      metadata.documentIndexId !== version.documentIndexId ||
+      metadata.indexVersion !== version.indexVersion ||
+      !requested.has(metadata.chunkRevisionId) ||
+      seen.has(metadata.chunkRevisionId) ||
+      recordId !==
+        createVectorRecordId(
+          metadata.stateNamespaceId,
+          metadata.documentIndexId,
+          metadata.indexVersion,
+          metadata.chunkRevisionId,
+        ) ||
+      !Array.isArray(embedding) ||
+      embedding.length !== dimensions ||
+      embedding.some((component) => typeof component !== "number" || !Number.isFinite(component))
+    ) {
+      throw new VectorIndexFault("storage_unavailable", false);
+    }
+    seen.add(metadata.chunkRevisionId);
+    return {
+      recordId,
+      chunkRevisionId: metadata.chunkRevisionId,
+      contentDigest: metadata.contentDigest,
+      embedding: embedding as readonly number[],
+    };
+  });
+  return vectors.sort((left, right) =>
+    left.recordId.localeCompare(right.recordId),
+  );
 }
 
 function parseMetadata(payload: Record<string, unknown>): VectorIndexRecordMetadata {

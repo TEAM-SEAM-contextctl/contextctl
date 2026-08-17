@@ -16,6 +16,7 @@ import {
   parseDocumentIndexingPolicy,
   type DocumentIndexingPolicySet,
 } from "./document-indexing-policy.js";
+import type { IndexManifest } from "./index-manifest.js";
 import { createManagedChunkRevisionId } from "./managed-chunk-generation.js";
 import { canonicalJson } from "./revision-identity.js";
 
@@ -231,6 +232,159 @@ export function planDocumentIncrementalUpdate(
     chunks,
     operations,
   });
+}
+
+/**
+ * A published Index version described by content alone. Block, Unit and Chunk
+ * identifiers are deliberately excluded: an incremental update inherits them
+ * from its predecessor while a cold rebuild mints fresh ones, so identity can
+ * never be the basis of the equivalence gate.
+ */
+export interface PublishedDocumentContentView {
+  readonly manifest: IndexManifest;
+  readonly document: NormalizedDocument;
+  readonly semanticUnits: readonly DocumentSemanticUnit[];
+  readonly chunks: readonly ManagedChunk[];
+}
+
+/**
+ * Proves that one incremental update carries the same retrievable meaning as a
+ * full rebuild of the same Observation. An empty result is the I6 gate passing.
+ */
+export function documentIndexEquivalenceViolations(
+  incremental: PublishedDocumentContentView,
+  rebuilt: PublishedDocumentContentView,
+): readonly string[] {
+  const violations: string[] = [];
+  if (
+    canonicalJson(contentManifest(incremental.manifest)) !==
+    canonicalJson(contentManifest(rebuilt.manifest))
+  ) {
+    violations.push("index manifest content differs");
+  }
+  if (
+    canonicalJson(unitContentKeys(incremental)) !==
+    canonicalJson(unitContentKeys(rebuilt))
+  ) {
+    violations.push("semantic unit content differs");
+  }
+  if (
+    canonicalJson(chunkContentKeys(incremental)) !==
+    canonicalJson(chunkContentKeys(rebuilt))
+  ) {
+    violations.push("managed chunk content differs");
+  }
+  return violations;
+}
+
+/**
+ * Unit IDs whose previous immutable Scope may be inherited. Beyond an unchanged
+ * Unit revision this also requires a byte-identical Chunk revision set, because
+ * an inherited Scope keeps pointing at the predecessor Index snapshot.
+ */
+export function inheritableScopeUnitIds(input: {
+  readonly previous: DocumentIndexingSnapshot;
+  readonly plan: DocumentIncrementalUpdatePlan;
+}): readonly string[] {
+  if (input.plan.strategy !== "incremental") {
+    return [];
+  }
+  const previousRevisions = chunkRevisionsByUnit(input.previous.chunks);
+  const currentRevisions = chunkRevisionsByUnit(input.plan.chunks);
+  return input.plan.semanticUnitChanges
+    .filter(
+      (change) =>
+        change.kind === "unchanged" &&
+        canonicalJson(previousRevisions.get(change.unitId) ?? []) ===
+          canonicalJson(currentRevisions.get(change.unitId) ?? []),
+    )
+    .map((change) => change.unitId)
+    .sort();
+}
+
+function chunkRevisionsByUnit(
+  chunks: readonly ManagedChunk[],
+): ReadonlyMap<string, readonly string[]> {
+  const byUnit = new Map<string, string[]>();
+  for (const chunk of chunks) {
+    const revisions = byUnit.get(chunk.semanticUnitId) ?? [];
+    revisions.push(chunk.revisionId);
+    byUnit.set(chunk.semanticUnitId, revisions);
+  }
+  return new Map(
+    [...byUnit].map(([unitId, revisions]) => [unitId, [...revisions].sort()]),
+  );
+}
+
+function contentManifest(manifest: IndexManifest): unknown {
+  const {
+    indexVersion: _indexVersion,
+    recordSetDigest: _recordSetDigest,
+    publishedAt: _publishedAt,
+    scopeRevisions: _scopeRevisions,
+    semanticUnitRevisions: _semanticUnitRevisions,
+    chunkRevisions: _chunkRevisions,
+    ...content
+  } = manifest;
+  return content;
+}
+
+function unitContentKeys(
+  view: PublishedDocumentContentView,
+): readonly string[] {
+  const digestByBlockId = blockDigests(view.document);
+  return view.semanticUnits
+    .map((unit) => unitContentKey(unit, digestByBlockId))
+    .sort();
+}
+
+function chunkContentKeys(
+  view: PublishedDocumentContentView,
+): readonly string[] {
+  const digestByBlockId = blockDigests(view.document);
+  const keyByUnitId = new Map(
+    view.semanticUnits.map((unit) => [
+      unit.id,
+      unitContentKey(unit, digestByBlockId),
+    ]),
+  );
+  return view.chunks
+    .map((chunk) =>
+      canonicalJson({
+        unit: keyByUnitId.get(chunk.semanticUnitId) ?? null,
+        ordinal: chunk.ordinal,
+        splitKind: chunk.splitKind,
+        text: chunk.text,
+        contentDigest: chunk.contentDigest,
+        tokenCount: chunk.tokenCount,
+        slices: chunk.sourceSlices.map((slice) => ({
+          block: digestByBlockId.get(slice.blockId) ?? null,
+          startOffset: slice.startOffset,
+          endOffset: slice.endOffset,
+          separatorBefore: slice.separatorBefore,
+        })),
+      }),
+    )
+    .sort();
+}
+
+function unitContentKey(
+  unit: DocumentSemanticUnit,
+  digestByBlockId: ReadonlyMap<string, string>,
+): string {
+  return canonicalJson({
+    kind: unit.kind,
+    title: unit.title ?? null,
+    boundary: unit.boundary,
+    contentDigest: unit.contentDigest,
+    blocks: unit.blockIds.map((blockId) => digestByBlockId.get(blockId) ?? null),
+  });
+}
+
+function blockDigests(
+  document: NormalizedDocument,
+): ReadonlyMap<string, string> {
+  return new Map(document.blocks.map((block) => [block.id, block.contentDigest]));
 }
 
 function validateSnapshot(

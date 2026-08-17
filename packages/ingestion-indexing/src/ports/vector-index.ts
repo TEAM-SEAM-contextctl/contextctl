@@ -5,6 +5,7 @@ import type {
 } from "../domain/index-manifest.js";
 
 export const MAX_VECTOR_SEARCH_LIMIT = 1_000;
+export const MAX_VECTOR_VECTOR_READ = 512;
 
 interface VectorIndexCompatibilityBase {
   readonly securityDomain: string;
@@ -59,6 +60,17 @@ export interface VectorIndexStoredRecord {
   readonly metadata: VectorIndexRecordMetadata;
 }
 
+/**
+ * A published vector read back so an unchanged Chunk revision can be copied
+ * into the next Index version instead of being embedded again.
+ */
+export interface VectorIndexStoredVector {
+  readonly recordId: string;
+  readonly chunkRevisionId: string;
+  readonly contentDigest: string;
+  readonly embedding: readonly number[];
+}
+
 export interface VectorIndexRetentionLease {
   readonly leaseId: string;
   readonly documentIndexId: string;
@@ -89,6 +101,17 @@ export interface VectorIndexPort {
     readonly documentIndexId: string;
     readonly indexVersion: string;
   }): Promise<readonly VectorIndexStoredRecord[]>;
+  /**
+   * Reads back the stored vectors of an already published version. Requested
+   * revisions that are absent are omitted rather than faulted, so the caller
+   * embeds them again instead of publishing an incomplete version.
+   */
+  readVersionVectors(input: {
+    readonly accessHandle: string;
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+    readonly chunkRevisionIds: readonly string[];
+  }): Promise<readonly VectorIndexStoredVector[]>;
   search(input: {
     readonly accessHandle: string;
     readonly scope: VectorIndexScope;
