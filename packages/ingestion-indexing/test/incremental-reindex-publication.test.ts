@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  buildMarkdownPublication,
   createDocumentIndexId,
   DEFAULT_DOCUMENT_INDEXING_POLICY,
   DeterministicEmbeddingAdapter,
@@ -212,6 +213,48 @@ describe("incremental reindex publication", () => {
       expect(revisionsByUnit(result.plan.chunks).get(unitId)).toEqual(
         previousRevisions.get(unitId),
       );
+    }
+  });
+
+  it("declares no Registry change for Units the edit did not touch", async () => {
+    const previous = createSnapshot(INITIAL, "previous");
+    const current = createSnapshot(MODIFIED, "current", previous);
+    const first = await harness.reindex({ current: previous });
+    const initialPublication = buildMarkdownPublication({
+      document: previous.document,
+      semanticUnits: previous.semanticUnits,
+      manifest: first.publication.manifest,
+      scopes: first.publication.scopes,
+    });
+
+    const second = await harness.reindex({ previous, current });
+    const publication = buildMarkdownPublication({
+      document: current.document,
+      semanticUnits: current.semanticUnits,
+      manifest: second.publication.manifest,
+      scopes: second.publication.scopes,
+      previous: initialPublication,
+      previousSemanticUnits: previous.semanticUnits,
+      inheritableUnitIds: second.inheritableUnitIds,
+    });
+
+    expect(second.inheritableUnitIds.length).toBeGreaterThan(0);
+    const changedIds = publication.changes.map((change) => change.knowledgeUnitId);
+    for (const unitId of second.inheritableUnitIds) {
+      expect(changedIds).not.toContain(unitId);
+    }
+    // An inherited Unit keeps its predecessor Scope, so its Card sees no
+    // `scope.document.indexVersionChanged` either.
+    const inherited = new Set(second.inheritableUnitIds);
+    const previousById = new Map(
+      initialPublication.knowledgeUnits.map((unit) => [unit.id, unit]),
+    );
+    for (const unit of publication.knowledgeUnits) {
+      if (inherited.has(unit.id)) {
+        expect(unit.publishedScopes).toEqual(
+          previousById.get(unit.id)?.publishedScopes,
+        );
+      }
     }
   });
 
