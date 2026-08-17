@@ -10,7 +10,11 @@ export const TEXT_MEASURE_PROFILE_VERSION = "unicode-estimate-v1" as const;
 export const TEXT_MEASURE_ALGORITHM = "unicode_codepoint_estimate" as const;
 export const SEGMENTATION_POLICY_VERSION = "semantic-unit-v1" as const;
 export const CHUNK_POLICY_VERSION = "managed-chunk-v1" as const;
-export const LINEAGE_POLICY_VERSION = "lineage-policy-v1" as const;
+/**
+ * v2 drops `order` and `sourceSpan` from the Block revision key so a Block
+ * keeps its revision when only its position in the Observation moves.
+ */
+export const LINEAGE_POLICY_VERSION = "lineage-policy-v2" as const;
 
 export interface TextMeasureProfile {
   readonly version: typeof TEXT_MEASURE_PROFILE_VERSION;

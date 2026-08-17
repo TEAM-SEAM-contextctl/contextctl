@@ -64,15 +64,6 @@ const MODIFIED = INITIAL.replace(
   "Retry failed payments after ten minutes.",
 );
 
-/**
- * A Block revision covers its absolute `sourceSpan`, so an edit shifts every
- * later Block. Only a trailing edit leaves earlier Units revision-stable, which
- * is what Scope inheritance needs.
- */
-const TAIL_MODIFIED = INITIAL.replace(
-  "Page the on-call engineer for sustained error rates.",
-  "Page the on-call engineer for sustained error budgets.",
-);
 
 const SECTION_REMOVED = [
   "# Payments",
@@ -203,7 +194,7 @@ describe("incremental reindex publication", () => {
 
   it("inherits Scopes only for Units whose Chunk revisions are unchanged", async () => {
     const previous = createSnapshot(INITIAL, "previous");
-    const current = createSnapshot(TAIL_MODIFIED, "current", previous);
+    const current = createSnapshot(MODIFIED, "current", previous);
     await harness.reindex({ current: previous });
 
     const result = await harness.reindex({ previous, current });

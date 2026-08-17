@@ -11,7 +11,7 @@ import {
 } from "../src/index.js";
 
 describe("document indexing policy", () => {
-  it("exposes immutable defaults fixed by the v1 policy versions", () => {
+  it("exposes immutable defaults fixed by the pinned policy versions", () => {
     expect(DEFAULT_DOCUMENT_INDEXING_POLICY).toEqual({
       textMeasureProfile: {
         version: "unicode-estimate-v1",
@@ -35,7 +35,7 @@ describe("document indexing policy", () => {
         overlapTokens: 48,
       },
       lineage: {
-        version: "lineage-policy-v1",
+        version: "lineage-policy-v2",
         blockMinTokenJaccard: 0.85,
         blockMinRunnerUpMargin: 0.1,
         unitMinBlockIdJaccard: 0.6,
@@ -192,7 +192,7 @@ describe("document indexing policy", () => {
     const reordered = {
       lineage: {
         unitMinRunnerUpMargin: 0.15,
-        version: "lineage-policy-v1",
+        version: "lineage-policy-v2",
         unitMinBlockIdJaccard: 0.6,
         blockMinRunnerUpMargin: 0.1,
         blockMinTokenJaccard: 0.85,
@@ -227,7 +227,7 @@ describe("document indexing policy", () => {
       digestDocumentIndexingPolicy(DEFAULT_DOCUMENT_INDEXING_POLICY),
     );
     expect(digestDocumentIndexingPolicy(reordered)).toBe(
-      "sha256:8a6dc5272db45aa8d78f31e982ddc3ba81e9d4c9636c2249a81735b2530289a8",
+      "sha256:86f188d4012a0200d193f21c21b413cfa6ee30dc026256d780b3f1715a286c5d",
     );
   });
 });

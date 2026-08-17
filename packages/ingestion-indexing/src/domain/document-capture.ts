@@ -104,16 +104,22 @@ export function assembleNormalizedMarkdownDocument(
         candidate.parentIndex === undefined
           ? undefined
           : requiredAt(blockIds, candidate.parentIndex);
+      /**
+       * Logical identity, canonical content and structural containment only.
+       * `order` and `sourceSpan` describe where the Block sits in this
+       * Observation, so including them would give every Block after an edit a
+       * new revision even when its content is byte-identical. Containment is
+       * already carried by `sectionPath` and `parentBlockId`, which are stable
+       * Block IDs rather than positions.
+       */
       const revisionInput = {
         id,
         kind: candidate.kind,
-        order: index,
         ...(parentBlockId === undefined ? {} : { parentBlockId }),
         sectionPath,
         text: candidate.text,
         analysisText,
         contentDigest,
-        sourceSpan: candidate.sourceSpan,
         structure: candidate.structure,
         normalizationPolicyVersion: MARKDOWN_NORMALIZATION_POLICY_VERSION,
         lineagePolicyVersion: BLOCK_LINEAGE_POLICY_VERSION,

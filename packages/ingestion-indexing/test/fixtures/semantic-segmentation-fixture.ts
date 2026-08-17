@@ -1,4 +1,5 @@
 import {
+  LINEAGE_POLICY_VERSION,
   sha256Digest,
   toAnalysisText,
   type DocumentBlock,
@@ -98,7 +99,7 @@ export function createSegmentationDocument(
     title: "Segmentation fixture",
     parser: { id: "fixture-parser", version: "1.0.0" },
     normalizationPolicyVersion: "document-normalization-v1",
-    lineagePolicyVersion: "lineage-policy-v1",
+    lineagePolicyVersion: LINEAGE_POLICY_VERSION,
     contentDigest: sha256Digest(canonicalText),
     completeness: {
       status: completeness,

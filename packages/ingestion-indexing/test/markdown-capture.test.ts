@@ -159,7 +159,7 @@ describe("Markdown capture", () => {
     ]);
   });
 
-  it("preserves stable IDs across insertion, section movement and unambiguous edits", () => {
+  it("keeps IDs and revisions stable across insertion, section movement and unambiguous edits", () => {
     const initial = capture(`# A
 
 Alpha payment retry policy remains stable across all normal production operations without operator intervention.
@@ -200,8 +200,29 @@ Alpha payment retry policy remains stable across all normal production operation
       )?.id,
     );
     expect(changed.contentDigest).not.toBe(initial.contentDigest);
-    expect(changedByText.get("B")?.revisionId).not.toBe(
+
+    // A leading insertion moved "B" and shifted every following offset, but its
+    // content and containment are untouched, so the revision must survive.
+    expect(changedByText.get("B")?.revisionId).toBe(
       initialByText.get("B")?.revisionId,
+    );
+    expect(
+      changedByText.get("Beta settlement policy remains stable.")?.revisionId,
+    ).toBe(
+      initialByText.get("Beta settlement policy remains stable.")?.revisionId,
+    );
+    // Only genuinely edited Blocks advance their revision.
+    expect(changedByText.get("A renamed")?.revisionId).not.toBe(
+      initialByText.get("A")?.revisionId,
+    );
+    expect(
+      changedByText.get(
+        "Alpha payment retry policy remains stable across all normal production operations without audited operator intervention.",
+      )?.revisionId,
+    ).not.toBe(
+      initialByText.get(
+        "Alpha payment retry policy remains stable across all normal production operations without operator intervention.",
+      )?.revisionId,
     );
   });
 
