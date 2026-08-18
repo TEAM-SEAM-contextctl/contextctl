@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  InMemorySourceObservationStore,
   SourceAdapterFault,
   SourceAdapterRegistry,
   SourceManagement,
@@ -13,6 +14,7 @@ import {
   type SourceConfigurationResolver,
   type SourceIdGenerator,
   type SourceObservationAttempt,
+  type SourceObservationStore,
   type ValidatedSourceConfiguration,
 } from "../src/index.js";
 
@@ -20,6 +22,8 @@ const SOURCE_CONFIG = {
   locator: "https://knowledge.example.test/payments",
   scope: "payments",
 };
+const CAPTURED_AT = "2026-08-18T00:00:00.000Z";
+const OBSERVATION_DIGEST = `sha256:${"a".repeat(64)}`;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -28,7 +32,13 @@ afterEach(() => {
 describe("Source Management", () => {
   it("registers, inspects and observes a Source through its adapter", async () => {
     const adapter = new FakeSourceAdapter("document");
-    const management = createManagement([adapter]);
+    const observations = new InMemorySourceObservationStore();
+    const management = createManagement(
+      [adapter],
+      undefined,
+      undefined,
+      observations,
+    );
 
     const registered = await management.register(registerCommand());
     const inspection = await management.inspect(registered);
@@ -59,6 +69,8 @@ describe("Source Management", () => {
     expect(observation.attempt).toEqual({
       status: "changed",
       payload: { title: "Payments" },
+      capturedAt: CAPTURED_AT,
+      contentDigest: OBSERVATION_DIGEST,
       changeSignal: { status: "changed", token: "etag-2" },
     });
     expect(observation.source.executionStatus).toEqual({
@@ -76,12 +88,25 @@ describe("Source Management", () => {
       detectChange: 1,
       observe: 1,
     });
+    if (!("observation" in observation)) {
+      throw new Error("changed observation was not persisted");
+    }
+    await expect(observations.count()).resolves.toBe(1);
+    await expect(
+      observations.latestForSource(registered.id),
+    ).resolves.toEqual(observation.observation);
   });
 
   it("does not observe when the cheap change signal is unchanged", async () => {
     const adapter = new FakeSourceAdapter("document");
     adapter.changeSignal = { status: "unchanged", token: "etag-1" };
-    const management = createManagement([adapter]);
+    const observations = new InMemorySourceObservationStore();
+    const management = createManagement(
+      [adapter],
+      undefined,
+      undefined,
+      observations,
+    );
     const source = (await management.inspect(await management.register(
       registerCommand(),
     ))).source;
@@ -100,6 +125,7 @@ describe("Source Management", () => {
       outcome: "unchanged",
     });
     expect(adapter.calls.observe).toBe(0);
+    await expect(observations.count()).resolves.toBe(0);
   });
 
   it("rejects inline credentials before an adapter can connect", async () => {
@@ -367,7 +393,13 @@ describe("Source Management", () => {
   it("returns failed execution state without an observation payload", async () => {
     const adapter = new FakeSourceAdapter("document");
     adapter.observationError = new SourceAdapterFault("invalid_format");
-    const management = createManagement([adapter]);
+    const observations = new InMemorySourceObservationStore();
+    const management = createManagement(
+      [adapter],
+      undefined,
+      undefined,
+      observations,
+    );
     const ready = (
       await management.inspect(await management.register(registerCommand()))
     ).source;
@@ -391,6 +423,7 @@ describe("Source Management", () => {
     });
     expect(error).not.toHaveProperty("attempt");
     expect(adapter.calls.observe).toBe(1);
+    await expect(observations.count()).resolves.toBe(0);
   });
 
   it("prevents observation before inspection and disables through the application boundary", async () => {
@@ -445,6 +478,8 @@ describe("Source Management", () => {
     completeObservation?.({
       status: "changed",
       payload: { title: "Payments" },
+      capturedAt: CAPTURED_AT,
+      contentDigest: OBSERVATION_DIGEST,
       changeSignal: { status: "changed", token: "etag-2" },
     });
     await expect(first).resolves.toMatchObject({
@@ -490,13 +525,16 @@ function createManagement(
     { "source.payments": SOURCE_CONFIG },
   ),
   credentials: CredentialResolver = new FakeCredentialResolver(),
+  observations: SourceObservationStore = new InMemorySourceObservationStore(),
 ): SourceManagement {
   return new SourceManagement({
     adapters: new SourceAdapterRegistry(adapters),
     configurations,
     credentials,
     ids: new SequentialSourceIdGenerator(),
+    observations,
     defaultTimeoutMs: 1_000,
+    clock: () => CAPTURED_AT,
   });
 }
 
@@ -562,6 +600,8 @@ class FakeSourceAdapter implements SourceAdapter {
   ) => Promise<SourceObservationAttempt> = async () => ({
     status: "changed",
     payload: { title: "Payments" },
+    capturedAt: CAPTURED_AT,
+    contentDigest: OBSERVATION_DIGEST,
     changeSignal: { status: "changed", token: "etag-2" },
   });
 

@@ -27,10 +27,12 @@ import {
   SqliteIndexStagingAttemptStore,
   SqliteIngestionPublicationStore,
   SqliteMarkdownPublicationCheckpointStore,
+  SqliteSourceObservationStore,
   StaticQueryEmbeddingProviderRegistry,
   StaticVectorIndexConnectorRegistry,
   UuidSourceIdGenerator,
   createLocalMarkdownPublicationRuntime,
+  createSourceObservation,
   openIngestionDatabase,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
@@ -234,6 +236,47 @@ describe("durable Index control plane", () => {
         leaseId: "lease_durablecleanup",
       }),
     ).toBe(true);
+    restarted.close();
+  });
+
+  it("migrates schema v3 and preserves immutable observations across restart", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "contextctl-observation-state-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "ingestion.sqlite");
+    const initialized = openTestDatabase(databasePath);
+    initialized.close();
+
+    const v3 = new DatabaseSync(databasePath);
+    v3.exec(`
+      DROP TABLE source_observation_retention_leases;
+      DROP TABLE comparison_source_observations;
+      DROP TABLE latest_source_observations;
+      DROP TABLE source_observations;
+      PRAGMA user_version = 3;
+    `);
+    v3.close();
+
+    const migrated = openTestDatabase(databasePath);
+    const observations = new SqliteSourceObservationStore(migrated);
+    const observation = createSourceObservation({
+      sourceId: "src_durableobservation",
+      capturedAt: NOW,
+      contentDigest: `sha256:${"a".repeat(64)}`,
+      payload: { kind: "test", value: "durable" },
+    });
+    await observations.commit({ observation });
+    await observations.markComparisonBaseline({
+      sourceId: observation.sourceId,
+      observationId: observation.id,
+    });
+    migrated.close();
+
+    const restarted = openTestDatabase(databasePath);
+    const restored = new SqliteSourceObservationStore(restarted);
+    await expect(restored.find(observation.id)).resolves.toEqual(observation);
+    await expect(
+      restored.comparisonForSource(observation.sourceId),
+    ).resolves.toEqual(observation);
     restarted.close();
   });
 
@@ -866,6 +909,7 @@ function createDurableRuntime(
     securityDomain: "tenant-a",
     checkpoints: new SqliteMarkdownPublicationCheckpointStore(database),
     publications: new SqliteIngestionPublicationStore(database),
+    observations: new SqliteSourceObservationStore(database),
     indexPublications: new SqliteIndexPublicationStore(database),
     stagingAttempts: new SqliteIndexStagingAttemptStore(database),
     sourceIds: new UuidSourceIdGenerator(),

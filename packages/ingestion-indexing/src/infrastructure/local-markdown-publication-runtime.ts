@@ -9,6 +9,10 @@ import { MarkdownPublicationWorkflow } from "../application/markdown-publication
 import { DocumentIndexPublisher } from "../application/publish-document-index.js";
 import { IncrementalDocumentReindexer } from "../application/reindex-document-incrementally.js";
 import { SourceManagement } from "../application/source-management.js";
+import {
+  SourceObservationRetention,
+  type SourceObservationRetentionPolicy,
+} from "../application/retain-source-observations.js";
 import type { BlockIdSource } from "../domain/document-capture.js";
 import type { EmbeddingProfile } from "../domain/embedding-profile.js";
 import { stableIdentity } from "../domain/revision-identity.js";
@@ -20,6 +24,7 @@ import type {
 } from "../ports/markdown-publication.js";
 import type { IndexPublicationStoreV2 as IndexPublicationStore } from "../ports/index-publication-store.js";
 import type { IndexStagingAttemptStore } from "../ports/index-staging-attempt.js";
+import type { SourceObservationStore } from "../ports/source-observation.js";
 import type {
   CredentialResolver,
   SourceConfigurationResolver,
@@ -33,6 +38,7 @@ import { InMemoryIngestionPublicationStore } from "./in-memory-ingestion-publica
 import { InMemoryMarkdownPublicationCheckpointStore } from "./in-memory-markdown-publication-checkpoint-store.js";
 import { InMemoryMarkdownPublicationEventSink } from "./in-memory-markdown-publication-event-sink.js";
 import { InMemoryPublicationReadyNotifier } from "./in-memory-publication-ready-notifier.js";
+import { InMemorySourceObservationStore } from "./in-memory-source-observation-store.js";
 import { InMemoryVectorIndexAdapter } from "./in-memory-vector-index-adapter.js";
 import { MarkdownFileSourceAdapter } from "./markdown-file-source-adapter.js";
 import { RemarkMarkdownParser } from "./remark-markdown-parser.js";
@@ -54,10 +60,13 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly readyNotifier?: PublicationReadyNotifier;
   readonly checkpoints?: MarkdownPublicationCheckpointStore;
   readonly publications?: IngestionPublicationStore;
+  readonly observations?: SourceObservationStore;
   readonly indexPublications?: IndexPublicationStore;
   /** Required with a supplied durable Index Catalog. */
   readonly stagingAttempts?: IndexStagingAttemptStore;
   readonly stagingCleanupPolicy?: FailedIndexStagingCleanupPolicy;
+  readonly observationRetentionPolicy?: SourceObservationRetentionPolicy;
+  readonly observationRetentionLeaseMs?: number;
   readonly embeddingPolicy?: EmbeddingPipelinePolicy;
   readonly defaultSourceTimeoutMs?: number;
   readonly sourceIds?: SourceIdGenerator;
@@ -69,6 +78,8 @@ export interface LocalMarkdownPublicationRuntime {
   readonly search: ManagedDocumentSearch;
   readonly checkpoints: MarkdownPublicationCheckpointStore;
   readonly publications: IngestionPublicationStore;
+  readonly observations: SourceObservationStore;
+  readonly observationRetention: SourceObservationRetention;
   readonly readyNotifications: InMemoryPublicationReadyNotifier;
   readonly events: InMemoryMarkdownPublicationEventSink;
   readonly indexPublications: IndexPublicationStore;
@@ -95,6 +106,8 @@ export function createLocalMarkdownPublicationRuntime(
   const clock = options.clock ?? (() => new Date().toISOString());
   const configurations = new LocalValueResolver(options.configurations);
   const credentials = new LocalValueResolver(options.credentials ?? {});
+  const observations =
+    options.observations ?? new InMemorySourceObservationStore();
   const sourceManagement = new SourceManagement({
     adapters: new SourceAdapterRegistry([
       new MarkdownFileSourceAdapter({ now: () => new Date(clock()) }),
@@ -102,7 +115,9 @@ export function createLocalMarkdownPublicationRuntime(
     configurations,
     credentials,
     ids: options.sourceIds ?? new SequentialSourceIdGenerator(),
+    observations,
     defaultTimeoutMs: options.defaultSourceTimeoutMs ?? 30_000,
+    clock,
   });
   const embeddingProvider =
     options.embeddingProvider ?? new DeterministicEmbeddingAdapter();
@@ -135,6 +150,7 @@ export function createLocalMarkdownPublicationRuntime(
   });
   const workflow = new MarkdownPublicationWorkflow({
     sourceManagement,
+    observations,
     checkpoints,
     captureMarkdown: (command) =>
       new MarkdownCapture({
@@ -154,6 +170,11 @@ export function createLocalMarkdownPublicationRuntime(
     stateNamespaceId: options.stateNamespaceId,
     securityDomain: options.securityDomain,
     clock,
+    ...(options.observationRetentionLeaseMs === undefined
+      ? {}
+      : {
+          observationRetentionLeaseMs: options.observationRetentionLeaseMs,
+        }),
   });
   return {
     workflow,
@@ -171,6 +192,14 @@ export function createLocalMarkdownPublicationRuntime(
     }),
     checkpoints,
     publications,
+    observations,
+    observationRetention: new SourceObservationRetention({
+      observations,
+      ...(options.observationRetentionPolicy === undefined
+        ? {}
+        : { policy: options.observationRetentionPolicy }),
+      clock,
+    }),
     readyNotifications,
     events,
     indexPublications,

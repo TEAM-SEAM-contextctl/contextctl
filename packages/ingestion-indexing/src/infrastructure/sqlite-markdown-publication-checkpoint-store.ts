@@ -5,6 +5,7 @@ import {
   validateNormalizedDocument,
 } from "../domain/document-model.js";
 import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
+import { isId } from "../domain/model-validation.js";
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 import type {
   MarkdownPublicationCheckpoint,
@@ -93,6 +94,8 @@ export class SqliteMarkdownPublicationCheckpointStore
           stored.documentId !== validated.documentId ||
           (stored.previousChangeToken !== undefined &&
             validated.previousChangeToken === undefined) ||
+          (stored.observationId !== undefined &&
+            validated.observationId === undefined) ||
           (storedDocument !== undefined &&
             nextDocument !== undefined &&
             storedDocument.sourceId !== nextDocument.sourceId)
@@ -170,6 +173,10 @@ function parseCheckpoint(input: unknown): MarkdownPublicationCheckpoint {
     !isNonEmptyString(candidate.source.targetKey) ||
     !isNonEmptyString(candidate.source.configReference) ||
     !isNonEmptyString(candidate.documentId) ||
+    (candidate.observationId !== undefined &&
+      !isId(candidate.observationId, "obs")) ||
+    (candidate.observationId !== undefined &&
+      candidate.indexingSnapshot === undefined) ||
     (candidate.previousChangeToken !== undefined &&
       !isNonEmptyString(candidate.previousChangeToken)) ||
     (candidate.document === undefined) !==
@@ -203,7 +210,10 @@ function parseCheckpoint(input: unknown): MarkdownPublicationCheckpoint {
     }
     if (
       candidate.indexingSnapshot.document.sourceId !== candidate.source.id ||
-      candidate.indexingSnapshot.document.documentId !== candidate.documentId
+      candidate.indexingSnapshot.document.documentId !== candidate.documentId ||
+      (candidate.observationId !== undefined &&
+        candidate.indexingSnapshot.document.observationId !==
+          candidate.observationId)
     ) {
       throw new MarkdownPublicationCheckpointConflict();
     }

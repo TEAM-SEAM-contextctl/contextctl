@@ -44,6 +44,10 @@ export type SourceObservationAttempt =
   | {
       readonly status: "changed";
       readonly payload: unknown;
+      /** Canonical capture time supplied by the adapter. */
+      readonly capturedAt: string;
+      /** Digest of canonical source content, excluding volatile capture metadata. */
+      readonly contentDigest: string;
       readonly changeSignal: ObservedSourceChangeSignal;
     }
   | { readonly status: "unchanged" };

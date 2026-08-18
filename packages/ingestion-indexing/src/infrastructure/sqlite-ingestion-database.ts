@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-export const INGESTION_DATABASE_SCHEMA_VERSION = 3;
+export const INGESTION_DATABASE_SCHEMA_VERSION = 4;
 
 export interface OpenIngestionDatabaseOptions {
   readonly location: string;
@@ -62,11 +62,24 @@ function migrate(
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     return;
   }
+  if (version === 3) {
+    assertExpectedSchema(database, EXPECTED_SCHEMA_V3);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    inIngestionTransaction(database, () => {
+      createSchemaV4(database);
+      assertExpectedSchema(database);
+      database.exec(
+        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
+      );
+    });
+    return;
+  }
   if (version === 2) {
     assertExpectedSchema(database, EXPECTED_SCHEMA_V2);
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     inIngestionTransaction(database, () => {
       createSchemaV3(database);
+      createSchemaV4(database);
       assertExpectedSchema(database);
       database.exec(
         `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
@@ -81,6 +94,7 @@ function migrate(
     }
     createSchemaV2(database);
     createSchemaV3(database);
+    createSchemaV4(database);
     database
       .prepare(
         `INSERT INTO ingestion_metadata (
@@ -93,6 +107,47 @@ function migrate(
       `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
     );
   });
+}
+
+function createSchemaV4(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS source_observations (
+      observation_id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      content_digest TEXT NOT NULL,
+      captured_at TEXT NOT NULL,
+      observation_json TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      UNIQUE (source_id, content_digest)
+    );
+
+    CREATE INDEX IF NOT EXISTS source_observations_by_source_capture
+      ON source_observations (source_id, captured_at DESC, observation_id DESC);
+
+    CREATE TABLE IF NOT EXISTS latest_source_observations (
+      source_id TEXT PRIMARY KEY,
+      observation_id TEXT NOT NULL UNIQUE
+        REFERENCES source_observations (observation_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS comparison_source_observations (
+      source_id TEXT PRIMARY KEY,
+      observation_id TEXT NOT NULL UNIQUE
+        REFERENCES source_observations (observation_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS source_observation_retention_leases (
+      lease_id TEXT NOT NULL,
+      observation_id TEXT NOT NULL
+        REFERENCES source_observations (observation_id) ON DELETE CASCADE,
+      acquired_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (lease_id, observation_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS source_observation_leases_by_protection
+      ON source_observation_retention_leases (observation_id, expires_at);
+  `);
 }
 
 function createSchemaV3(database: DatabaseSync): void {
@@ -289,7 +344,7 @@ const EXPECTED_SCHEMA_V2 = {
   ],
 } as const;
 
-const EXPECTED_SCHEMA = {
+const EXPECTED_SCHEMA_V3 = {
   ...EXPECTED_SCHEMA_V2,
   index_staging_attempts: [
     ["document_index_id", "TEXT", 1, 1],
@@ -301,6 +356,32 @@ const EXPECTED_SCHEMA = {
     ["state", "TEXT", 1, 0],
     ["owner_lease_id", "TEXT", 0, 0],
     ["owner_expires_at", "TEXT", 0, 0],
+  ],
+} as const;
+
+const EXPECTED_SCHEMA = {
+  ...EXPECTED_SCHEMA_V3,
+  source_observations: [
+    ["observation_id", "TEXT", 0, 1],
+    ["source_id", "TEXT", 1, 0],
+    ["content_digest", "TEXT", 1, 0],
+    ["captured_at", "TEXT", 1, 0],
+    ["observation_json", "TEXT", 1, 0],
+    ["fingerprint", "TEXT", 1, 0],
+  ],
+  latest_source_observations: [
+    ["source_id", "TEXT", 0, 1],
+    ["observation_id", "TEXT", 1, 0],
+  ],
+  comparison_source_observations: [
+    ["source_id", "TEXT", 0, 1],
+    ["observation_id", "TEXT", 1, 0],
+  ],
+  source_observation_retention_leases: [
+    ["lease_id", "TEXT", 1, 1],
+    ["observation_id", "TEXT", 1, 2],
+    ["acquired_at", "TEXT", 1, 0],
+    ["expires_at", "TEXT", 1, 0],
   ],
 } as const;
 

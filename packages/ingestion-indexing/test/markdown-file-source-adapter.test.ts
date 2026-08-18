@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  InMemorySourceObservationStore,
   isMarkdownSourceSnapshot,
   MarkdownCapture,
   MarkdownFileSourceAdapter,
@@ -288,6 +289,7 @@ function createManagement(
     configurations: new MemoryConfigurationResolver(configuration),
     credentials: new EmptyCredentialResolver(),
     ids: new SequentialSourceIdGenerator(),
+    observations: new InMemorySourceObservationStore(),
     defaultTimeoutMs: 2_000,
   });
 }

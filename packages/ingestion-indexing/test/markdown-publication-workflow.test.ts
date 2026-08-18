@@ -75,6 +75,18 @@ describe("MarkdownPublicationWorkflow", () => {
       await runtime.publications.find(publication.publicationId),
     ).toEqual(publication);
     expect(await runtime.publications.pendingReady()).toEqual([]);
+    expect(
+      await runtime.observations.find(result.observationId!),
+    ).toMatchObject({
+      id: result.observationId,
+      sourceId: result.sourceId,
+    });
+    expect(
+      await runtime.observations.comparisonForSource(result.sourceId),
+    ).toMatchObject({ id: result.observationId });
+    expect(
+      await runtime.checkpoints.findBySourceId(result.sourceId),
+    ).toMatchObject({ observationId: result.observationId });
 
     const registryView = consumeAsRegistry(
       parseIngestionPublication(
@@ -265,6 +277,33 @@ describe("MarkdownPublicationWorkflow", () => {
     expect(
       second.diagnostics.find((diagnostic) => diagnostic.stage === "index_update"),
     ).toMatchObject({ status: "completed" });
+  });
+
+  it("repairs a comparison pointer from the durable checkpoint before observing again", async () => {
+    const fixture = await createTemporaryMarkdown("# First\n\nInitial snapshot.\n");
+    const runtime = createLocalMarkdownPublicationRuntime({
+      configurations: { "source.fixture": { path: fixture.path } },
+      embeddingProfile: profile,
+      connectorId: "vector.local",
+      stateNamespaceId: "state_test",
+      securityDomain: "tenant-a",
+      clock: () => NOW,
+    });
+    const first = await runtime.workflow.publish(command());
+    await writeFile(fixture.path, "# Updated\n\nSecond snapshot.\n", "utf8");
+    const second = await runtime.workflow.publish(command());
+    await runtime.observations.markComparisonBaseline({
+      sourceId: second.sourceId,
+      observationId: first.observationId!,
+      expectedObservationId: second.observationId!,
+    });
+
+    const repeated = await runtime.workflow.publish(command());
+
+    expect(repeated.status).toBe("unchanged");
+    await expect(
+      runtime.observations.comparisonForSource(second.sourceId),
+    ).resolves.toMatchObject({ id: second.observationId });
   });
 
   it("publishes an empty knowledge set without replacing the last physical Index", async () => {
@@ -462,6 +501,7 @@ describe("MarkdownPublicationWorkflow", () => {
       diagnosticCode: "checkpoint_unavailable",
     });
     expect(committed).toBeDefined();
+    await expect(runtime.observations.count()).resolves.toBe(1);
 
     const recovered = await runtime.workflow.publish(command());
     const checkpoint = await runtime.checkpoints.findBySourceId(
@@ -472,6 +512,8 @@ describe("MarkdownPublicationWorkflow", () => {
     expect(recovered.publication).toEqual(committed);
     expect(embeddings.requests).toHaveLength(embeddingCalls);
     expect(checkpoint?.indexingSnapshot).toBeDefined();
+    expect(checkpoint?.observationId).toBe(recovered.observationId);
+    await expect(runtime.observations.count()).resolves.toBe(1);
     expect(await runtime.publications.pendingReady()).toEqual([]);
   });
 });

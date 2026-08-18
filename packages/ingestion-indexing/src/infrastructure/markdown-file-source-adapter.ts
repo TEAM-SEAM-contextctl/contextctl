@@ -103,6 +103,8 @@ export class MarkdownFileSourceAdapter implements SourceAdapter {
     return {
       status: "changed",
       payload: snapshot,
+      capturedAt: snapshot.capturedAt,
+      contentDigest: snapshot.contentDigest,
       changeSignal: { status: "changed", token: snapshot.contentDigest },
     };
   }
