@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { PublishedIndexVersion } from "@contextctl/ingestion-indexing";
+import {
+  DeterministicEmbeddingAdapter,
+  EmbeddingProviderFault,
+  type PublishedIndexVersion,
+} from "@contextctl/ingestion-indexing";
 import {
   appendCardVersion,
   createContextCard,
@@ -20,6 +24,7 @@ import { RegistryApprovedCardCatalog } from "../src/adapters/registry-approved-c
 import {
   createDaemonRuntime,
   DEFAULT_CONNECTOR_ID,
+  DEFAULT_EMBEDDING_PROFILE,
   DEFAULT_SECURITY_DOMAIN,
   readDaemonRuntimeOptions,
   readHttpPort,
@@ -36,8 +41,19 @@ import {
  */
 const runtimes: DaemonRuntime[] = [];
 
+/**
+ * The deterministic test composition, stated explicitly.
+ *
+ * An unconfigured runtime now defaults to the production profile and fails
+ * closed without installed assets, so a test that wants network-free vectors
+ * has to say so — which is the point of the guard being there.
+ */
 function buildRuntime(options?: DaemonRuntimeOptions): DaemonRuntime {
-  const runtime = createDaemonRuntime(options);
+  const runtime = createDaemonRuntime({
+    embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
+    embeddingProvider: new DeterministicEmbeddingAdapter(),
+    ...options,
+  });
   runtimes.push(runtime);
   return runtime;
 }
@@ -283,6 +299,35 @@ describe("createDaemonRuntime", () => {
 
       expect(runtime.securityDomain).toBe("x");
       expect(runtime.connectorId).toBe("y");
+    });
+
+    it("refuses to assemble a production profile without installed assets", () => {
+      expect(() => createDaemonRuntime()).toThrow(EmbeddingProviderFault);
+      expect(() => createDaemonRuntime()).toThrowError(
+        expect.objectContaining({ code: "embedding_artifact_unavailable" }),
+      );
+    });
+
+    it("refuses the deterministic adapter under a production profile", () => {
+      expect(() =>
+        createDaemonRuntime({
+          embeddingArtifactDirectory: "/nonexistent/assets",
+          embeddingProvider: new DeterministicEmbeddingAdapter(),
+        }),
+      ).toThrow(TypeError);
+    });
+
+    it("binds the local adapter when an artifact directory is configured", () => {
+      // Bypasses the deterministic test composition on purpose.
+      const runtime = createDaemonRuntime({
+        embeddingArtifactDirectory: "/nonexistent/assets",
+      });
+      runtimes.push(runtime);
+
+      expect(runtime.embeddingProvider.providerKind).toBe("local");
+      expect(runtime.embeddingProfile.id).toBe(
+        "document-granite-97m-multilingual-r2-q8-v1",
+      );
     });
 
     it("falls back to the local defaults when nothing is configured", () => {

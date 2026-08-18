@@ -277,6 +277,13 @@ export {
   type TransformersJsLocalEmbeddingAdapterOptions,
 } from "./infrastructure/transformers-js-local-embedding-adapter.js";
 export {
+  DirectoryLocalEmbeddingAssetSource,
+  installLocalEmbeddingAssets,
+  type InstallLocalEmbeddingAssetsInput,
+  type InstallLocalEmbeddingAssetsResult,
+  type LocalEmbeddingAssetSource,
+} from "./infrastructure/local-embedding-asset-installation.js";
+export {
   QdrantVectorIndexAdapter,
   type QdrantVectorIndexAdapterOptions,
 } from "./infrastructure/qdrant-vector-index-adapter.js";
