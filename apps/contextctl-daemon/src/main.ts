@@ -2,13 +2,18 @@ import type { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import {
+  assertProductionEmbeddingProvider,
+  DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DeterministicEmbeddingAdapter,
+  EmbeddingProviderFault,
   InMemoryIndexPublicationStore,
   InMemoryVectorIndexAdapter,
+  isDocumentRetrievalEmbeddingProfile,
   ManagedDocumentSearch,
   StaticQueryEmbeddingProviderRegistry,
   StaticVectorIndexConnectorRegistry,
   TEXT_MEASURE_PROFILE_VERSION,
+  TransformersJsLocalEmbeddingAdapter,
   type EmbeddingPort,
   type EmbeddingProfile,
   type IndexPublicationStore,
@@ -90,7 +95,22 @@ export interface DaemonRuntimeOptions {
   readonly connectorId?: string;
   readonly embeddingProfile?: EmbeddingProfile;
   readonly embeddingProviderId?: string;
+  /**
+   * Where the fixed embedding assets were installed. Required whenever the
+   * profile declares local production execution; the runtime never downloads.
+   */
+  readonly embeddingArtifactDirectory?: string;
+  /**
+   * An explicit provider. Test compositions pass the deterministic adapter
+   * here — it is the only way that adapter reaches the graph, because a
+   * production profile refuses any provider whose kind does not match.
+   */
+  readonly embeddingProvider?: EmbeddingPort;
 }
+
+/** Shown when a production profile has no installed assets to read. */
+export const EMBEDDING_ASSETS_MISSING_GUIDANCE =
+  "Embedding assets are not installed. Install the pinned revision, then set the artifact directory.";
 
 /**
  * The assembled graph.
@@ -130,7 +150,8 @@ export function createDaemonRuntime(
 ): DaemonRuntime {
   const securityDomain = options.securityDomain ?? DEFAULT_SECURITY_DOMAIN;
   const connectorId = options.connectorId ?? DEFAULT_CONNECTOR_ID;
-  const embeddingProfile = options.embeddingProfile ?? DEFAULT_EMBEDDING_PROFILE;
+  const embeddingProfile =
+    options.embeddingProfile ?? DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
   // Matches the naming `createLocalMarkdownPublicationRuntime` uses, so a
   // publish path composed from that helper registers the same provider identity
   // instead of a second one that only differs in its label.
@@ -143,7 +164,7 @@ export function createDaemonRuntime(
   );
   const cards = new SqliteCardStore(database);
 
-  const embeddingProvider = new DeterministicEmbeddingAdapter();
+  const embeddingProvider = resolveEmbeddingProvider(options, embeddingProfile);
   const vectorIndex = new InMemoryVectorIndexAdapter();
   const vectorIndexes = new StaticVectorIndexConnectorRegistry([
     { connectorId, vectorIndex },
@@ -188,6 +209,44 @@ export function createDaemonRuntime(
   };
 }
 
+/**
+ * Binds the one embedding provider the graph may use.
+ *
+ * A production profile declares how its vectors were made, so the provider has
+ * to match that declaration: the deterministic adapter reports `test` and is
+ * rejected outright. Nothing here falls back — an unusable production profile
+ * ends the assembly rather than quietly producing vectors of another kind.
+ */
+function resolveEmbeddingProvider(
+  options: DaemonRuntimeOptions,
+  profile: EmbeddingProfile,
+): EmbeddingPort {
+  if (!isDocumentRetrievalEmbeddingProfile(profile)) {
+    // A profile without production execution semantics describes no artifact
+    // to load, so the caller owns the binding.
+    if (options.embeddingProvider !== undefined) return options.embeddingProvider;
+    return new DeterministicEmbeddingAdapter();
+  }
+  if (options.embeddingProvider !== undefined) {
+    assertProductionEmbeddingProvider(profile, options.embeddingProvider);
+    return options.embeddingProvider;
+  }
+  if (profile.execution.kind !== "local") {
+    // Remote execution needs a secret-backed connector binding this
+    // composition does not own yet.
+    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
+  }
+  if (options.embeddingArtifactDirectory === undefined) {
+    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
+  }
+  const provider = new TransformersJsLocalEmbeddingAdapter({
+    artifactDirectory: options.embeddingArtifactDirectory,
+    profile,
+  });
+  assertProductionEmbeddingProvider(profile, provider);
+  return provider;
+}
+
 /** Reads the runtime's configuration out of the environment. */
 export function readDaemonRuntimeOptions(
   environment: Readonly<Partial<Record<string, string>>>,
@@ -199,6 +258,7 @@ export function readDaemonRuntimeOptions(
     registryDatabaseLocation?: string;
     securityDomain?: string;
     connectorId?: string;
+    embeddingArtifactDirectory?: string;
   } = {};
   const location = environment.CONTEXTCTL_REGISTRY_DATABASE;
   if (location !== undefined) {
@@ -211,6 +271,10 @@ export function readDaemonRuntimeOptions(
   const connectorId = environment.CONTEXTCTL_CONNECTOR_ID;
   if (connectorId !== undefined) {
     options.connectorId = connectorId;
+  }
+  const artifactDirectory = environment.CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY;
+  if (artifactDirectory !== undefined) {
+    options.embeddingArtifactDirectory = artifactDirectory;
   }
   return options;
 }
@@ -248,7 +312,18 @@ export function readHttpPort(
 export async function runDaemon(
   environment: Readonly<Partial<Record<string, string>>> = process.env,
 ): Promise<void> {
-  const runtime = createDaemonRuntime(readDaemonRuntimeOptions(environment));
+  let runtime: DaemonRuntime;
+  try {
+    runtime = createDaemonRuntime(readDaemonRuntimeOptions(environment));
+  } catch (error) {
+    if (
+      error instanceof EmbeddingProviderFault &&
+      error.code === "embedding_artifact_unavailable"
+    ) {
+      process.stderr.write(`${EMBEDDING_ASSETS_MISSING_GUIDANCE}\n`);
+    }
+    throw error;
+  }
   const httpPort = readHttpPort(environment);
   if (httpPort !== undefined) {
     createDeliveryHttpServer(runtime.httpHandler).listen(httpPort);

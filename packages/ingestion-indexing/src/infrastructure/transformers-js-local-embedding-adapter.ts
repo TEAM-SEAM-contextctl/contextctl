@@ -531,7 +531,8 @@ function isWithinRoot(root: string, candidate: string): boolean {
   return path === "" || (!path.startsWith(`..${sep}`) && path !== "..");
 }
 
-function isSafeRelativePath(value: unknown): value is string {
+/** Shared with the installer so both sides apply one traversal rule. */
+export function isSafeRelativePath(value: unknown): value is string {
   return (
     typeof value === "string" &&
     value.trim() !== "" &&
