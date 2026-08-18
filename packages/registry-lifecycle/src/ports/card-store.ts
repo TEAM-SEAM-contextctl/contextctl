@@ -1,4 +1,4 @@
-import type { CardCatalogEntry } from "../domain/card-catalog.js";
+import type { ApprovedCardCatalogSnapshot } from "../domain/card-catalog.js";
 import type { CardId, CardVersion } from "../domain/card-version.js";
 import type { ContextCard } from "../domain/context-card.js";
 import type { LifecycleEvent } from "../domain/lifecycle-event.js";
@@ -19,14 +19,19 @@ export interface CardStore {
   listCurrentVersions(): Promise<readonly CardVersion[]>;
 
   /**
-   * The approved Card catalog, with meaning, policy, and scopes all inline.
+   * The approved Card catalog as one versioned snapshot.
    *
-   * Returning them together is the point: a caller that had to fetch meaning
-   * per Card would issue one query per Card, and the catalog is read on every
-   * query. Cards with no current version are absent, so a withdrawn Card stops
-   * being served without any extra filtering by the caller.
+   * Meaning, policy, and scopes come back inline: a caller that had to fetch
+   * meaning per Card would issue one query per Card, and the catalog is read on
+   * every query. Cards with no current version are absent, so a withdrawn Card
+   * stops being served without any extra filtering by the caller.
+   *
+   * The `catalogSnapshotVersion` is what makes this a reading rather than a
+   * list. Selection builds a candidate index from Card text, and without a
+   * version it cannot tell a stale index from a current one except by
+   * rebuilding it.
    */
-  listApprovedCards(): Promise<readonly CardCatalogEntry[]>;
+  listApprovedCards(): Promise<ApprovedCardCatalogSnapshot>;
 
   /**
    * Writes the Card, any version it gained, and the given events as one unit.

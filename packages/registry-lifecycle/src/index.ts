@@ -20,7 +20,11 @@ export {
   type CardVersionId,
 } from "./domain/card-version.js";
 export {
+  checkCatalogSnapshotLimits,
+  computeCatalogSnapshotVersion,
+  toApprovedCardCatalogSnapshot,
   toCardCatalogEntry,
+  type ApprovedCardCatalogSnapshot,
   type CardCatalogEntry,
 } from "./domain/card-catalog.js";
 export {

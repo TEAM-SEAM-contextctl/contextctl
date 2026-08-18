@@ -11,6 +11,8 @@ import {
 } from "@contextctl/ingestion-indexing";
 import {
   translatePublishedScope,
+  toApprovedCardCatalogSnapshot,
+  type ApprovedCardCatalogSnapshot,
   type CardCatalogEntry,
   type CardStore,
   type ContextCard,
@@ -287,8 +289,8 @@ class SingleEntryCardStore implements CardStore {
     return Promise.resolve([]);
   }
 
-  listApprovedCards(): Promise<readonly CardCatalogEntry[]> {
-    return Promise.resolve([this.#entry]);
+  listApprovedCards(): Promise<ApprovedCardCatalogSnapshot> {
+    return Promise.resolve(toApprovedCardCatalogSnapshot([this.#entry]));
   }
 
   saveCard(): Promise<void> {

@@ -31,8 +31,12 @@ export class RegistryApprovedCardCatalog implements ApprovedCardCatalog {
   }
 
   async listApprovedCards(): Promise<readonly ApprovedCard[]> {
-    const entries = await this.#cards.listApprovedCards();
-    return entries.map(toApprovedCard);
+    // Registry hands over a versioned snapshot; Selection's port asks for the
+    // cards alone. The version is dropped here rather than invented later:
+    // ADR 0004 keeps this read model on Selection's side, so widening it to
+    // carry a catalog version is that domain's decision, not the adapter's.
+    const snapshot = await this.#cards.listApprovedCards();
+    return snapshot.cards.map(toApprovedCard);
   }
 }
 

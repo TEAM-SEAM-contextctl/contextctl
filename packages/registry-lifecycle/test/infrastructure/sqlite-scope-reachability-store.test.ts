@@ -86,7 +86,7 @@ describe("SqliteScopeReachabilityStore", () => {
     await cards.saveCard(card, []);
     await cards.saveCard(withdrawn(card), [withdrawalEvent(undefined)]);
 
-    expect(await cards.listApprovedCards()).toHaveLength(0);
+    expect((await cards.listApprovedCards()).cards).toHaveLength(0);
 
     const report = await buildReachabilityReport({ scopes, clock });
 
