@@ -103,6 +103,9 @@ describe.skipIf(q8Directory === undefined)(
             peakRssMiB: PEAK_RSS_MIB_GATE,
           },
           missedQueryIds: quality.missedQueryIds,
+          quantized:
+            profile.execution.kind === "local" &&
+            profile.execution.precision !== "fp32",
         };
         if (resultPath !== undefined) {
           await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`);
@@ -133,14 +136,22 @@ interface BaselineQuality {
 }
 
 /**
- * The q8 non-inferiority check needs the same source revision at fp32. It is
- * reported as absent rather than assumed when those assets are not installed.
+ * The non-inferiority check only means something for a quantized profile: it
+ * asks what quantization cost. A profile that already ships full precision is
+ * its own baseline, so the comparison is recorded as not applicable rather
+ * than run against itself.
  */
 async function measureBaseline(
   corpus: Awaited<ReturnType<typeof loadEvalCorpus>>,
   q8: RetrievalQuality,
 ): Promise<BaselineQuality | undefined> {
-  if (fp32Directory === undefined) return undefined;
+  if (
+    fp32Directory === undefined ||
+    (DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE.execution.kind === "local" &&
+      DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE.execution.precision === "fp32")
+  ) {
+    return undefined;
+  }
   const profile = await readBaselineProfile(
     fp32Directory,
     DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,

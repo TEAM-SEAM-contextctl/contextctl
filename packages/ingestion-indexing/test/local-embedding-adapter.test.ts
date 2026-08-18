@@ -37,11 +37,11 @@ afterEach(async () => {
 });
 
 describe("document retrieval embedding profile", () => {
-  it("pins the complete Granite q8 vector semantics and asset set", () => {
+  it("pins the complete Granite fp32 vector semantics and asset set", () => {
     expect(validateEmbeddingProfile(DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE))
       .toEqual([]);
     expect(DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE).toMatchObject({
-      id: "document-granite-97m-multilingual-r2-q8-v1",
+      id: "document-granite-97m-multilingual-r2-fp32-v1",
       modelRevision: "835ad14087e140460703cf0fae09f97d469d65c2",
       dimensions: 384,
       pooling: "cls",
@@ -56,8 +56,8 @@ describe("document retrieval embedding profile", () => {
         kind: "local",
         adapter: "transformers-js-onnx",
         adapterVersion: "4.2.0",
-        precision: "q8",
-        artifactPath: "onnx/model_quantized.onnx",
+        precision: "fp32",
+        artifactPath: "onnx/model.onnx",
       },
     });
     expect(
@@ -69,7 +69,7 @@ describe("document retrieval embedding profile", () => {
     expect(DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST.files.map((file) => file.path))
       .toEqual([
         "config.json",
-        "onnx/model_quantized.onnx",
+        "onnx/model.onnx",
         "special_tokens_map.json",
         "tokenizer.json",
         "tokenizer_config.json",

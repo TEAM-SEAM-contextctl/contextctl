@@ -51,10 +51,10 @@ export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST: LocalEmbeddingAssetManife
           "ae74d55a56f779774cb9a8e63d3c2da9ae1af83c00229ffdff43d0b38407a0ee",
       }),
       Object.freeze({
-        path: "onnx/model_quantized.onnx",
-        bytes: 97_858_099,
+        path: "onnx/model.onnx",
+        bytes: 390_004_608,
         sha256:
-          "704c1ebca5fbb7cd83ced41827658ac4c9990c64f7f2874d22b78044e5022e22",
+          "68e592b160673d30250824c1116bc6ab33f70efb22b97c9e1d7ce1e69c1c9d70",
       }),
       Object.freeze({
         path: "special_tokens_map.json",
@@ -78,11 +78,11 @@ export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST: LocalEmbeddingAssetManife
   });
 
 export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256 =
-  "200799bc14e4bc0d4087e4e588a58755e3d3bdbfef7e5761e366dfefcd09f069";
+  "eb0923125496145fce8105135180b42f37d098c688837037d73e4ba11bd8c389";
 
 export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE: DocumentRetrievalEmbeddingProfile =
   Object.freeze({
-    id: "document-granite-97m-multilingual-r2-q8-v1",
+    id: "document-granite-97m-multilingual-r2-fp32-v1",
     version: "1",
     model: "ibm-granite/granite-embedding-97m-multilingual-r2",
     modelRevision: "835ad14087e140460703cf0fae09f97d469d65c2",
@@ -93,12 +93,12 @@ export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE: DocumentRetrievalEmbe
       artifactRepository:
         "onnx-community/granite-embedding-97m-multilingual-r2-ONNX",
       artifactRevision: "536a9f241cb3f02a9c5995a1e708c784bd274859",
-      artifactPath: "onnx/model_quantized.onnx",
+      artifactPath: "onnx/model.onnx",
       artifactSha256:
-        "704c1ebca5fbb7cd83ced41827658ac4c9990c64f7f2874d22b78044e5022e22",
+        "68e592b160673d30250824c1116bc6ab33f70efb22b97c9e1d7ce1e69c1c9d70",
       assetManifestSha256:
         DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
-      precision: "q8",
+      precision: "fp32",
     }),
     dimensions: 384,
     pooling: "cls",
