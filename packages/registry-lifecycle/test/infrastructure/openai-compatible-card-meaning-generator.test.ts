@@ -210,4 +210,102 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
       kind: "malformed_response",
     });
   });
+
+  describe("whitespace normalisation", () => {
+    // The approved read model refuses control characters, and newlines are
+    // control characters. A model asked for two sentences may still answer in
+    // two paragraphs; that is a formatting difference, not a bad answer.
+    const sqlScope: RetrievalScope = {
+      kind: "sql_source",
+      reference: { scopeId: "scope_payments", scopeVersion: "scpv_a" },
+      connector: "postgres.main",
+      table: "payments",
+      columns: ["status", "failed_reason"],
+    };
+
+    async function meaningFrom(answerOverrides: Record<string, unknown>) {
+      return generator(async () =>
+        chatResponse(JSON.stringify({ ...answer, ...answerOverrides })),
+      ).generate(request);
+    }
+
+    it("folds a multi-line description into one line that grounds", async () => {
+      const meaning = await meaningFrom({
+        description: "결제 상태를 담는다.\n\n실패 사유도 함께 담는다.",
+      });
+
+      expect(meaning.description).toBe(
+        "결제 상태를 담는다. 실패 사유도 함께 담는다.",
+      );
+      expect(
+        groundCardVersion(coordinate, [sqlScope], meaning),
+      ).toEqual({ outcome: "validated" });
+    });
+
+    it("replaces a newline with a space instead of dropping it", async () => {
+      // Dropping would join the words on either side into one.
+      const meaning = await meaningFrom({
+        description: "payment\nstatus",
+      });
+
+      expect(meaning.description).toBe("payment status");
+    });
+
+    it("folds tabs and runs of spaces", async () => {
+      const meaning = await meaningFrom({
+        description: "결제\t상태와    실패 사유",
+      });
+
+      expect(meaning.description).toBe("결제 상태와 실패 사유");
+    });
+
+    it("normalises questions, aliases, and keywords too", async () => {
+      const meaning = await meaningFrom({
+        representativeQuestions: ["결제가\n왜 실패했나요?"],
+        aliases: ["payment\thistory"],
+        keywords: ["FAILED\nREASON"],
+      });
+
+      expect(meaning.representativeQuestions).toEqual([
+        "결제가 왜 실패했나요?",
+      ]);
+      expect(meaning.aliases).toEqual(["payment history"]);
+      expect(meaning.keywords).toEqual(["failed reason"]);
+    });
+
+    it("still fails on a control character that is not whitespace", async () => {
+      // A NUL is not a formatting difference; it says the answer is broken.
+      const failed = meaningFrom({ description: "결제\u0000상태" });
+
+      await expect(failed).resolves.toMatchObject({
+        description: "결제\u0000상태",
+      });
+      const meaning = await failed;
+      expect(
+        groundCardVersion(coordinate, [sqlScope], meaning).outcome,
+      ).toBe("rejected");
+    });
+
+    it("refuses a description that is only whitespace", async () => {
+      const failed = meaningFrom({ description: "\n\t  " });
+
+      await expect(failed).rejects.toMatchObject({
+        kind: "malformed_response",
+      });
+    });
+
+    it("does not let folding slip a value past the length limit", async () => {
+      // Folding shortens the text, so a value that was over the limit only
+      // because of its whitespace may now fit. One that is genuinely too long
+      // still has to be refused by grounding rather than trimmed here.
+      const meaning = await meaningFrom({
+        description: "가".repeat(1_025),
+      });
+
+      expect(meaning.description).toHaveLength(1_025);
+      expect(
+        groundCardVersion(coordinate, [sqlScope], meaning).outcome,
+      ).toBe("rejected");
+    });
+  });
 });
