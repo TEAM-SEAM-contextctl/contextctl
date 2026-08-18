@@ -275,8 +275,11 @@ function readMeaning(content: string): CardMeaning {
   }
 
   const record = parsed as Record<string, unknown>;
-  const description = record["description"];
-  if (typeof description !== "string" || description.trim() === "") {
+  const description =
+    typeof record["description"] === "string"
+      ? collapseWhitespace(record["description"])
+      : record["description"];
+  if (typeof description !== "string" || description === "") {
     throw new CardMeaningGenerationError(
       "malformed_response",
       "model answer had no description",
@@ -296,7 +299,7 @@ function readMeaning(content: string): CardMeaning {
   }
 
   return {
-    description: description.trim(),
+    description,
     representativeQuestions,
     aliases: readStrings(record["aliases"]),
     keywords: readStrings(record["keywords"]).map((keyword) =>
@@ -320,8 +323,32 @@ function readStrings(value: unknown): readonly string[] {
   }
   return value
     .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim())
+    .map(collapseWhitespace)
     .filter((entry) => entry !== "");
+}
+
+/**
+ * Folds the whitespace a model writes into single spaces.
+ *
+ * The approved read model refuses control characters, and newlines and tabs are
+ * control characters. A model asked for one or two sentences may still answer in
+ * two paragraphs, and that answer would be stored as a rejected version even
+ * though nothing about it was wrong: the fallback generator only reacts to a
+ * failed call, so a successful one that reads badly has nowhere to go.
+ *
+ * Newlines become spaces rather than being dropped, because dropping them joins
+ * the words on either side into one. This changes the shape of the text and not
+ * its content, which is why it is done here while an over-length value is still
+ * refused — there, content would go missing.
+ *
+ * Only whitespace is folded. A NUL or an escape byte is not a formatting
+ * difference, it says the answer is broken, and `readMeaning` still fails on it.
+ */
+function collapseWhitespace(value: string): string {
+  return value
+    .replace(/[\t\n\r\f\v\u0085\u2028\u2029]+/gu, " ")
+    .replace(/ {2,}/gu, " ")
+    .trim();
 }
 
 function formatValue(value: PublishedFact["value"]): string {
