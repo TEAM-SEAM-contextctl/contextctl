@@ -5,6 +5,7 @@ import {
   appendCardVersion,
   createCardVersionHistory,
   getCurrentCardVersion,
+  precedesCurrentCardVersion,
   promoteCardVersion,
   type CardVersion,
 } from "../../src/domain/card-version.js";
@@ -108,5 +109,47 @@ describe("card version history", () => {
     expect(() => promoteCardVersion(history, "cv_missing")).toThrow(
       CardVersionInvariantError,
     );
+  });
+
+  describe("precedesCurrentCardVersion", () => {
+    function historyOf(currentId: string) {
+      let history = createCardVersionHistory("card_1");
+      for (const id of ["cv_1", "cv_2", "cv_3"]) {
+        history = appendCardVersion(
+          history,
+          buildVersion("card_1", id, "validated"),
+        );
+      }
+      return promoteCardVersion(history, currentId);
+    }
+
+    it("sees an earlier version as preceding the current one", () => {
+      expect(precedesCurrentCardVersion(historyOf("cv_3"), "cv_1")).toBe(true);
+    });
+
+    it("does not treat the current version as preceding itself", () => {
+      expect(precedesCurrentCardVersion(historyOf("cv_2"), "cv_2")).toBe(false);
+    });
+
+    it("does not treat a later version as preceding", () => {
+      expect(precedesCurrentCardVersion(historyOf("cv_2"), "cv_3")).toBe(false);
+    });
+
+    it("answers false when the Card serves nothing", () => {
+      // Nothing is current, so there is no "back" to compare against.
+      let history = createCardVersionHistory("card_1");
+      history = appendCardVersion(
+        history,
+        buildVersion("card_1", "cv_1", "validated"),
+      );
+
+      expect(precedesCurrentCardVersion(history, "cv_1")).toBe(false);
+    });
+
+    it("answers false for a version outside the history", () => {
+      expect(precedesCurrentCardVersion(historyOf("cv_2"), "cv_missing")).toBe(
+        false,
+      );
+    });
   });
 });

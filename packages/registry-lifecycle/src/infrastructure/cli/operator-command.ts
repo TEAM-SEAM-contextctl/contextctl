@@ -2,6 +2,7 @@ import {
   approveCardVersion,
   disableCard,
   rejectCardVersion,
+  rollbackCardVersion,
   type CardDecisionPorts,
   type OperatorDecision,
 } from "../../application/approve-card-version.js";
@@ -51,6 +52,7 @@ const USAGE = [
   "usage:",
   "  approve <card-id> <version-id> --by <operator> [--note <text>]",
   "  reject  <card-id> <version-id> --by <operator> [--note <text>]",
+  "  rollback <card-id> <version-id> --by <operator> [--note <text>]",
   "  disable <card-id> --by <operator> [--note <text>]",
   "  reachability [--state <state>]",
 ].join("\n");
@@ -65,7 +67,13 @@ const REACHABILITY_STATES: readonly ScopeReachabilityState[] = [
 ];
 
 /** Commands that name a version, and therefore take two operands. */
-const VERSION_COMMANDS = { approve: approveCardVersion, reject: rejectCardVersion };
+const VERSION_COMMANDS = {
+  approve: approveCardVersion,
+  reject: rejectCardVersion,
+  // Rollback is a pointer move like approve, and refuses a target that does not
+  // precede the current version. Same shape, so it belongs in the same table.
+  rollback: rollbackCardVersion,
+};
 
 type VersionCommand = keyof typeof VERSION_COMMANDS;
 
@@ -121,13 +129,7 @@ export async function runOperatorCommand(
       return usageError("version id is required");
     }
     await VERSION_COMMANDS[command](ports, cardId, versionId, decision);
-    return {
-      status: "ok",
-      output:
-        command === "approve"
-          ? `approved ${versionId} as the current version of ${cardId}`
-          : `rejected ${versionId} of ${cardId}`,
-    };
+    return { status: "ok", output: describeDone(command, cardId, versionId) };
   } catch (error) {
     // A missing Card or a refused promotion is the operator being told no, not
     // a crash: report it and let the daemon turn the status into an exit code.
@@ -233,6 +235,27 @@ function formatScopeList(
       return `  ${scope.reference.scopeId}@${scope.reference.scopeVersion} (${scope.publicationId})${reason}`;
     }),
   ].join("\n");
+}
+
+function describeDone(
+  command: VersionCommand,
+  cardId: string,
+  versionId: string,
+): string {
+  switch (command) {
+    case "approve":
+      return `approved ${versionId} as the current version of ${cardId}`;
+    case "reject":
+      return `rejected ${versionId} of ${cardId}`;
+    case "rollback":
+      // Says which direction the pointer moved, so the operator can see the
+      // rollback took effect rather than inferring it from silence.
+      return `rolled ${cardId} back to ${versionId}`;
+    default: {
+      const unreachable: never = command;
+      throw new Error(`unknown command: ${String(unreachable)}`);
+    }
+  }
 }
 
 function isVersionCommand(command: string): command is VersionCommand {
