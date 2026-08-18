@@ -8,12 +8,20 @@ import {
   type PublicationReady,
 } from "@contextctl/contracts";
 
-import { canonicalJson } from "../domain/revision-identity.js";
+import {
+  canonicalDigest,
+  canonicalJson,
+} from "../domain/revision-identity.js";
 import type {
   CommitIngestionPublicationResult,
   IngestionPublicationStore,
+  PreparePublicationRecoveryIntentResult,
+  PublicationRecoveryIntent,
 } from "../ports/markdown-publication.js";
-import { IngestionPublicationStoreConflict } from "../ports/markdown-publication.js";
+import {
+  IngestionPublicationCommitIncomplete,
+  IngestionPublicationStoreConflict,
+} from "../ports/markdown-publication.js";
 import { inIngestionTransaction } from "./sqlite-ingestion-database.js";
 
 interface PublicationRow {
@@ -25,10 +33,100 @@ interface PublicationRow {
   readonly ready_notified: number;
 }
 
+interface RecoveryIntentRow {
+  readonly publication_id: string;
+  readonly source_id: string;
+  readonly observation_id: string;
+  readonly previous_publication_id: string | null;
+  readonly publication_json: string;
+  readonly produced_at: string;
+  readonly fingerprint: string;
+  readonly committed: number;
+}
+
 export class SqliteIngestionPublicationStore
   implements IngestionPublicationStore
 {
   constructor(private readonly database: DatabaseSync) {}
+
+  async prepareRecoveryIntent(
+    input: IngestionPublication,
+  ): Promise<PreparePublicationRecoveryIntentResult> {
+    let publication: IngestionPublication;
+    try {
+      publication = cloneAndParse(input);
+    } catch {
+      throw new IngestionPublicationStoreConflict();
+    }
+    const canonicalPayload = canonicalJson(publication);
+    try {
+      return inIngestionTransaction(this.database, () => {
+        const existing = this.#findIntentRow(publication.publicationId);
+        if (existing !== undefined) {
+          const intent = parseIntentRow(existing);
+          if (intent.canonicalPayload !== canonicalPayload) {
+            throw new IngestionPublicationStoreConflict();
+          }
+          return { status: "already_prepared", intent };
+        }
+        const pending = this.#findPendingIntentRow(publication.sourceId);
+        if (pending !== undefined) {
+          throw new IngestionPublicationStoreConflict();
+        }
+        const previous = this.#latestPublication(publication.sourceId);
+        assertTransition(previous, publication);
+        this.database
+          .prepare(
+            `INSERT INTO publication_recovery_intents (
+               publication_id, source_id, observation_id,
+               previous_publication_id, publication_json, produced_at,
+               fingerprint, committed
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+          )
+          .run(
+            publication.publicationId,
+            publication.sourceId,
+            publication.observationId,
+            publication.previousPublicationId ?? null,
+            canonicalPayload,
+            publication.producedAt,
+            canonicalDigest(publication),
+          );
+        return {
+          status: "prepared",
+          intent: {
+            publication: structuredClone(publication),
+            canonicalPayload,
+            state: "pending",
+          },
+        };
+      });
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+  }
+
+  async findRecoveryIntent(
+    publicationId: string,
+  ): Promise<PublicationRecoveryIntent | undefined> {
+    try {
+      const row = this.#findIntentRow(publicationId);
+      return row === undefined ? undefined : parseIntentRow(row);
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+  }
+
+  async pendingRecoveryIntentForSource(
+    sourceId: string,
+  ): Promise<PublicationRecoveryIntent | undefined> {
+    try {
+      const row = this.#findPendingIntentRow(sourceId);
+      return row === undefined ? undefined : parseIntentRow(row);
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+  }
 
   async commitReady(
     input: IngestionPublication,
@@ -41,32 +139,25 @@ export class SqliteIngestionPublicationStore
     }
     try {
       return inIngestionTransaction(this.database, () => {
+        const intentRow = this.#findIntentRow(publication.publicationId);
+        if (intentRow === undefined) {
+          throw new IngestionPublicationCommitIncomplete();
+        }
+        const intent = parseIntentRow(intentRow);
+        if (intent.canonicalPayload !== canonicalJson(publication)) {
+          throw new IngestionPublicationStoreConflict();
+        }
         const existing = this.#findRow(publication.publicationId);
         if (existing !== undefined) {
           const stored = parseRow(existing);
           if (canonicalJson(stored) !== canonicalJson(publication)) {
             throw new IngestionPublicationStoreConflict();
           }
+          this.#markIntentCommitted(publication.publicationId);
           return { status: "already_published", publication: stored };
         }
-        const latest = this.database
-          .prepare(
-            `SELECT publications.*
-               FROM latest_ingestion_publications latest
-               JOIN ingestion_publications publications
-                 ON publications.publication_id = latest.publication_id
-              WHERE latest.source_id = ?`,
-          )
-          .get(publication.sourceId) as PublicationRow | undefined;
-        const previous = latest === undefined ? undefined : parseRow(latest);
-        if (publication.previousPublicationId !== previous?.publicationId) {
-          throw new IngestionPublicationStoreConflict();
-        }
-        try {
-          assertIngestionPublicationTransition(previous, publication);
-        } catch {
-          throw new IngestionPublicationStoreConflict();
-        }
+        const previous = this.#latestPublication(publication.sourceId);
+        assertTransition(previous, publication);
         for (const unit of publication.knowledgeUnits) {
           for (const scope of unit.publishedScopes) {
             const definition = canonicalJson(scope);
@@ -114,14 +205,14 @@ export class SqliteIngestionPublicationStore
                SET publication_id = excluded.publication_id`,
           )
           .run(publication.sourceId, publication.publicationId);
+        this.#markIntentCommitted(publication.publicationId);
         return {
           status: "published",
           publication: structuredClone(publication),
         };
       });
     } catch (error) {
-      if (error instanceof IngestionPublicationStoreConflict) throw error;
-      throw new IngestionPublicationStoreUnavailable();
+      throw mapStoreError(error);
     }
   }
 
@@ -207,6 +298,49 @@ export class SqliteIngestionPublicationStore
       )
       .get(publicationId) as PublicationRow | undefined;
   }
+
+  #findIntentRow(publicationId: string): RecoveryIntentRow | undefined {
+    return this.database
+      .prepare(
+        "SELECT * FROM publication_recovery_intents WHERE publication_id = ?",
+      )
+      .get(publicationId) as RecoveryIntentRow | undefined;
+  }
+
+  #findPendingIntentRow(sourceId: string): RecoveryIntentRow | undefined {
+    return this.database
+      .prepare(
+        `SELECT * FROM publication_recovery_intents
+         WHERE source_id = ? AND committed = 0`,
+      )
+      .get(sourceId) as RecoveryIntentRow | undefined;
+  }
+
+  #latestPublication(sourceId: string): IngestionPublication | undefined {
+    const latest = this.database
+      .prepare(
+        `SELECT publications.*
+           FROM latest_ingestion_publications latest
+           JOIN ingestion_publications publications
+             ON publications.publication_id = latest.publication_id
+          WHERE latest.source_id = ?`,
+      )
+      .get(sourceId) as PublicationRow | undefined;
+    return latest === undefined ? undefined : parseRow(latest);
+  }
+
+  #markIntentCommitted(publicationId: string): void {
+    const result = this.database
+      .prepare(
+        `UPDATE publication_recovery_intents
+         SET committed = 1
+         WHERE publication_id = ?`,
+      )
+      .run(publicationId);
+    if (result.changes !== 1) {
+      throw new IngestionPublicationStoreCorrupt();
+    }
+  }
 }
 
 export class IngestionPublicationStoreUnavailable extends Error {
@@ -249,14 +383,58 @@ function parseRow(row: PublicationRow): IngestionPublication {
   return publication;
 }
 
+function parseIntentRow(row: RecoveryIntentRow): PublicationRecoveryIntent {
+  let publication: IngestionPublication;
+  try {
+    publication = parseIngestionPublication(
+      JSON.parse(row.publication_json) as unknown,
+    );
+  } catch {
+    throw new IngestionPublicationStoreCorrupt();
+  }
+  if (
+    publication.publicationId !== row.publication_id ||
+    publication.sourceId !== row.source_id ||
+    publication.observationId !== row.observation_id ||
+    (publication.previousPublicationId ?? null) !==
+      row.previous_publication_id ||
+    publication.producedAt !== row.produced_at ||
+    canonicalJson(publication) !== row.publication_json ||
+    canonicalDigest(publication) !== row.fingerprint ||
+    (row.committed !== 0 && row.committed !== 1)
+  ) {
+    throw new IngestionPublicationStoreCorrupt();
+  }
+  return {
+    publication,
+    canonicalPayload: row.publication_json,
+    state: row.committed === 1 ? "committed" : "pending",
+  };
+}
+
 function cloneAndParse(input: IngestionPublication): IngestionPublication {
   return parseIngestionPublication(
     JSON.parse(JSON.stringify(input)) as unknown,
   );
 }
 
+function assertTransition(
+  previous: IngestionPublication | undefined,
+  publication: IngestionPublication,
+): void {
+  if (publication.previousPublicationId !== previous?.publicationId) {
+    throw new IngestionPublicationStoreConflict();
+  }
+  try {
+    assertIngestionPublicationTransition(previous, publication);
+  } catch {
+    throw new IngestionPublicationStoreConflict();
+  }
+}
+
 function mapStoreError(error: unknown): Error {
   if (
+    error instanceof IngestionPublicationCommitIncomplete ||
     error instanceof IngestionPublicationStoreConflict ||
     error instanceof IngestionPublicationStoreCorrupt ||
     error instanceof IngestionPublicationStoreUnavailable

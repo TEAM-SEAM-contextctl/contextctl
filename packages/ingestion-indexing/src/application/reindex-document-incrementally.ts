@@ -30,7 +30,17 @@ export interface ReindexDocumentCommand {
   readonly previous?: DocumentIndexingSnapshot;
   readonly current: DocumentIndexingSnapshot;
   readonly semanticScopes?: readonly SemanticPublishedScopeInput[];
+  /** Timestamp frozen in an existing recovery intent during a retry. */
+  readonly publishedAt?: string;
+  readonly beforeCatalogCommit?: (
+    prepared: PreparedReindexDocumentPublication,
+  ) => Promise<void>;
   readonly signal?: AbortSignal;
+}
+
+export interface PreparedReindexDocumentPublication {
+  readonly publication: PublishedIndexVersion;
+  readonly inheritableUnitIds: readonly string[];
 }
 
 /** Why previously published vectors could not be copied into this version. */
@@ -113,6 +123,11 @@ export class IncrementalDocumentReindexer {
       reusable: harvest.reusable,
       ...(command.signal === undefined ? {} : { signal: command.signal }),
     });
+    const inheritableUnitIds =
+      command.previous === undefined
+        ? []
+        : inheritableScopeUnitIds({ previous: command.previous, plan });
+    const beforeCatalogCommit = command.beforeCatalogCommit;
     const committed = await this.#dependencies.indexPublisher.publish({
       stateNamespaceId: command.stateNamespaceId,
       document: command.current.document,
@@ -122,6 +137,18 @@ export class IncrementalDocumentReindexer {
       embeddingProfile: embedded.profile,
       connectorId: command.connectorId,
       securityDomain: command.securityDomain,
+      ...(command.publishedAt === undefined
+        ? {}
+        : { publishedAt: command.publishedAt }),
+      ...(beforeCatalogCommit === undefined
+        ? {}
+        : {
+            beforeCatalogCommit: (publication) =>
+              beforeCatalogCommit({
+                publication,
+                inheritableUnitIds,
+              }),
+          }),
       ...(command.semanticScopes === undefined
         ? {}
         : { semanticScopes: command.semanticScopes }),
@@ -144,10 +171,7 @@ export class IncrementalDocumentReindexer {
       ...(head === undefined
         ? {}
         : { previousIndexVersion: head.manifest.indexVersion }),
-      inheritableUnitIds:
-        command.previous === undefined
-          ? []
-          : inheritableScopeUnitIds({ previous: command.previous, plan }),
+      inheritableUnitIds,
       metrics: {
         strategy: plan.strategy,
         plannedEmbeddingCallCount: plan.metrics.embeddingCallCount,
