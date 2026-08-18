@@ -1,4 +1,7 @@
-import type { IngestionPublication, PublicationId } from "@contextctl/contracts";
+import type {
+  IngestionPublicationV2 as IngestionPublication,
+  PublicationId,
+} from "@contextctl/contracts";
 
 /** Fetches the immutable Publication a PublicationReady envelope points to. */
 export interface PublicationRepository {

@@ -1,6 +1,6 @@
 import type {
-  PublishedFact,
-  PublishedSourceCoordinate,
+  PublishedFactV2 as PublishedFact,
+  PublishedSourceCoordinateV2 as PublishedSourceCoordinate,
 } from "@contextctl/contracts";
 
 import type { CardMeaning } from "../domain/context-card.js";
@@ -14,7 +14,7 @@ import type {
  * behind it.
  *
  * This is not an attempt at good prose. It restates what was observed —
- * coordinates and evidence — in a fixed shape, so the wording is flat and
+ * coordinates and facts — in a fixed shape, so the wording is flat and
  * obviously mechanical. What it buys is that Registry can consume a Publication
  * at all: `claimPublication` requires this port, so without an implementation
  * no Card is ever created. It also gives the pipeline something to fall back to
@@ -27,26 +27,26 @@ import type {
  */
 export class DeterministicCardMeaningGenerator implements CardMeaningGenerator {
   async generate(request: CardMeaningRequest): Promise<CardMeaning> {
-    const { coordinate, evidence } = request;
+    const { coordinate, facts } = request;
 
     return {
-      description: describe(coordinate, evidence),
+      description: describe(coordinate, facts),
       representativeQuestions: [askAbout(coordinate)],
       aliases: aliasesFor(coordinate),
-      keywords: keywordsFor(coordinate, evidence),
+      keywords: keywordsFor(coordinate, facts),
     };
   }
 }
 
 function describe(
   coordinate: PublishedSourceCoordinate,
-  evidence: readonly PublishedFact[],
+  facts: readonly PublishedFact[],
 ): string {
-  const facts = evidence
+  const stated = facts
     .map((fact) => `${fact.name}: ${formatValue(fact.value)}`)
     .join(" · ");
   const subject = subjectOf(coordinate);
-  return facts === "" ? subject : `${subject} ${facts}`;
+  return stated === "" ? subject : `${subject} ${stated}`;
 }
 
 function subjectOf(coordinate: PublishedSourceCoordinate): string {
@@ -108,11 +108,11 @@ function aliasesFor(coordinate: PublishedSourceCoordinate): readonly string[] {
 /** Identifier tokens a query might carry, taken apart on separators. */
 function keywordsFor(
   coordinate: PublishedSourceCoordinate,
-  evidence: readonly PublishedFact[],
+  facts: readonly PublishedFact[],
 ): readonly string[] {
   const sources = [
     ...aliasesFor(coordinate),
-    ...evidence.map((fact) => fact.name),
+    ...facts.map((fact) => fact.name),
     ...(coordinate.kind === "sql_table" ? coordinate.columns : []),
     ...(coordinate.kind === "http_operation" ? [coordinate.method] : []),
   ];

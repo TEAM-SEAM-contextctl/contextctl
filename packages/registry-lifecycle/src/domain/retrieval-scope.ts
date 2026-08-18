@@ -2,10 +2,11 @@ import type {
   ConnectorId,
   DocumentId,
   DocumentIndexId,
+  HttpParameterRefV2 as HttpParameterRef,
   IndexVersion,
   PublicationScopeId,
   PublicationScopeVersion,
-  PublishedScope,
+  PublishedScopeV2 as PublishedScope,
   SemanticUnitId,
   SourceId,
 } from "@contextctl/contracts";
@@ -17,19 +18,19 @@ export interface RetrievalScopeReference {
 }
 
 /**
- * Immutable index reference carried in the approved Card read model. The
- * connector and access handle stay opaque: Registry never interprets them, and
- * they reach the physical index only through Selection's internal fulfillment
- * target, which the daemon adapter hands to Indexing's search surface. They are
- * never projected into the public RetrievalGuide or any consumer transport.
+ * Immutable, purely logical index reference in the approved Card read model.
+ *
+ * There is no connector or access handle here. Publication v2 stopped carrying
+ * them, and Indexing resolves the physical binding from its own durable
+ * catalog by this reference, so no credential-bearing value passes through
+ * Registry at all. The invariant is structural rather than a rule anyone has
+ * to remember.
  */
 export interface DocumentIndexRef {
   readonly documentIndexId: DocumentIndexId;
   readonly sourceId: SourceId;
   readonly documentId: DocumentId;
   readonly indexVersion: IndexVersion;
-  readonly connectorId: ConnectorId;
-  readonly accessHandle: string;
 }
 
 /** Whole document, or the specific semantic units Registry admitted. */
@@ -51,6 +52,11 @@ export interface SqlSourceScope {
   readonly kind: "sql_source";
   readonly reference: RetrievalScopeReference;
   readonly connector: ConnectorId;
+  /**
+   * Required, not optional. Two schemas can hold a table of the same name, and
+   * without this the two collapse into one Scope that names neither.
+   */
+  readonly schema: string;
   readonly table: string;
   readonly columns: readonly string[];
 }
@@ -59,8 +65,15 @@ export interface HttpSourceScope {
   readonly kind: "http_source";
   readonly reference: RetrievalScopeReference;
   readonly connector: ConnectorId;
-  readonly method: string;
+  /** Read-only for now, and the contract pins it rather than trusting callers. */
+  readonly method: "GET";
   readonly path: string;
+  readonly operationId: string | undefined;
+  /**
+   * Path and query parameters the operation accepts. Part of the Scope
+   * definition: two operations on one path differ by these alone.
+   */
+  readonly parameters: readonly HttpParameterRef[];
 }
 
 /**
@@ -89,8 +102,6 @@ export function translatePublishedScope(scope: PublishedScope): RetrievalScope {
         sourceId: scope.documentIndex.sourceId,
         documentId: scope.documentIndex.documentId,
         indexVersion: scope.documentIndex.indexVersion,
-        connectorId: scope.documentIndex.connectorId,
-        accessHandle: scope.documentIndex.accessHandle,
       },
       selection:
         scope.selector.kind === "document"
@@ -107,6 +118,7 @@ export function translatePublishedScope(scope: PublishedScope): RetrievalScope {
       kind: "sql_source",
       reference,
       connector: scope.connector,
+      schema: scope.schema,
       table: scope.table,
       columns: [...scope.columns],
     };
@@ -118,5 +130,7 @@ export function translatePublishedScope(scope: PublishedScope): RetrievalScope {
     connector: scope.connector,
     method: scope.method,
     path: scope.path,
+    operationId: scope.operationId,
+    parameters: [...scope.parameters],
   };
 }

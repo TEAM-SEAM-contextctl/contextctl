@@ -232,7 +232,7 @@ export function collectScopeObservations(
   for (const sighting of sightings) {
     const { publicationId, ...carrier } = sighting;
     const reference = carrier.scope.reference;
-    const key = `${reference.scopeId} ${reference.scopeVersion}`;
+    const key = `${reference.scopeId}\u0000${reference.scopeVersion}`;
     const existing = observations.get(key);
 
     if (existing === undefined) {
@@ -475,21 +475,37 @@ function scopeShape(scope: RetrievalScope): string {
       index.sourceId,
       index.documentId,
       index.indexVersion,
-      index.connectorId,
       selection,
     ].join("|");
   }
 
   if (scope.kind === "sql_source") {
+    // The schema belongs in the comparison: two schemas can hold a table of the
+    // same name, and leaving it out would call those two Scopes identical.
     return [
       scope.kind,
       scope.connector,
+      scope.schema,
       scope.table,
       [...scope.columns].sort().join(","),
     ].join("|");
   }
 
-  return [scope.kind, scope.connector, scope.method, scope.path].join("|");
+  // Operation ID and parameters are part of the Scope definition, so two
+  // operations that differ only by their parameters must not compare equal.
+  return [
+    scope.kind,
+    scope.connector,
+    scope.method,
+    scope.path,
+    scope.operationId ?? "",
+    scope.parameters
+      .map((parameter) =>
+        [parameter.location, parameter.name, parameter.required].join(":"),
+      )
+      .sort()
+      .join(","),
+  ].join("|");
 }
 
 function latestDecisionAt(

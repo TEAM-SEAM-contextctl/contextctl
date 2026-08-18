@@ -1,4 +1,4 @@
-import type { PublishedSourceCoordinate } from "@contextctl/contracts";
+import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@contextctl/contracts";
 
 import type { CardMeaning } from "./context-card.js";
 import type { RetrievalScope } from "./retrieval-scope.js";

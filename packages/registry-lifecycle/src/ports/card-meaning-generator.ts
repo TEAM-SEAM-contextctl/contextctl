@@ -1,11 +1,20 @@
-import type { PublishedFact, PublishedSourceCoordinate } from "@contextctl/contracts";
+import type {
+  PublishedFactV2 as PublishedFact,
+  PublishedSourceCoordinateV2 as PublishedSourceCoordinate,
+} from "@contextctl/contracts";
 
 import type { CardMeaning } from "../domain/context-card.js";
 
-/** Observed input a generator may describe. Carries no raw source payload. */
+/**
+ * Observed input a generator may describe. Carries no raw source payload.
+ *
+ * `facts` are the bounded, allowlisted facts Publication v2 delivers. Their
+ * names come from a closed vocabulary, which is what lets grounding check a
+ * generated identifier against something rather than against anything.
+ */
 export interface CardMeaningRequest {
   readonly coordinate: PublishedSourceCoordinate;
-  readonly evidence: readonly PublishedFact[];
+  readonly facts: readonly PublishedFact[];
 }
 
 /**

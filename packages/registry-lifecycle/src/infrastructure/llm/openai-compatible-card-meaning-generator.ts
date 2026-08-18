@@ -1,6 +1,6 @@
 import type {
-  PublishedFact,
-  PublishedSourceCoordinate,
+  PublishedFactV2 as PublishedFact,
+  PublishedSourceCoordinateV2 as PublishedSourceCoordinate,
 } from "@contextctl/contracts";
 
 import type { CardMeaning } from "../../domain/context-card.js";
@@ -167,7 +167,7 @@ const SYSTEM_PROMPT = [
   "Answer with a single JSON object and nothing else, using these keys:",
   '"description" (one or two sentences), "representativeQuestions" (1-5 strings),',
   '"aliases" (0-5 strings), "keywords" (0-10 lowercase strings).',
-  "Use only the coordinate and evidence you are given.",
+  "Use only the coordinate and facts you are given.",
   "Never invent a table, column, document, path, or field that does not appear there.",
 ].join("\n");
 
@@ -176,9 +176,9 @@ function buildPrompt(request: CardMeaningRequest): string {
     "Coordinate:",
     describeCoordinate(request.coordinate),
     "",
-    "Evidence:",
-    ...request.evidence.map(
-      (fact) => `- ${fact.name}: ${formatValue(fact.value)}`,
+    "Facts:",
+    ...request.facts.map(
+      (fact: PublishedFact) => `- ${fact.name}: ${formatValue(fact.value)}`,
     ),
   ].join("\n");
 }
