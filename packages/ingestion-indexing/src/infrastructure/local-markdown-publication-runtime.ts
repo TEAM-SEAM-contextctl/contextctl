@@ -1,4 +1,8 @@
 import { EmbeddingPipeline, type EmbeddingPipelinePolicy } from "../application/embed-managed-chunks.js";
+import {
+  FailedIndexStagingCleanup,
+  type FailedIndexStagingCleanupPolicy,
+} from "../application/cleanup-failed-index-staging.js";
 import { ManagedDocumentSearch } from "../application/managed-document-search.js";
 import { MarkdownCapture } from "../application/markdown-capture.js";
 import { MarkdownPublicationWorkflow } from "../application/markdown-publication-workflow.js";
@@ -15,6 +19,7 @@ import type {
   MarkdownPublicationCheckpointStore,
 } from "../ports/markdown-publication.js";
 import type { IndexPublicationStoreV2 as IndexPublicationStore } from "../ports/index-publication-store.js";
+import type { IndexStagingAttemptStore } from "../ports/index-staging-attempt.js";
 import type {
   CredentialResolver,
   SourceConfigurationResolver,
@@ -23,6 +28,7 @@ import type {
 import type { VectorIndexPort } from "../ports/vector-index.js";
 import { DeterministicEmbeddingAdapter } from "./deterministic-embedding-adapter.js";
 import { InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore } from "./in-memory-index-publication-store.js";
+import { InMemoryIndexStagingAttemptStore } from "./in-memory-index-staging-attempt-store.js";
 import { InMemoryIngestionPublicationStore } from "./in-memory-ingestion-publication-store.js";
 import { InMemoryMarkdownPublicationCheckpointStore } from "./in-memory-markdown-publication-checkpoint-store.js";
 import { InMemoryMarkdownPublicationEventSink } from "./in-memory-markdown-publication-event-sink.js";
@@ -49,6 +55,9 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly checkpoints?: MarkdownPublicationCheckpointStore;
   readonly publications?: IngestionPublicationStore;
   readonly indexPublications?: IndexPublicationStore;
+  /** Required with a supplied durable Index Catalog. */
+  readonly stagingAttempts?: IndexStagingAttemptStore;
+  readonly stagingCleanupPolicy?: FailedIndexStagingCleanupPolicy;
   readonly embeddingPolicy?: EmbeddingPipelinePolicy;
   readonly defaultSourceTimeoutMs?: number;
   readonly sourceIds?: SourceIdGenerator;
@@ -63,6 +72,8 @@ export interface LocalMarkdownPublicationRuntime {
   readonly readyNotifications: InMemoryPublicationReadyNotifier;
   readonly events: InMemoryMarkdownPublicationEventSink;
   readonly indexPublications: IndexPublicationStore;
+  readonly stagingAttempts: IndexStagingAttemptStore;
+  readonly stagingCleanup: FailedIndexStagingCleanup;
   readonly vectorIndex: VectorIndexPort;
 }
 
@@ -73,6 +84,14 @@ export interface LocalMarkdownPublicationRuntime {
 export function createLocalMarkdownPublicationRuntime(
   options: LocalMarkdownPublicationRuntimeOptions,
 ): LocalMarkdownPublicationRuntime {
+  if (
+    options.indexPublications !== undefined &&
+    options.stagingAttempts === undefined
+  ) {
+    throw new TypeError(
+      "a supplied Index Catalog requires a shared staging attempt store",
+    );
+  }
   const clock = options.clock ?? (() => new Date().toISOString());
   const configurations = new LocalValueResolver(options.configurations);
   const credentials = new LocalValueResolver(options.credentials ?? {});
@@ -96,6 +115,11 @@ export function createLocalMarkdownPublicationRuntime(
   const events = new InMemoryMarkdownPublicationEventSink();
   const indexPublications =
     options.indexPublications ?? new InMemoryIndexPublicationStore();
+  const stagingAttempts =
+    options.stagingAttempts ?? new InMemoryIndexStagingAttemptStore();
+  const vectorIndexes = new StaticVectorIndexConnectorRegistry([
+    { connectorId: options.connectorId, vectorIndex },
+  ]);
   const parser = new RemarkMarkdownParser();
   const embeddingPipeline = new EmbeddingPipeline({
     provider: embeddingProvider,
@@ -106,6 +130,7 @@ export function createLocalMarkdownPublicationRuntime(
   const indexPublisher = new DocumentIndexPublisher({
     vectorIndex,
     publications: indexPublications,
+    stagingAttempts,
     clock,
   });
   const workflow = new MarkdownPublicationWorkflow({
@@ -141,9 +166,7 @@ export function createLocalMarkdownPublicationRuntime(
           provider: embeddingProvider,
         },
       ]),
-      vectorIndexes: new StaticVectorIndexConnectorRegistry([
-        { connectorId: options.connectorId, vectorIndex },
-      ]),
+      vectorIndexes,
       publications: indexPublications,
     }),
     checkpoints,
@@ -151,6 +174,16 @@ export function createLocalMarkdownPublicationRuntime(
     readyNotifications,
     events,
     indexPublications,
+    stagingAttempts,
+    stagingCleanup: new FailedIndexStagingCleanup({
+      attempts: stagingAttempts,
+      publications: indexPublications,
+      vectorIndexes,
+      ...(options.stagingCleanupPolicy === undefined
+        ? {}
+        : { policy: options.stagingCleanupPolicy }),
+      clock,
+    }),
     vectorIndex,
   };
 }

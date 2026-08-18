@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-export const INGESTION_DATABASE_SCHEMA_VERSION = 2;
+export const INGESTION_DATABASE_SCHEMA_VERSION = 3;
 
 export interface OpenIngestionDatabaseOptions {
   readonly location: string;
@@ -62,12 +62,25 @@ function migrate(
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     return;
   }
+  if (version === 2) {
+    assertExpectedSchema(database, EXPECTED_SCHEMA_V2);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    inIngestionTransaction(database, () => {
+      createSchemaV3(database);
+      assertExpectedSchema(database);
+      database.exec(
+        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
+      );
+    });
+    return;
+  }
   inIngestionTransaction(database, () => {
     createSchemaV1(database);
     if (version === 1 && hasLegacyState(database)) {
       throw new IngestionDatabaseSchemaError("schema_invalid");
     }
     createSchemaV2(database);
+    createSchemaV3(database);
     database
       .prepare(
         `INSERT INTO ingestion_metadata (
@@ -80,6 +93,31 @@ function migrate(
       `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
     );
   });
+}
+
+function createSchemaV3(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS index_staging_attempts (
+      document_index_id TEXT NOT NULL,
+      index_version TEXT NOT NULL,
+      connector_id TEXT NOT NULL,
+      access_handle TEXT NOT NULL,
+      first_attempted_at TEXT NOT NULL,
+      last_attempted_at TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'publishing', 'cleaning')),
+      owner_lease_id TEXT,
+      owner_expires_at TEXT,
+      PRIMARY KEY (document_index_id, index_version),
+      CHECK (
+        (state = 'pending' AND owner_lease_id IS NULL AND owner_expires_at IS NULL)
+        OR
+        (state <> 'pending' AND owner_lease_id IS NOT NULL AND owner_expires_at IS NOT NULL)
+      )
+    );
+
+    CREATE INDEX IF NOT EXISTS index_staging_attempts_by_eligibility
+      ON index_staging_attempts (last_attempted_at, state, owner_expires_at);
+  `);
 }
 
 function createSchemaV2(database: DatabaseSync): void {
@@ -199,7 +237,7 @@ function readSchemaVersion(database: DatabaseSync): number {
   return row!.user_version as number;
 }
 
-const EXPECTED_SCHEMA = {
+const EXPECTED_SCHEMA_V2 = {
   ingestion_metadata: [
     ["singleton", "INTEGER", 0, 1],
     ["state_namespace_id", "TEXT", 1, 0],
@@ -251,8 +289,27 @@ const EXPECTED_SCHEMA = {
   ],
 } as const;
 
-function assertExpectedSchema(database: DatabaseSync): void {
-  for (const [table, expected] of Object.entries(EXPECTED_SCHEMA)) {
+const EXPECTED_SCHEMA = {
+  ...EXPECTED_SCHEMA_V2,
+  index_staging_attempts: [
+    ["document_index_id", "TEXT", 1, 1],
+    ["index_version", "TEXT", 1, 2],
+    ["connector_id", "TEXT", 1, 0],
+    ["access_handle", "TEXT", 1, 0],
+    ["first_attempted_at", "TEXT", 1, 0],
+    ["last_attempted_at", "TEXT", 1, 0],
+    ["state", "TEXT", 1, 0],
+    ["owner_lease_id", "TEXT", 0, 0],
+    ["owner_expires_at", "TEXT", 0, 0],
+  ],
+} as const;
+
+function assertExpectedSchema(
+  database: DatabaseSync,
+  schema: Readonly<Record<string, readonly (readonly unknown[])[]>> =
+    EXPECTED_SCHEMA,
+): void {
+  for (const [table, expected] of Object.entries(schema)) {
     const rows = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
       readonly name?: unknown;
       readonly type?: unknown;

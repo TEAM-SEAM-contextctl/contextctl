@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { PublishedDocumentScopeV2 as PublishedDocumentScope } from "@contextctl/contracts";
 
 import type { ChunkEmbedding } from "./embed-managed-chunks.js";
@@ -25,6 +27,7 @@ import {
   type IndexManifest,
   type VectorIndexRecord,
 } from "../domain/index-manifest.js";
+import { expirationAfter } from "../domain/index-staging-attempt.js";
 import { canonicalJson } from "../domain/revision-identity.js";
 import { createVectorRecordId } from "../domain/vector-index.js";
 import {
@@ -32,6 +35,7 @@ import {
   type IndexPublicationStoreV2 as IndexPublicationStore,
   type PublishedIndexVersionV2 as PublishedIndexVersion,
 } from "../ports/index-publication-store.js";
+import type { IndexStagingAttemptStore } from "../ports/index-staging-attempt.js";
 import type {
   VectorIndexCompatibilityV2 as VectorIndexCompatibility,
   VectorIndexPort,
@@ -53,13 +57,19 @@ export interface PublishDocumentIndexCommand {
 export interface DocumentIndexPublisherDependencies {
   readonly vectorIndex: VectorIndexPort;
   readonly publications: IndexPublicationStore;
+  readonly stagingAttempts: IndexStagingAttemptStore;
   readonly batchSize?: number;
+  readonly publicationLeaseMs?: number;
   readonly clock?: () => string;
+  readonly leaseIds?: () => string;
 }
+
+export const DEFAULT_INDEX_STAGING_PUBLICATION_LEASE_MS = 15 * 60 * 1_000;
 
 export type DocumentIndexPublicationErrorCode =
   | "conflicting_index_version"
   | "invalid_input"
+  | "staging_version_busy"
   | "staged_record_mismatch";
 
 export class DocumentIndexPublicationError extends Error {
@@ -72,8 +82,11 @@ export class DocumentIndexPublicationError extends Error {
 export class DocumentIndexPublisher {
   readonly #vectorIndex: VectorIndexPort;
   readonly #publications: IndexPublicationStore;
+  readonly #stagingAttempts: IndexStagingAttemptStore;
   readonly #batchSize: number;
+  readonly #publicationLeaseMs: number;
   readonly #clock: () => string;
+  readonly #leaseIds: () => string;
 
   constructor(dependencies: DocumentIndexPublisherDependencies) {
     if (
@@ -83,10 +96,24 @@ export class DocumentIndexPublisher {
     ) {
       throw new TypeError("document index publication batch size is invalid");
     }
+    if (
+      dependencies.publicationLeaseMs !== undefined &&
+      (!Number.isSafeInteger(dependencies.publicationLeaseMs) ||
+        dependencies.publicationLeaseMs <= 0)
+    ) {
+      throw new TypeError("document index publication lease is invalid");
+    }
     this.#vectorIndex = dependencies.vectorIndex;
     this.#publications = dependencies.publications;
+    this.#stagingAttempts = dependencies.stagingAttempts;
     this.#batchSize = dependencies.batchSize ?? 64;
+    this.#publicationLeaseMs =
+      dependencies.publicationLeaseMs ??
+      DEFAULT_INDEX_STAGING_PUBLICATION_LEASE_MS;
     this.#clock = dependencies.clock ?? (() => new Date().toISOString());
+    this.#leaseIds =
+      dependencies.leaseIds ??
+      (() => `lease_${randomUUID().replaceAll("-", "")}`);
   }
 
   async publish(
@@ -101,6 +128,7 @@ export class DocumentIndexPublisher {
       if (!matchesRequestedPublication(existing, prepared)) {
         throw new DocumentIndexPublicationError("conflicting_index_version");
       }
+      await this.#forgetReferenced(prepared);
       return existing;
     }
 
@@ -133,55 +161,160 @@ export class DocumentIndexPublisher {
       assertValidVectorIndexRecords(manifest, command.chunks, prepared.records);
     });
 
-    const stagedBefore = await this.#vectorIndex.listVersionRecords({
-      accessHandle: vectorTarget.accessHandle,
+    const attemptedAt = this.#clock();
+    const leaseId = this.#leaseIds();
+    const acquired = await this.#stagingAttempts.acquirePublication({
       documentIndexId: manifest.documentIndexId,
       indexVersion: manifest.indexVersion,
+      connectorId: command.connectorId,
+      accessHandle: vectorTarget.accessHandle,
+      attemptedAt,
+      leaseId,
+      leaseExpiresAt: expirationAfter(
+        attemptedAt,
+        this.#publicationLeaseMs,
+      ),
     });
-    const missing = assertCompatibleStaging(stagedBefore, prepared.records);
-    for (let offset = 0; offset < missing.length; offset += this.#batchSize) {
-      const batch = missing.slice(offset, offset + this.#batchSize);
-      if (batch.length > 0) {
-        await this.#vectorIndex.upsertRecords({
-          accessHandle: vectorTarget.accessHandle,
-          embeddingProfile: command.embeddingProfile,
-          records: batch,
-        });
-      }
+    if (acquired.status === "busy") {
+      throw new DocumentIndexPublicationError("staging_version_busy");
     }
 
-    const stagedAfter = await this.#vectorIndex.listVersionRecords({
-      accessHandle: vectorTarget.accessHandle,
-      documentIndexId: manifest.documentIndexId,
-      indexVersion: manifest.indexVersion,
-    });
-    assertCompleteStaging(
-      manifest,
-      command.chunks,
-      stagedAfter,
-      prepared.records,
-    );
+    try {
+      await this.#vectorIndex.retainVersion({
+        accessHandle: vectorTarget.accessHandle,
+        lease: {
+          leaseId,
+          documentIndexId: manifest.documentIndexId,
+          indexVersion: manifest.indexVersion,
+          expiresAt: acquired.attempt.ownerExpiresAt!,
+        },
+      });
 
-    const publication: PublishedIndexVersion = {
-      manifest,
-      documentIndex: scopes[0]!.documentIndex,
-      scopes,
-      binding: {
-        stateNamespaceId: command.stateNamespaceId,
+      const stagedBefore = await this.#vectorIndex.listVersionRecords({
+        accessHandle: vectorTarget.accessHandle,
         documentIndexId: manifest.documentIndexId,
         indexVersion: manifest.indexVersion,
-        connectorId: command.connectorId,
+      });
+      const missing = assertCompatibleStaging(stagedBefore, prepared.records);
+      for (let offset = 0; offset < missing.length; offset += this.#batchSize) {
+        const batch = missing.slice(offset, offset + this.#batchSize);
+        if (batch.length > 0) {
+          await this.#renewRetention(
+            manifest,
+            vectorTarget.accessHandle,
+            leaseId,
+          );
+          await this.#vectorIndex.upsertRecords({
+            accessHandle: vectorTarget.accessHandle,
+            embeddingProfile: command.embeddingProfile,
+            records: batch,
+          });
+        }
+      }
+
+      const stagedAfter = await this.#vectorIndex.listVersionRecords({
         accessHandle: vectorTarget.accessHandle,
-        securityDomain: command.securityDomain,
-      },
-    };
-    try {
-      return (await this.#publications.commitCurrent(publication)).publication;
+        documentIndexId: manifest.documentIndexId,
+        indexVersion: manifest.indexVersion,
+      });
+      assertCompleteStaging(
+        manifest,
+        command.chunks,
+        stagedAfter,
+        prepared.records,
+      );
+
+      await this.#renewRetention(
+        manifest,
+        vectorTarget.accessHandle,
+        leaseId,
+      );
+
+      const publication: PublishedIndexVersion = {
+        manifest,
+        documentIndex: scopes[0]!.documentIndex,
+        scopes,
+        binding: {
+          stateNamespaceId: command.stateNamespaceId,
+          documentIndexId: manifest.documentIndexId,
+          indexVersion: manifest.indexVersion,
+          connectorId: command.connectorId,
+          accessHandle: vectorTarget.accessHandle,
+          securityDomain: command.securityDomain,
+        },
+      };
+      const committed = (
+        await this.#publications.commitCurrent(publication)
+      ).publication;
+      await this.#forgetReferenced(prepared);
+      return committed;
     } catch (error) {
+      await this.#abandonPublication(prepared, leaseId);
       if (error instanceof IndexPublicationStoreConflict) {
         throw new DocumentIndexPublicationError("conflicting_index_version");
       }
       throw error;
+    } finally {
+      try {
+        await this.#vectorIndex.releaseRetentionLease({
+          accessHandle: vectorTarget.accessHandle,
+          leaseId,
+        });
+      } catch {
+        // A bounded lease expires without weakening the durable Catalog guard.
+      }
+    }
+  }
+
+  async #forgetReferenced(input: {
+    readonly documentIndexId: string;
+    readonly indexVersion: string;
+  }): Promise<void> {
+    try {
+      await this.#stagingAttempts.forgetReferenced(input);
+    } catch {
+      // Cleanup always rechecks Catalog, so stale tracking state is fail-safe.
+    }
+  }
+
+  async #renewRetention(
+    input: { readonly documentIndexId: string; readonly indexVersion: string },
+    accessHandle: string,
+    leaseId: string,
+  ): Promise<void> {
+    const renewedAt = this.#clock();
+    const renewedUntil = expirationAfter(
+      renewedAt,
+      this.#publicationLeaseMs,
+    );
+    const renewed = await this.#stagingAttempts.renewPublication({
+      ...input,
+      leaseId,
+      renewedAt,
+      leaseExpiresAt: renewedUntil,
+    });
+    if (!renewed) {
+      throw new DocumentIndexPublicationError("staging_version_busy");
+    }
+    await this.#vectorIndex.retainVersion({
+      accessHandle,
+      lease: {
+        leaseId,
+        documentIndexId: input.documentIndexId,
+        indexVersion: input.indexVersion,
+        expiresAt: renewedUntil,
+      },
+    });
+  }
+
+  async #abandonPublication(
+    input: { readonly documentIndexId: string; readonly indexVersion: string },
+    leaseId: string,
+  ): Promise<void> {
+    try {
+      await this.#stagingAttempts.abandonPublication({ ...input, leaseId });
+    } catch {
+      // An owner lease is bounded and becomes eligible only after the grace period.
     }
   }
 }
