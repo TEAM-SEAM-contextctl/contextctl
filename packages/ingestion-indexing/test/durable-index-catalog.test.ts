@@ -37,6 +37,7 @@ import {
   type EmbeddingPort,
   type EmbeddingProviderRequest,
   type IndexPublicationStoreV2 as IndexPublicationStore,
+  type IngestionPublicationStore,
   type PublicationReadyNotifier,
   type PublishedIndexVersionV2 as PublishedIndexVersion,
   type PublishMarkdownSourceCommand,
@@ -278,6 +279,32 @@ describe("durable Index control plane", () => {
       restored.comparisonForSource(observation.sourceId),
     ).resolves.toEqual(observation);
     restarted.close();
+  });
+
+  it("migrates schema v4 and installs durable Publication recovery intents", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "contextctl-schema-v4-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "schema.sqlite");
+    const current = openTestDatabase(databasePath);
+    current.exec(`
+      DROP TABLE publication_recovery_intents;
+      PRAGMA user_version = 4;
+    `);
+    current.close();
+
+    const migrated = openTestDatabase(databasePath);
+    expect(migrated.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: INGESTION_DATABASE_SCHEMA_VERSION,
+    });
+    expect(
+      migrated
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table' AND name = 'publication_recovery_intents'`,
+        )
+        .get(),
+    ).toEqual({ name: "publication_recovery_intents" });
+    migrated.close();
   });
 
   it.each(["memory", "sqlite"] as const)(
@@ -890,6 +917,83 @@ describe("durable Index control plane", () => {
     expect(await publications.find(pending[0]!.publicationId)).toBeDefined();
     secondDatabase.close();
   });
+
+  it("recovers the frozen Publication after a Catalog-only commit before reading newer source content", async () => {
+    const fixture = await createTemporaryFixture();
+    const vectorIndex = new InMemoryVectorIndexAdapter();
+    const firstDatabase = openTestDatabase(fixture.databasePath);
+    const durablePublications = new SqliteIngestionPublicationStore(
+      firstDatabase,
+    );
+    const first = createDurableRuntime(
+      fixture.markdownPath,
+      firstDatabase,
+      vectorIndex,
+      new DeterministicEmbeddingAdapter(),
+      undefined,
+      new FailOncePublicationCommitStore(durablePublications),
+    );
+
+    await expect(first.workflow.publish(command())).rejects.toMatchObject({
+      stage: "ingestion_publication",
+      diagnosticCode: "publication_store_unavailable",
+    });
+    const pendingRow = firstDatabase
+      .prepare(
+        `SELECT source_id FROM publication_recovery_intents
+         WHERE committed = 0`,
+      )
+      .get() as { readonly source_id: string } | undefined;
+    const pendingIntent = requiredValue(
+      pendingRow === undefined
+        ? undefined
+        : await durablePublications.pendingRecoveryIntentForSource(
+            pendingRow.source_id,
+          ),
+    );
+    firstDatabase.close();
+
+    const original = await readFile(fixture.markdownPath, "utf8");
+    await writeFile(
+      fixture.markdownPath,
+      `${original}\n\n# Newly arrived\n\nThis content must wait for the next run.\n`,
+      "utf8",
+    );
+
+    const secondDatabase = openTestDatabase(fixture.databasePath);
+    const second = createDurableRuntime(
+      fixture.markdownPath,
+      secondDatabase,
+      vectorIndex,
+      new DeterministicEmbeddingAdapter(),
+    );
+    const recovered = await second.workflow.publish(command());
+
+    expect(recovered.publication).toEqual(
+      JSON.parse(pendingIntent.canonicalPayload),
+    );
+    expect(recovered.observationId).toBe(
+      pendingIntent.publication.observationId,
+    );
+    expect(
+      await second.publications.pendingRecoveryIntentForSource(
+        pendingIntent.publication.sourceId,
+      ),
+    ).toBeUndefined();
+    expect(
+      await second.checkpoints.findBySourceId(
+        pendingIntent.publication.sourceId,
+      ),
+    ).toMatchObject({ observationId: pendingIntent.publication.observationId });
+
+    const advanced = await second.workflow.publish(command());
+    expect(advanced.status).toBe("published");
+    expect(advanced.publication?.previousPublicationId).toBe(
+      pendingIntent.publication.publicationId,
+    );
+    expect(advanced.observationId).not.toBe(recovered.observationId);
+    secondDatabase.close();
+  });
 });
 
 function createDurableRuntime(
@@ -898,6 +1002,7 @@ function createDurableRuntime(
   vectorIndex: VectorIndexPort,
   embeddingProvider: EmbeddingPort,
   readyNotifier?: PublicationReadyNotifier,
+  publications?: IngestionPublicationStore,
 ) {
   return createLocalMarkdownPublicationRuntime({
     configurations: { "source.fixture": { path: markdownPath } },
@@ -908,7 +1013,8 @@ function createDurableRuntime(
     stateNamespaceId: STATE_NAMESPACE_ID,
     securityDomain: "tenant-a",
     checkpoints: new SqliteMarkdownPublicationCheckpointStore(database),
-    publications: new SqliteIngestionPublicationStore(database),
+    publications:
+      publications ?? new SqliteIngestionPublicationStore(database),
     observations: new SqliteSourceObservationStore(database),
     indexPublications: new SqliteIndexPublicationStore(database),
     stagingAttempts: new SqliteIndexStagingAttemptStore(database),
@@ -1180,6 +1286,43 @@ class AlwaysFailNotifier implements PublicationReadyNotifier {
   async notify(_notification: PublicationReady): Promise<void> {
     throw new NotificationUnavailable();
   }
+}
+
+class FailOncePublicationCommitStore implements IngestionPublicationStore {
+  #shouldFail = true;
+
+  constructor(private readonly delegate: IngestionPublicationStore) {}
+
+  prepareRecoveryIntent: IngestionPublicationStore["prepareRecoveryIntent"] =
+    (publication) => this.delegate.prepareRecoveryIntent(publication);
+  findRecoveryIntent: IngestionPublicationStore["findRecoveryIntent"] =
+    (publicationId) => this.delegate.findRecoveryIntent(publicationId);
+  pendingRecoveryIntentForSource: IngestionPublicationStore["pendingRecoveryIntentForSource"] =
+    (sourceId) => this.delegate.pendingRecoveryIntentForSource(sourceId);
+
+  async commitReady(
+    publication: Parameters<IngestionPublicationStore["commitReady"]>[0],
+  ) {
+    if (this.#shouldFail) {
+      this.#shouldFail = false;
+      throw new SimulatedPublicationStoreUnavailable();
+    }
+    return this.delegate.commitReady(publication);
+  }
+
+  find: IngestionPublicationStore["find"] = (publicationId) =>
+    this.delegate.find(publicationId);
+  latestForSource: IngestionPublicationStore["latestForSource"] = (sourceId) =>
+    this.delegate.latestForSource(sourceId);
+  pendingReady: IngestionPublicationStore["pendingReady"] = () =>
+    this.delegate.pendingReady();
+  markReadyNotified: IngestionPublicationStore["markReadyNotified"] = (
+    publicationId,
+  ) => this.delegate.markReadyNotified(publicationId);
+}
+
+class SimulatedPublicationStoreUnavailable extends Error {
+  readonly code = "publication_store_unavailable";
 }
 
 class NotificationUnavailable extends Error {

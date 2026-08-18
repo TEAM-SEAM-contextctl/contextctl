@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-export const INGESTION_DATABASE_SCHEMA_VERSION = 4;
+export const INGESTION_DATABASE_SCHEMA_VERSION = 5;
 
 export interface OpenIngestionDatabaseOptions {
   readonly location: string;
@@ -62,11 +62,24 @@ function migrate(
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     return;
   }
+  if (version === 4) {
+    assertExpectedSchema(database, EXPECTED_SCHEMA_V4);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    inIngestionTransaction(database, () => {
+      createSchemaV5(database);
+      assertExpectedSchema(database);
+      database.exec(
+        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
+      );
+    });
+    return;
+  }
   if (version === 3) {
     assertExpectedSchema(database, EXPECTED_SCHEMA_V3);
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     inIngestionTransaction(database, () => {
       createSchemaV4(database);
+      createSchemaV5(database);
       assertExpectedSchema(database);
       database.exec(
         `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
@@ -80,6 +93,7 @@ function migrate(
     inIngestionTransaction(database, () => {
       createSchemaV3(database);
       createSchemaV4(database);
+      createSchemaV5(database);
       assertExpectedSchema(database);
       database.exec(
         `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
@@ -95,6 +109,7 @@ function migrate(
     createSchemaV2(database);
     createSchemaV3(database);
     createSchemaV4(database);
+    createSchemaV5(database);
     database
       .prepare(
         `INSERT INTO ingestion_metadata (
@@ -107,6 +122,28 @@ function migrate(
       `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
     );
   });
+}
+
+function createSchemaV5(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS publication_recovery_intents (
+      publication_id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      observation_id TEXT NOT NULL,
+      previous_publication_id TEXT,
+      publication_json TEXT NOT NULL,
+      produced_at TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      committed INTEGER NOT NULL DEFAULT 0 CHECK (committed IN (0, 1))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pending_publication_intent_by_source
+      ON publication_recovery_intents (source_id)
+      WHERE committed = 0;
+
+    CREATE INDEX IF NOT EXISTS publication_intents_by_source
+      ON publication_recovery_intents (source_id, produced_at, publication_id);
+  `);
 }
 
 function createSchemaV4(database: DatabaseSync): void {
@@ -359,7 +396,7 @@ const EXPECTED_SCHEMA_V3 = {
   ],
 } as const;
 
-const EXPECTED_SCHEMA = {
+const EXPECTED_SCHEMA_V4 = {
   ...EXPECTED_SCHEMA_V3,
   source_observations: [
     ["observation_id", "TEXT", 0, 1],
@@ -382,6 +419,20 @@ const EXPECTED_SCHEMA = {
     ["observation_id", "TEXT", 1, 2],
     ["acquired_at", "TEXT", 1, 0],
     ["expires_at", "TEXT", 1, 0],
+  ],
+} as const;
+
+const EXPECTED_SCHEMA = {
+  ...EXPECTED_SCHEMA_V4,
+  publication_recovery_intents: [
+    ["publication_id", "TEXT", 0, 1],
+    ["source_id", "TEXT", 1, 0],
+    ["observation_id", "TEXT", 1, 0],
+    ["previous_publication_id", "TEXT", 0, 0],
+    ["publication_json", "TEXT", 1, 0],
+    ["produced_at", "TEXT", 1, 0],
+    ["fingerprint", "TEXT", 1, 0],
+    ["committed", "INTEGER", 1, 0],
   ],
 } as const;
 

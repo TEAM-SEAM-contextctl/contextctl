@@ -126,6 +126,7 @@ export {
   type ReindexDocumentErrorCode,
   type ReindexDocumentMetrics,
   type ReindexDocumentResult,
+  type PreparedReindexDocumentPublication,
   type VectorReuseDegradation,
 } from "./application/reindex-document-incrementally.js";
 export {
@@ -421,6 +422,7 @@ export {
   type RenewIndexStagingPublicationInput,
 } from "./ports/index-staging-attempt.js";
 export {
+  IngestionPublicationCommitIncomplete,
   IngestionPublicationStoreConflict,
   MarkdownPublicationCheckpointConflict,
   type CommitIngestionPublicationResult,
@@ -431,6 +433,9 @@ export {
   type MarkdownPublicationStage,
   type MarkdownPublicationStageEvent,
   type MarkdownPublicationStageStatus,
+  type PreparePublicationRecoveryIntentResult,
+  type PublicationRecoveryIntent,
+  type PublicationRecoveryIntentState,
   type PublicationReadyNotifier,
   type RegisterMarkdownCheckpointResult,
 } from "./ports/markdown-publication.js";

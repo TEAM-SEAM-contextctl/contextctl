@@ -237,6 +237,16 @@ export class SqliteSourceObservationStore implements SourceObservationStore {
                WHERE lease.observation_id = ranked.observation_id
                  AND lease.expires_at > ?
              )
+             AND NOT EXISTS (
+               SELECT 1 FROM publication_recovery_intents AS intent
+               WHERE intent.observation_id = ranked.observation_id
+                 AND (
+                   intent.committed = 0 OR EXISTS (
+                     SELECT 1 FROM latest_ingestion_publications AS latest
+                     WHERE latest.publication_id = intent.publication_id
+                   )
+                 )
+             )
            ORDER BY captured_at, observation_id
            LIMIT ?`,
         )
@@ -279,9 +289,24 @@ export class SqliteSourceObservationStore implements SourceObservationStore {
              ) OR EXISTS (
                SELECT 1 FROM source_observation_retention_leases
                WHERE observation_id = ? AND expires_at > ?
+             ) OR EXISTS (
+               SELECT 1 FROM publication_recovery_intents AS intent
+               WHERE intent.observation_id = ?
+                 AND (
+                   intent.committed = 0 OR EXISTS (
+                     SELECT 1 FROM latest_ingestion_publications AS latest
+                     WHERE latest.publication_id = intent.publication_id
+                   )
+                 )
              )`,
           )
-          .get(observationId, observationId, observationId, now);
+          .get(
+            observationId,
+            observationId,
+            observationId,
+            now,
+            observationId,
+          );
         if (protectedReference !== undefined) return "protected";
         this.database
           .prepare(

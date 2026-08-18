@@ -77,11 +77,38 @@ export interface CommitIngestionPublicationResult {
   readonly publication: IngestionPublication;
 }
 
+export type PublicationRecoveryIntentState = "committed" | "pending";
+
+/**
+ * Durable, byte-stable intent captured before the first external Index Catalog
+ * binding commit. The canonical payload is retained for conflict detection and
+ * recovery; callers must commit the exact stored Publication.
+ */
+export interface PublicationRecoveryIntent {
+  readonly publication: IngestionPublication;
+  readonly canonicalPayload: string;
+  readonly state: PublicationRecoveryIntentState;
+}
+
+export interface PreparePublicationRecoveryIntentResult {
+  readonly status: "already_prepared" | "prepared";
+  readonly intent: PublicationRecoveryIntent;
+}
+
 /**
  * Stores immutable Publications and a ready-notification outbox together.
  * There is deliberately no purge operation before Registry acknowledgement.
  */
 export interface IngestionPublicationStore {
+  prepareRecoveryIntent(
+    publication: IngestionPublication,
+  ): Promise<PreparePublicationRecoveryIntentResult>;
+  findRecoveryIntent(
+    publicationId: string,
+  ): Promise<PublicationRecoveryIntent | undefined>;
+  pendingRecoveryIntentForSource(
+    sourceId: string,
+  ): Promise<PublicationRecoveryIntent | undefined>;
   commitReady(
     publication: IngestionPublication,
   ): Promise<CommitIngestionPublicationResult>;
@@ -103,6 +130,15 @@ export class IngestionPublicationStoreConflict extends Error {
   constructor() {
     super("Ingestion Publication store rejected conflicting immutable content");
     this.name = "IngestionPublicationStoreConflict";
+  }
+}
+
+export class IngestionPublicationCommitIncomplete extends Error {
+  readonly code = "publication_commit_incomplete";
+
+  constructor() {
+    super("Ingestion Publication has no durable recovery intent");
+    this.name = "IngestionPublicationCommitIncomplete";
   }
 }
 

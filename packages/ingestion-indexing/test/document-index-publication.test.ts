@@ -97,6 +97,55 @@ describe("DocumentIndexPublisher", () => {
     );
   });
 
+  it("freezes recovery state before the first Catalog binding commit", async () => {
+    const publications = new InMemoryIndexPublicationStore();
+    const command = createCommand(1);
+    let preparedPublicationId: string | undefined;
+    const publisher = createPublisher({
+      vectorIndex: new InMemoryVectorIndexAdapter(),
+      publications,
+      clock: () => "2026-08-09T00:00:00.000Z",
+    });
+
+    const result = await publisher.publish({
+      ...command,
+      beforeCatalogCommit: async (prepared) => {
+        expect(
+          await publications.current(prepared.manifest.documentIndexId),
+        ).toBeUndefined();
+        preparedPublicationId = prepared.manifest.indexVersion;
+      },
+    });
+
+    expect(preparedPublicationId).toBe(result.manifest.indexVersion);
+    expect(await publications.current(result.manifest.documentIndexId)).toEqual(
+      result,
+    );
+  });
+
+  it("does not expose a Catalog binding when recovery intent persistence fails", async () => {
+    const publications = new InMemoryIndexPublicationStore();
+    const command = createCommand(1);
+    const publisher = createPublisher({
+      vectorIndex: new InMemoryVectorIndexAdapter(),
+      publications,
+      clock: () => "2026-08-09T00:00:00.000Z",
+    });
+
+    await expect(
+      publisher.publish({
+        ...command,
+        beforeCatalogCommit: () =>
+          Promise.reject(new Error("simulated intent failure")),
+      }),
+    ).rejects.toThrow("simulated intent failure");
+    expect(
+      await publications.current(
+        createDocumentIndexId(command.document.sourceId, command.document.documentId),
+      ),
+    ).toBeUndefined();
+  });
+
   it("returns an already published immutable version without touching staging", async () => {
     const delegate = new InMemoryVectorIndexAdapter();
     const vectorIndex = new RecordingVectorIndex(delegate);

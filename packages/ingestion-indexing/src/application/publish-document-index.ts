@@ -52,6 +52,12 @@ export interface PublishDocumentIndexCommand {
   readonly connectorId: string;
   readonly securityDomain: string;
   readonly semanticScopes?: readonly SemanticPublishedScopeInput[];
+  /** Reuses the timestamp frozen by a durable Publication recovery intent. */
+  readonly publishedAt?: string;
+  /** Runs after complete staging validation and before the Catalog commit. */
+  readonly beforeCatalogCommit?: (
+    publication: PublishedIndexVersion,
+  ) => Promise<void>;
 }
 
 export interface DocumentIndexPublisherDependencies {
@@ -149,7 +155,7 @@ export class DocumentIndexPublisher {
       ...prepared.manifestDraft,
       recordSetDigest: computeRecordSetDigest(prepared.records),
       scopeRevisions: scopeRevisions(scopes),
-      publishedAt: this.#clock(),
+      publishedAt: command.publishedAt ?? this.#clock(),
     };
     assertValidInput(() => {
       assertValidIndexManifest({
@@ -243,6 +249,7 @@ export class DocumentIndexPublisher {
           securityDomain: command.securityDomain,
         },
       };
+      await command.beforeCatalogCommit?.(structuredClone(publication));
       const committed = (
         await this.#publications.commitCurrent(publication)
       ).publication;

@@ -5,12 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   InMemorySourceObservationStore,
   SourceObservationRetention,
+  SqliteIngestionPublicationStore,
   SqliteSourceObservationStore,
+  buildEmptyMarkdownPublication,
   createSourceObservation,
   openIngestionDatabase,
   type SourceObservation,
   type SourceObservationStore,
 } from "../src/index.js";
+import { createDocumentFixture } from "./fixtures/document-fixture.js";
 
 const databases: DatabaseSync[] = [];
 const NOW = "2026-08-18T00:00:00.000Z";
@@ -186,6 +189,59 @@ it("fails closed when a durable Observation record is corrupted", async () => {
   await expect(store.find(stored.id)).rejects.toMatchObject({
     code: "observation_store_conflict",
   });
+});
+
+it("protects Observations needed by pending and current Publications", async () => {
+  const database = openTestDatabase();
+  const observations = new SqliteSourceObservationStore(database);
+  const publications = new SqliteIngestionPublicationStore(database);
+  const firstObservation = observation(1, "2026-08-08T00:00:00.000Z");
+  const secondObservation = observation(2, "2026-08-09T00:00:00.000Z");
+  await observations.commit({ observation: firstObservation });
+  await observations.commit({ observation: secondObservation });
+
+  const firstPublication = buildEmptyMarkdownPublication({
+    document: {
+      ...createDocumentFixture(),
+      sourceId: firstObservation.sourceId,
+      observationId: firstObservation.id,
+    },
+    producedAt: "2026-08-10T00:00:00.000Z",
+  });
+  await publications.prepareRecoveryIntent(firstPublication);
+
+  await expect(
+    observations.findRetentionCandidates({
+      retainLatestCount: 1,
+      capturedBefore: NOW,
+      now: NOW,
+      limit: 10,
+    }),
+  ).resolves.toEqual([]);
+  await expect(
+    observations.deleteIfUnprotected(firstObservation.id, NOW),
+  ).resolves.toBe("protected");
+
+  await publications.commitReady(firstPublication);
+  await expect(
+    observations.deleteIfUnprotected(firstObservation.id, NOW),
+  ).resolves.toBe("protected");
+
+  const secondPublication = buildEmptyMarkdownPublication({
+    document: {
+      ...createDocumentFixture(),
+      sourceId: secondObservation.sourceId,
+      observationId: secondObservation.id,
+    },
+    producedAt: "2026-08-11T00:00:00.000Z",
+    previous: firstPublication,
+  });
+  await publications.prepareRecoveryIntent(secondPublication);
+  await publications.commitReady(secondPublication);
+
+  await expect(
+    observations.deleteIfUnprotected(firstObservation.id, NOW),
+  ).resolves.toBe("deleted");
 });
 
 function createStore(kind: "memory" | "sqlite"): SourceObservationStore {

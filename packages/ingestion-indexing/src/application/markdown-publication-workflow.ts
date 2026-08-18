@@ -5,11 +5,13 @@ import {
   buildMarkdownPublication,
 } from "./build-markdown-publication.js";
 import type { CaptureMarkdownCommand } from "./markdown-capture.js";
-import type { IncrementalDocumentReindexer } from "./reindex-document-incrementally.js";
+import type {
+  IncrementalDocumentReindexer,
+  PreparedReindexDocumentPublication,
+} from "./reindex-document-incrementally.js";
 import type {
   RegisterSourceCommand,
   SourceManagement,
-  SourceObservationResult,
 } from "./source-management.js";
 import {
   DEFAULT_DOCUMENT_INDEXING_POLICY,
@@ -43,6 +45,7 @@ import type {
   MarkdownPublicationStage,
   MarkdownPublicationStageEvent,
   MarkdownPublicationStageStatus,
+  PublicationRecoveryIntent,
   PublicationReadyNotifier,
 } from "../ports/markdown-publication.js";
 import type { SourceObservationStore } from "../ports/source-observation.js";
@@ -58,11 +61,6 @@ const DOWNSTREAM_STAGES: readonly MarkdownPublicationStage[] = [
   "ingestion_publication",
   "ready_notification",
 ];
-
-type ChangedSourceObservationResult = Extract<
-  SourceObservationResult,
-  { readonly observation: unknown }
->;
 
 export interface PublishMarkdownSourceCommand {
   readonly source: RegisterSourceCommand;
@@ -207,6 +205,13 @@ export class MarkdownPublicationWorkflow {
     let checkpoint = registration.checkpoint;
     operation.bind({ sourceId: checkpoint.source.id });
 
+    const recovered = await this.#recoverBeforeObservation(
+      command,
+      checkpoint,
+      operation,
+    );
+    if (recovered !== undefined) return recovered;
+
     const inspection = await operation.run("inspection", async () => {
       const result = await this.#dependencies.sourceManagement.inspect(
         checkpoint.source,
@@ -283,11 +288,14 @@ export class MarkdownPublicationWorkflow {
     const observationId = observation.observation.id;
     operation.bind({ observationId });
     try {
-      return await this.#publishChanged(
+      return await this.#publishSnapshot(
         command,
         checkpoint,
-        observation,
-        observationId,
+        {
+          observationId,
+          snapshot: observation.attempt.payload,
+          changeToken: observation.attempt.changeSignal.token,
+        },
         operation,
       );
     } finally {
@@ -302,18 +310,118 @@ export class MarkdownPublicationWorkflow {
     }
   }
 
-  async #publishChanged(
+  async #recoverBeforeObservation(
     command: PublishMarkdownSourceCommand,
     checkpoint: MarkdownPublicationCheckpoint,
-    observation: ChangedSourceObservationResult,
+    operation: OperationContext,
+  ): Promise<PublishMarkdownSourceResult | undefined> {
+    let pending: PublicationRecoveryIntent | undefined;
+    let latest: IngestionPublication | undefined;
+    try {
+      [pending, latest] = await Promise.all([
+        this.#dependencies.publications.pendingRecoveryIntentForSource(
+          checkpoint.source.id,
+        ),
+        this.#dependencies.publications.latestForSource(checkpoint.source.id),
+      ]);
+    } catch (error) {
+      throw operation.failure(
+        "ingestion_publication",
+        safeDiagnosticCode(error),
+      );
+    }
+
+    if (pending !== undefined) {
+      if (
+        pending.state !== "pending" ||
+        pending.publication.sourceId !== checkpoint.source.id ||
+        pending.publication.previousPublicationId !== latest?.publicationId
+      ) {
+        throw operation.failure(
+          "ingestion_publication",
+          "publication_conflict",
+        );
+      }
+      operation.markSkipped(
+        ["inspection", "observation"],
+        "publication_recovery",
+      );
+      return this.#resumeStoredObservation(
+        command,
+        checkpoint,
+        pending.publication.observationId,
+        operation,
+        pending,
+      );
+    }
+
+    if (
+      latest !== undefined &&
+      checkpoint.observationId !== latest.observationId
+    ) {
+      operation.markSkipped(
+        ["inspection", "observation"],
+        "checkpoint_recovery",
+      );
+      return this.#resumeStoredObservation(
+        command,
+        checkpoint,
+        latest.observationId,
+        operation,
+      );
+    }
+    return undefined;
+  }
+
+  async #resumeStoredObservation(
+    command: PublishMarkdownSourceCommand,
+    checkpoint: MarkdownPublicationCheckpoint,
     observationId: string,
     operation: OperationContext,
+    recoveryIntent?: PublicationRecoveryIntent,
   ): Promise<PublishMarkdownSourceResult> {
-    if (!isMarkdownSourceSnapshot(observation.attempt.payload)) {
+    let observation;
+    try {
+      observation = await this.#dependencies.observations.find(observationId);
+    } catch (error) {
+      throw operation.failure("capture", safeDiagnosticCode(error));
+    }
+    if (
+      observation?.sourceId !== checkpoint.source.id ||
+      !isMarkdownSourceSnapshot(observation.payload) ||
+      observation.payload.contentDigest !== observation.contentDigest
+    ) {
+      throw operation.failure("capture", "observation_baseline_corrupt");
+    }
+    operation.bind({ observationId });
+    return this.#publishSnapshot(
+      command,
+      checkpoint,
+      {
+        observationId,
+        snapshot: observation.payload,
+        changeToken: observation.contentDigest,
+        ...(recoveryIntent === undefined ? {} : { recoveryIntent }),
+      },
+      operation,
+    );
+  }
+
+  async #publishSnapshot(
+    command: PublishMarkdownSourceCommand,
+    checkpoint: MarkdownPublicationCheckpoint,
+    input: {
+      readonly observationId: string;
+      readonly snapshot: unknown;
+      readonly changeToken: string;
+      readonly recoveryIntent?: PublicationRecoveryIntent;
+    },
+    operation: OperationContext,
+  ): Promise<PublishMarkdownSourceResult> {
+    if (!isMarkdownSourceSnapshot(input.snapshot)) {
       throw operation.failure("capture", "invalid_markdown_snapshot");
     }
-    const snapshot = observation.attempt.payload;
-    const changeToken = observation.attempt.changeSignal.token;
+    const { observationId, snapshot, changeToken } = input;
     const previousDocument = checkpointDocument(checkpoint);
     const document = await operation.run("capture", () =>
       this.#dependencies.captureMarkdown({
@@ -402,6 +510,25 @@ export class MarkdownPublicationWorkflow {
       };
     }
 
+    const previousSemanticUnits = checkpointSemanticUnits(checkpoint);
+    let recoveryIntent = input.recoveryIntent;
+    const buildIndexedPublication = (
+      indexPublication: PreparedReindexDocumentPublication,
+    ): IngestionPublication =>
+      buildMarkdownPublication({
+        document,
+        semanticUnits,
+        manifest: indexPublication.publication.manifest,
+        scopes: indexPublication.publication.scopes,
+        ...(previousPublication === undefined
+          ? {}
+          : { previous: previousPublication }),
+        ...(previousSemanticUnits === undefined
+          ? {}
+          : { previousSemanticUnits }),
+        inheritableUnitIds: indexPublication.inheritableUnitIds,
+      });
+
     const indexed =
       chunks.length === 0
         ? undefined
@@ -417,6 +544,16 @@ export class MarkdownPublicationWorkflow {
               semanticScopes: semanticUnits
                 .filter((unit) => unit.kind !== "document")
                 .map((unit) => ({ semanticUnitIds: [unit.id] })),
+              ...(recoveryIntent === undefined
+                ? {}
+                : { publishedAt: recoveryIntent.publication.producedAt }),
+              beforeCatalogCommit: async (prepared) => {
+                const result =
+                  await this.#dependencies.publications.prepareRecoveryIntent(
+                    buildIndexedPublication(prepared),
+                  );
+                recoveryIntent = result.intent;
+              },
               ...(command.signal === undefined
                 ? {}
                 : { signal: command.signal }),
@@ -431,33 +568,30 @@ export class MarkdownPublicationWorkflow {
       ...currentSnapshot,
       chunks: indexed?.plan.chunks ?? currentSnapshot.chunks,
     };
-    const previousSemanticUnits = checkpointSemanticUnits(checkpoint);
 
     const committed = await operation.run("ingestion_publication", async () => {
-      const publication =
+      const candidate =
         indexed === undefined
           ? buildEmptyMarkdownPublication({
               document,
-              producedAt: this.#clock(),
+              producedAt:
+                recoveryIntent?.publication.producedAt ?? this.#clock(),
               ...(previousPublication === undefined
                 ? {}
                 : { previous: previousPublication }),
             })
-          : buildMarkdownPublication({
-              document,
-              semanticUnits,
-              manifest: indexed.publication.manifest,
-              scopes: indexed.publication.scopes,
-              ...(previousPublication === undefined
-                ? {}
-                : { previous: previousPublication }),
-              ...(previousSemanticUnits === undefined
-                ? {}
-                : { previousSemanticUnits }),
+          : buildIndexedPublication({
+              publication: indexed.publication,
               inheritableUnitIds: indexed.inheritableUnitIds,
             });
+      if (indexed !== undefined && recoveryIntent === undefined) {
+        throw new StageFault("publication_commit_incomplete");
+      }
+      const prepared =
+        await this.#dependencies.publications.prepareRecoveryIntent(candidate);
+      recoveryIntent = prepared.intent;
       const result = await this.#dependencies.publications.commitReady(
-        publication,
+        recoveryIntent.publication,
       );
       await this.#dependencies.checkpoints.save({
         source: checkpoint.source,
