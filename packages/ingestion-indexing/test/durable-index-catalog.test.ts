@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -282,6 +282,61 @@ describe("durable Index control plane", () => {
         indexVersion: scope.documentIndex.indexVersion,
       }),
     ).toBeDefined();
+    secondDatabase.close();
+  });
+
+  it("restores the indexing snapshot and incrementally re-indexes after restart", async () => {
+    const fixture = await createTemporaryFixture();
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+    );
+    const embeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const firstDatabase = openTestDatabase(fixture.databasePath);
+    const first = createDurableRuntime(
+      fixture.markdownPath,
+      firstDatabase,
+      vectorIndex,
+      embeddings,
+    );
+
+    const baseline = await first.workflow.publish(command());
+    const requestsAfterBaseline = embeddings.requests.length;
+    firstDatabase.close();
+    const markdown = await readFile(fixture.markdownPath, "utf8");
+    await writeFile(
+      fixture.markdownPath,
+      markdown.replace(
+        "재시도를 실행합니다.",
+        "재시도를 최대 세 번 실행합니다.",
+      ),
+      "utf8",
+    );
+
+    const secondDatabase = openTestDatabase(fixture.databasePath);
+    const second = createDurableRuntime(
+      fixture.markdownPath,
+      secondDatabase,
+      vectorIndex,
+      embeddings,
+    );
+    const updated = await second.workflow.publish(command());
+    const checkpoint = await second.checkpoints.findBySourceId(
+      baseline.sourceId,
+    );
+    const incrementalInputCount = embeddings.requests
+      .slice(requestsAfterBaseline)
+      .reduce((count, request) => count + request.inputs.length, 0);
+
+    expect(updated.status).toBe("published");
+    expect(updated.indexVersion).not.toBe(baseline.indexVersion);
+    expect(checkpoint?.indexingSnapshot).toBeDefined();
+    expect(incrementalInputCount).toBeGreaterThan(0);
+    expect(incrementalInputCount).toBeLessThan(
+      checkpoint?.indexingSnapshot?.chunks.length ?? 0,
+    );
+    expect(vectorIndex.rehydrateCalls).toBeGreaterThan(0);
     secondDatabase.close();
   });
 

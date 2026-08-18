@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -5,13 +8,16 @@ import {
   parseIngestionPublicationV2 as parseIngestionPublication,
   type IngestionPublicationV2 as IngestionPublication,
 } from "@contextctl/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   DeterministicEmbeddingAdapter,
+  InMemoryMarkdownPublicationCheckpointStore,
   createLocalMarkdownPublicationRuntime,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
+  type MarkdownPublicationCheckpoint,
+  type MarkdownPublicationCheckpointStore,
   type PublicationReadyNotifier,
   type PublishMarkdownSourceCommand,
 } from "../src/index.js";
@@ -23,6 +29,7 @@ const UNSUPPORTED_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/unsupported.md", import.meta.url),
 );
 const NOW = "2026-08-13T06:00:00.000Z";
+const temporaryDirectories: string[] = [];
 const profile = {
   id: "markdown-vertical-slice",
   version: "1.0.0",
@@ -32,6 +39,14 @@ const profile = {
   maxInputTokens: 480,
   textMeasureProfileVersion: "unicode-estimate-v1",
 };
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
 
 describe("MarkdownPublicationWorkflow", () => {
   it("runs a real Markdown Source through ready Publication and managed search", async () => {
@@ -103,8 +118,7 @@ describe("MarkdownPublicationWorkflow", () => {
       ["capture", "completed"],
       ["segmentation", "completed"],
       ["chunking", "completed"],
-      ["embedding", "completed"],
-      ["index_publication", "completed"],
+      ["index_update", "completed"],
       ["ingestion_publication", "completed"],
       ["ready_notification", "completed"],
     ]);
@@ -159,8 +173,7 @@ describe("MarkdownPublicationWorkflow", () => {
       "capture",
       "segmentation",
       "chunking",
-      "embedding",
-      "index_publication",
+      "index_update",
       "ingestion_publication",
       "ready_notification",
     ]);
@@ -178,6 +191,133 @@ describe("MarkdownPublicationWorkflow", () => {
       documentScope.documentIndex.documentIndexId,
     );
     expect(current?.manifest.indexVersion).toBe(first.indexVersion);
+  });
+
+  it("re-embeds only affected chunks and preserves unchanged published Scopes", async () => {
+    const fixture = await createTemporaryMarkdown(`
+# 운영 안내
+
+공통 운영 원칙입니다.
+
+## 결제
+
+결제 실패는 한 번 재시도합니다.
+
+## 배송
+
+배송 조회는 운송장 번호를 사용합니다.
+`);
+    const embeddings = new RecordingEmbeddingPort();
+    const runtime = createLocalMarkdownPublicationRuntime({
+      configurations: { "source.fixture": { path: fixture.path } },
+      embeddingProfile: profile,
+      connectorId: "vector.local",
+      stateNamespaceId: "state_test",
+      securityDomain: "tenant-a",
+      embeddingProvider: embeddings,
+      clock: () => NOW,
+    });
+
+    const first = await runtime.workflow.publish(command());
+    const firstRequestCount = embeddings.requests.length;
+    await writeFile(
+      fixture.path,
+      `
+# 운영 안내
+
+공통 운영 원칙입니다.
+
+## 결제
+
+결제 실패는 최대 세 번 재시도합니다.
+
+## 배송
+
+배송 조회는 운송장 번호를 사용합니다.
+`,
+      "utf8",
+    );
+
+    const second = await runtime.workflow.publish(command());
+    const checkpoint = await runtime.checkpoints.findBySourceId(first.sourceId);
+    const incrementalRequests = embeddings.requests.slice(firstRequestCount);
+    const embeddedInputCount = incrementalRequests.reduce(
+      (count, request) => count + request.inputs.length,
+      0,
+    );
+    const firstPublication = requiredPublication(first.publication);
+    const secondPublication = requiredPublication(second.publication);
+    const firstDelivery = unitWithLabel(firstPublication, "배송");
+    const secondDelivery = unitWithLabel(secondPublication, "배송");
+    const firstPayment = unitWithLabel(firstPublication, "결제");
+    const secondPayment = unitWithLabel(secondPublication, "결제");
+
+    expect(second.status).toBe("published");
+    expect(checkpoint?.indexingSnapshot).toBeDefined();
+    expect(embeddedInputCount).toBeGreaterThan(0);
+    expect(embeddedInputCount).toBeLessThan(
+      checkpoint?.indexingSnapshot?.chunks.length ?? 0,
+    );
+    expect(secondDelivery).toEqual(firstDelivery);
+    expect(secondPayment.publishedScopes).not.toEqual(
+      firstPayment.publishedScopes,
+    );
+    expect(
+      second.diagnostics.find((diagnostic) => diagnostic.stage === "index_update"),
+    ).toMatchObject({ status: "completed" });
+  });
+
+  it("publishes an empty knowledge set without replacing the last physical Index", async () => {
+    const fixture = await createTemporaryMarkdown(`
+# 운영 안내
+
+검색 가능한 내용입니다.
+`);
+    const embeddings = new RecordingEmbeddingPort();
+    const runtime = createLocalMarkdownPublicationRuntime({
+      configurations: { "source.fixture": { path: fixture.path } },
+      embeddingProfile: profile,
+      connectorId: "vector.local",
+      stateNamespaceId: "state_test",
+      securityDomain: "tenant-a",
+      embeddingProvider: embeddings,
+      clock: () => NOW,
+    });
+
+    const first = await runtime.workflow.publish(command());
+    const firstPublication = requiredPublication(first.publication);
+    const documentIndexId = requiredManagedDocumentIndexId(firstPublication);
+    const physicalHead = await runtime.indexPublications.current(documentIndexId);
+    const embeddingCalls = embeddings.requests.length;
+    await writeFile(fixture.path, "", "utf8");
+
+    const emptied = await runtime.workflow.publish(command());
+    const checkpoint = await runtime.checkpoints.findBySourceId(first.sourceId);
+
+    expect(emptied.status).toBe("published");
+    expect(emptied.indexVersion).toBeUndefined();
+    expect(emptied.publication?.knowledgeUnits).toEqual([]);
+    expect(emptied.publication?.changes).toHaveLength(
+      firstPublication.knowledgeUnits.length,
+    );
+    expect(
+      emptied.publication?.changes.every((change) => change.kind === "removed"),
+    ).toBe(true);
+    expect(embeddings.requests).toHaveLength(embeddingCalls);
+    expect(await runtime.indexPublications.current(documentIndexId)).toEqual(
+      physicalHead,
+    );
+    expect(checkpoint?.indexingSnapshot?.chunks).toEqual([]);
+    expect(
+      emptied.diagnostics.find((diagnostic) => diagnostic.stage === "index_update"),
+    ).toMatchObject({ status: "skipped", code: "empty_document" });
+
+    const repeated = await runtime.workflow.publish(command());
+    expect(repeated.status).toBe("unchanged");
+    expect(repeated.publication?.publicationId).toBe(
+      emptied.publication?.publicationId,
+    );
+    expect(repeated.indexVersion).toBeUndefined();
   });
 
   it("returns a bounded failing-stage diagnostic without logging source text", async () => {
@@ -292,6 +432,48 @@ describe("MarkdownPublicationWorkflow", () => {
       await runtime.publications.find(pending[0]!.publicationId),
     ).toEqual(stored);
   });
+
+  it("recovers a committed Publication when its final checkpoint write failed", async () => {
+    const embeddings = new RecordingEmbeddingPort();
+    const checkpoints = new FailOnceFinalCheckpointStore();
+    const runtime = createLocalMarkdownPublicationRuntime({
+      configurations: {
+        "source.fixture": { path: STRUCTURE_FIXTURE },
+      },
+      embeddingProfile: profile,
+      connectorId: "vector.local",
+      stateNamespaceId: "state_test",
+      securityDomain: "tenant-a",
+      embeddingProvider: embeddings,
+      checkpoints,
+      clock: () => NOW,
+    });
+
+    const failed = await runtime.workflow
+      .publish(command())
+      .catch((caught: unknown) => caught);
+    const embeddingCalls = embeddings.requests.length;
+    const committed = await runtime.publications.latestForSource(
+      checkpoints.sourceId,
+    );
+
+    expect(failed).toMatchObject({
+      stage: "ingestion_publication",
+      diagnosticCode: "checkpoint_unavailable",
+    });
+    expect(committed).toBeDefined();
+
+    const recovered = await runtime.workflow.publish(command());
+    const checkpoint = await runtime.checkpoints.findBySourceId(
+      checkpoints.sourceId,
+    );
+
+    expect(recovered.status).toBe("already_published");
+    expect(recovered.publication).toEqual(committed);
+    expect(embeddings.requests).toHaveLength(embeddingCalls);
+    expect(checkpoint?.indexingSnapshot).toBeDefined();
+    expect(await runtime.publications.pendingReady()).toEqual([]);
+  });
 });
 
 function command(
@@ -314,6 +496,41 @@ function requiredPublication(
 ): IngestionPublication {
   if (publication === undefined) throw new Error("Publication is missing");
   return publication;
+}
+
+function unitWithLabel(
+  publication: IngestionPublication,
+  label: string,
+): IngestionPublication["knowledgeUnits"][number] {
+  const unit = publication.knowledgeUnits.find((candidate) =>
+    candidate.facts.some(
+      (fact) => fact.name === "section.label" && fact.value === label,
+    ),
+  );
+  if (unit === undefined) throw new Error(`Knowledge Unit is missing: ${label}`);
+  return unit;
+}
+
+function requiredManagedDocumentIndexId(
+  publication: IngestionPublication,
+): string {
+  const scope = publication.knowledgeUnits
+    .flatMap((unit) => unit.publishedScopes)
+    .find((candidate) => candidate.kind === "managed_document");
+  if (scope === undefined || scope.kind !== "managed_document") {
+    throw new Error("managed document Scope is missing");
+  }
+  return scope.documentIndex.documentIndexId;
+}
+
+async function createTemporaryMarkdown(content: string): Promise<{
+  readonly path: string;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), "contextctl-workflow-"));
+  temporaryDirectories.push(directory);
+  const path = join(directory, "source.md");
+  await writeFile(path, content.trimStart(), "utf8");
+  return { path };
 }
 
 function consumeAsRegistry(publication: IngestionPublication) {
@@ -351,4 +568,36 @@ class FailOnceReadyNotifier implements PublicationReadyNotifier {
 
 class NotificationUnavailable extends Error {
   readonly code = "notification_unavailable";
+}
+
+class FailOnceFinalCheckpointStore
+  implements MarkdownPublicationCheckpointStore
+{
+  readonly #delegate = new InMemoryMarkdownPublicationCheckpointStore();
+  #failed = false;
+  sourceId = "";
+
+  async register(
+    ...args: Parameters<MarkdownPublicationCheckpointStore["register"]>
+  ) {
+    const result = await this.#delegate.register(...args);
+    this.sourceId = result.checkpoint.source.id;
+    return result;
+  }
+
+  async save(checkpoint: MarkdownPublicationCheckpoint): Promise<void> {
+    if (!this.#failed && checkpoint.indexingSnapshot !== undefined) {
+      this.#failed = true;
+      throw new CheckpointUnavailable();
+    }
+    await this.#delegate.save(checkpoint);
+  }
+
+  findBySourceId(sourceId: string) {
+    return this.#delegate.findBySourceId(sourceId);
+  }
+}
+
+class CheckpointUnavailable extends Error {
+  readonly code = "checkpoint_unavailable";
 }

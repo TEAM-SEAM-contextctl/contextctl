@@ -29,6 +29,12 @@ export interface BuildMarkdownPublicationInput {
   readonly inheritableUnitIds?: readonly string[];
 }
 
+export interface BuildEmptyMarkdownPublicationInput {
+  readonly document: NormalizedDocument;
+  readonly producedAt: string;
+  readonly previous?: IngestionPublication;
+}
+
 /** Builds and contract-validates the sole Registry-facing lifecycle payload. */
 export function buildMarkdownPublication(
   input: BuildMarkdownPublicationInput,
@@ -78,6 +84,31 @@ export function buildMarkdownPublication(
       ? {}
       : { previousPublicationId: input.previous.publicationId }),
     producedAt: input.manifest.publishedAt,
+    knowledgeUnits,
+    changes: computePublicationChanges(input.previous, knowledgeUnits),
+  });
+}
+
+/** Publishes the authoritative absence of searchable knowledge for a document. */
+export function buildEmptyMarkdownPublication(
+  input: BuildEmptyMarkdownPublicationInput,
+): IngestionPublication {
+  const knowledgeUnits: readonly PublishedKnowledgeUnit[] = [];
+  const publicationId = stableIdentity("pub", {
+    sourceId: input.document.sourceId,
+    observationId: input.document.observationId,
+    previousPublicationId: input.previous?.publicationId,
+    knowledgeUnits: [],
+  });
+  return parseIngestionPublication({
+    schemaVersion: 2,
+    publicationId,
+    sourceId: input.document.sourceId,
+    observationId: input.document.observationId,
+    ...(input.previous === undefined
+      ? {}
+      : { previousPublicationId: input.previous.publicationId }),
+    producedAt: input.producedAt,
     knowledgeUnits,
     changes: computePublicationChanges(input.previous, knowledgeUnits),
   });

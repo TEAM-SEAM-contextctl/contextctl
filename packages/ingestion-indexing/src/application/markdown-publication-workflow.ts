@@ -1,9 +1,11 @@
 import type { IngestionPublicationV2 as IngestionPublication } from "@contextctl/contracts";
 
-import { buildMarkdownPublication } from "./build-markdown-publication.js";
-import type { EmbeddingPipeline } from "./embed-managed-chunks.js";
+import {
+  buildEmptyMarkdownPublication,
+  buildMarkdownPublication,
+} from "./build-markdown-publication.js";
 import type { CaptureMarkdownCommand } from "./markdown-capture.js";
-import type { DocumentIndexPublisher } from "./publish-document-index.js";
+import type { IncrementalDocumentReindexer } from "./reindex-document-incrementally.js";
 import type {
   RegisterSourceCommand,
   SourceManagement,
@@ -12,6 +14,10 @@ import {
   DEFAULT_DOCUMENT_INDEXING_POLICY,
   type DocumentIndexingPolicySet,
 } from "../domain/document-indexing-policy.js";
+import {
+  planDocumentIncrementalUpdate,
+  type DocumentIndexingSnapshot,
+} from "../domain/document-incremental-update.js";
 import type {
   DocumentSemanticUnit,
   NormalizedDocument,
@@ -43,8 +49,7 @@ const DOWNSTREAM_STAGES: readonly MarkdownPublicationStage[] = [
   "capture",
   "segmentation",
   "chunking",
-  "embedding",
-  "index_publication",
+  "index_update",
   "ingestion_publication",
   "ready_notification",
 ];
@@ -93,8 +98,7 @@ export interface MarkdownPublicationWorkflowDependencies {
   readonly captureMarkdown: (
     command: CaptureMarkdownCommand,
   ) => NormalizedDocument;
-  readonly embeddingPipeline: EmbeddingPipeline;
-  readonly indexPublisher: DocumentIndexPublisher;
+  readonly documentReindexer: IncrementalDocumentReindexer;
   readonly publications: IngestionPublicationStore;
   readonly readyNotifier: PublicationReadyNotifier;
   readonly events: MarkdownPublicationEventSink;
@@ -256,15 +260,16 @@ export class MarkdownPublicationWorkflow {
       changeToken,
     });
     operation.bind({ observationId });
+    const previousDocument = checkpointDocument(checkpoint);
     const document = await operation.run("capture", () =>
       this.#dependencies.captureMarkdown({
         source: checkpoint.source,
         observationId,
         documentId: checkpoint.documentId,
         snapshot,
-        ...(checkpoint.document === undefined
+        ...(previousDocument === undefined
           ? {}
-          : { previousDocument: checkpoint.document }),
+          : { previousDocument }),
       }),
     );
     const provisionalUnits = await operation.run("segmentation", () =>
@@ -288,44 +293,109 @@ export class MarkdownPublicationWorkflow {
         policy: this.#policy,
       }),
     );
-    const embedded = await operation.run("embedding", () =>
-      this.#dependencies.embeddingPipeline.embed({
-        chunks,
-        profile: this.#dependencies.embeddingProfile,
-        ...(command.signal === undefined ? {} : { signal: command.signal }),
-      }),
-    );
-    const indexed = await operation.run("index_publication", () =>
-      this.#dependencies.indexPublisher.publish({
-        stateNamespaceId: this.#dependencies.stateNamespaceId,
-        document,
-        semanticUnits,
-        chunks,
-        embeddings: embedded.embeddings,
-        embeddingProfile: embedded.profile,
-        connectorId: command.connectorId,
-        securityDomain: command.securityDomain,
-        semanticScopes: semanticUnits
-          .filter((unit) => unit.kind !== "document")
-          .map((unit) => ({ semanticUnitIds: [unit.id] })),
-      }),
-    );
-    operation.bind({ indexVersion: indexed.manifest.indexVersion });
+    const currentSnapshot: DocumentIndexingSnapshot = {
+      document,
+      semanticUnits,
+      chunks,
+      indexingPolicy: this.#policy,
+      embeddingProfile: this.#dependencies.embeddingProfile,
+      payloadSchemaVersion: 2,
+    };
+    let previousPublication: IngestionPublication | undefined;
+    try {
+      previousPublication =
+        await this.#dependencies.publications.latestForSource(
+          checkpoint.source.id,
+        );
+    } catch (error) {
+      throw operation.failure(
+        "ingestion_publication",
+        safeDiagnosticCode(error),
+      );
+    }
+
+    if (previousPublication?.observationId === observationId) {
+      operation.markSkipped(["index_update"], "observation_already_published");
+      const recoveredSnapshot = recoverCommittedSnapshot(
+        checkpoint.indexingSnapshot,
+        currentSnapshot,
+      );
+      await operation.run("ingestion_publication", () =>
+        this.#dependencies.checkpoints.save({
+          source: checkpoint.source,
+          documentId: checkpoint.documentId,
+          previousChangeToken: changeToken,
+          indexingSnapshot: recoveredSnapshot,
+        }),
+      );
+      await this.#flushPendingReady(operation);
+      const existingIndexVersion = managedIndexVersion(previousPublication);
+      return {
+        status: "already_published",
+        sourceId: checkpoint.source.id,
+        observationId,
+        ...(existingIndexVersion === undefined
+          ? {}
+          : { indexVersion: existingIndexVersion }),
+        publication: previousPublication,
+        diagnostics: operation.diagnostics,
+      };
+    }
+
+    const indexed =
+      chunks.length === 0
+        ? undefined
+        : await operation.run("index_update", () =>
+            this.#dependencies.documentReindexer.reindex({
+              stateNamespaceId: this.#dependencies.stateNamespaceId,
+              connectorId: command.connectorId,
+              securityDomain: command.securityDomain,
+              ...(checkpoint.indexingSnapshot === undefined
+                ? {}
+                : { previous: checkpoint.indexingSnapshot }),
+              current: currentSnapshot,
+              semanticScopes: semanticUnits
+                .filter((unit) => unit.kind !== "document")
+                .map((unit) => ({ semanticUnitIds: [unit.id] })),
+              ...(command.signal === undefined
+                ? {}
+                : { signal: command.signal }),
+            }),
+          );
+    if (indexed === undefined) {
+      operation.markSkipped(["index_update"], "empty_document");
+    } else {
+      operation.bind({ indexVersion: indexed.publication.manifest.indexVersion });
+    }
+    const indexingSnapshot: DocumentIndexingSnapshot = {
+      ...currentSnapshot,
+      chunks: indexed?.plan.chunks ?? currentSnapshot.chunks,
+    };
+    const previousSemanticUnits = checkpointSemanticUnits(checkpoint);
 
     const committed = await operation.run("ingestion_publication", async () => {
-      const previous = await this.#dependencies.publications.latestForSource(
-        checkpoint.source.id,
-      );
-      const publication = buildMarkdownPublication({
-        document,
-        semanticUnits,
-        manifest: indexed.manifest,
-        scopes: indexed.scopes,
-        ...(previous === undefined ? {} : { previous }),
-        ...(checkpoint.semanticUnits === undefined
-          ? {}
-          : { previousSemanticUnits: checkpoint.semanticUnits }),
-      });
+      const publication =
+        indexed === undefined
+          ? buildEmptyMarkdownPublication({
+              document,
+              producedAt: this.#clock(),
+              ...(previousPublication === undefined
+                ? {}
+                : { previous: previousPublication }),
+            })
+          : buildMarkdownPublication({
+              document,
+              semanticUnits,
+              manifest: indexed.publication.manifest,
+              scopes: indexed.publication.scopes,
+              ...(previousPublication === undefined
+                ? {}
+                : { previous: previousPublication }),
+              ...(previousSemanticUnits === undefined
+                ? {}
+                : { previousSemanticUnits }),
+              inheritableUnitIds: indexed.inheritableUnitIds,
+            });
       const result = await this.#dependencies.publications.commitReady(
         publication,
       );
@@ -333,8 +403,7 @@ export class MarkdownPublicationWorkflow {
         source: checkpoint.source,
         documentId: checkpoint.documentId,
         previousChangeToken: changeToken,
-        document,
-        semanticUnits,
+        indexingSnapshot,
       });
       return result;
     });
@@ -343,7 +412,9 @@ export class MarkdownPublicationWorkflow {
       status: committed.status,
       sourceId: checkpoint.source.id,
       observationId,
-      indexVersion: indexed.manifest.indexVersion,
+      ...(indexed === undefined
+        ? {}
+        : { indexVersion: indexed.publication.manifest.indexVersion }),
       publication: committed.publication,
       diagnostics: operation.diagnostics,
     };
@@ -391,19 +462,40 @@ function reconcileUnits(
   provisionalUnits: readonly DocumentSemanticUnit[],
   policy: DocumentIndexingPolicySet,
 ): readonly DocumentSemanticUnit[] {
+  const previousDocument = checkpointDocument(checkpoint);
+  const previousUnits = checkpointSemanticUnits(checkpoint);
   if (
-    checkpoint.document === undefined ||
-    checkpoint.semanticUnits === undefined
+    previousDocument === undefined ||
+    previousUnits === undefined
   ) {
     return provisionalUnits;
   }
   return reconcileSemanticUnitLineage({
-    previousDocument: checkpoint.document,
-    previousUnits: checkpoint.semanticUnits,
+    previousDocument,
+    previousUnits,
     currentDocument: document,
     currentUnits: provisionalUnits,
     policy,
   }).units;
+}
+
+function checkpointDocument(checkpoint: MarkdownPublicationCheckpoint) {
+  return checkpoint.indexingSnapshot?.document ?? checkpoint.document;
+}
+
+function checkpointSemanticUnits(checkpoint: MarkdownPublicationCheckpoint) {
+  return checkpoint.indexingSnapshot?.semanticUnits ?? checkpoint.semanticUnits;
+}
+
+function recoverCommittedSnapshot(
+  previous: DocumentIndexingSnapshot | undefined,
+  current: DocumentIndexingSnapshot,
+): DocumentIndexingSnapshot {
+  if (previous === undefined) return current;
+  return {
+    ...current,
+    chunks: planDocumentIncrementalUpdate({ previous, current }).chunks,
+  };
 }
 
 function managedIndexVersion(
