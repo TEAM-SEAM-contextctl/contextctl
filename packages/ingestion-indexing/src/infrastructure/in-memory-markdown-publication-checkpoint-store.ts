@@ -1,5 +1,6 @@
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
+import { isId } from "../domain/model-validation.js";
 import type {
   MarkdownPublicationCheckpoint,
   MarkdownPublicationCheckpointStore,
@@ -45,6 +46,8 @@ export class InMemoryMarkdownPublicationCheckpointStore
       existing.documentId !== checkpoint.documentId ||
       (existing.previousChangeToken !== undefined &&
         checkpoint.previousChangeToken === undefined) ||
+      (existing.observationId !== undefined &&
+        checkpoint.observationId === undefined) ||
       (existingDocument !== undefined &&
         nextDocument !== undefined &&
         existingDocument.sourceId !== nextDocument.sourceId)
@@ -72,6 +75,10 @@ function assertCheckpointSnapshot(
   checkpoint: MarkdownPublicationCheckpoint,
 ): void {
   if (
+    (checkpoint.observationId !== undefined &&
+      !isId(checkpoint.observationId, "obs")) ||
+    (checkpoint.observationId !== undefined &&
+      checkpoint.indexingSnapshot === undefined) ||
     (checkpoint.document === undefined) !==
       (checkpoint.semanticUnits === undefined) ||
     (checkpoint.indexingSnapshot !== undefined &&
@@ -90,7 +97,10 @@ function assertCheckpointSnapshot(
     }
     if (
       checkpoint.indexingSnapshot.document.sourceId !== checkpoint.source.id ||
-      checkpoint.indexingSnapshot.document.documentId !== checkpoint.documentId
+      checkpoint.indexingSnapshot.document.documentId !== checkpoint.documentId ||
+      (checkpoint.observationId !== undefined &&
+        checkpoint.indexingSnapshot.document.observationId !==
+          checkpoint.observationId)
     ) {
       throw new MarkdownPublicationCheckpointConflict();
     }

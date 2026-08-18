@@ -17,6 +17,11 @@ import {
   type SourcePollingPolicy,
 } from "../domain/knowledge-source.js";
 import {
+  createSourceObservation,
+  type SourceObservation,
+} from "../domain/source-observation.js";
+import { isDigest, isId, isIsoTimestamp } from "../domain/model-validation.js";
+import {
   SourceAdapterFault,
   type CredentialResolver,
   type SourceAdapter,
@@ -28,6 +33,11 @@ import {
   type SourceChangeSignal,
   type SourceObservationAttempt,
 } from "../ports/source-adapter.js";
+import type { SourceObservationStore } from "../ports/source-observation.js";
+import {
+  SourceObservationStoreConflict,
+  SourceObservationStoreUnavailable,
+} from "../ports/source-observation.js";
 
 const INLINE_SECRET_KEYS = new Set([
   "accesstoken",
@@ -54,6 +64,8 @@ export type SourceManagementErrorCode =
   | "invalid_request"
   | "invalid_source_state"
   | "observation_in_progress"
+  | "observation_store_conflict"
+  | "observation_store_unavailable"
   | "timeout"
   | "unsupported_source_type";
 
@@ -82,14 +94,26 @@ export interface SourceInspection {
   readonly source: KnowledgeSource;
 }
 
-export interface SourceObservationResult {
-  readonly source: KnowledgeSource;
-  readonly changeSignal: SourceChangeSignal;
-  readonly attempt: SourceObservationAttempt;
-}
+export type SourceObservationResult =
+  | {
+      readonly source: KnowledgeSource;
+      readonly changeSignal: SourceChangeSignal;
+      readonly attempt: Extract<SourceObservationAttempt, { status: "changed" }>;
+      readonly observation: SourceObservation;
+      readonly observationStatus: "existing" | "stored";
+    }
+  | {
+      readonly source: KnowledgeSource;
+      readonly changeSignal: SourceChangeSignal;
+      readonly attempt: Extract<SourceObservationAttempt, { status: "unchanged" }>;
+    };
 
 export interface RequestObservationOptions {
   readonly previousChangeToken?: string;
+  readonly retentionLease?: {
+    readonly leaseId: string;
+    readonly durationMs: number;
+  };
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
 }
@@ -99,11 +123,14 @@ export interface SourceManagementDependencies {
   readonly configurations: SourceConfigurationResolver;
   readonly credentials: CredentialResolver;
   readonly ids: SourceIdGenerator;
+  readonly observations: SourceObservationStore;
   readonly defaultTimeoutMs: number;
+  readonly clock?: () => string;
 }
 
 export class SourceManagement {
   readonly #dependencies: SourceManagementDependencies;
+  readonly #clock: () => string;
   readonly #observationsInFlight = new Set<string>();
 
   constructor(dependencies: SourceManagementDependencies) {
@@ -114,6 +141,7 @@ export class SourceManagement {
       throw new RangeError("defaultTimeoutMs must be a positive integer");
     }
     this.#dependencies = dependencies;
+    this.#clock = dependencies.clock ?? (() => new Date().toISOString());
   }
 
   async register(command: RegisterSourceCommand): Promise<KnowledgeSource> {
@@ -188,6 +216,7 @@ export class SourceManagement {
     options: RequestObservationOptions = {},
   ): Promise<SourceObservationResult> {
     const timeoutMs = this.#timeout(options.timeoutMs, source);
+    assertRetentionLeaseOption(options.retentionLease, source.id);
     const runningSource = this.#beginObservation(source);
     try {
       return await runWithDeadline(async (signal) => {
@@ -209,14 +238,46 @@ export class SourceManagement {
         if (
           attempt.status !== "changed" ||
           attempt.changeSignal.status !== "changed" ||
-          attempt.changeSignal.token.trim().length === 0
+          attempt.changeSignal.token.trim().length === 0 ||
+          !isIsoTimestamp(attempt.capturedAt) ||
+          !isDigest(attempt.contentDigest)
         ) {
           throw new SourceManagementError("adapter_failure", source.id);
         }
+        const candidate = createSourceObservation({
+          sourceId: source.id,
+          capturedAt: attempt.capturedAt,
+          contentDigest: attempt.contentDigest,
+          payload: attempt.payload,
+        });
+        const acquiredAt = this.#now(source.id);
+        const committed = await this.#dependencies.observations.commit({
+          observation: candidate,
+          signal,
+          ...(options.retentionLease === undefined
+            ? {}
+            : {
+                retentionLease: {
+                  leaseId: options.retentionLease.leaseId,
+                  observationId: candidate.id,
+                  acquiredAt,
+                  expiresAt: new Date(
+                    Date.parse(acquiredAt) + options.retentionLease.durationMs,
+                  ).toISOString(),
+                },
+              }),
+        });
         return {
           source: completeSourceObservation(runningSource, "changed"),
           changeSignal: attempt.changeSignal,
-          attempt,
+          attempt: {
+            ...attempt,
+            capturedAt: committed.observation.capturedAt,
+            contentDigest: committed.observation.contentDigest,
+            payload: committed.observation.payload,
+          },
+          observation: committed.observation,
+          observationStatus: committed.status,
         };
       }, timeoutMs, options.signal);
     } catch (error) {
@@ -327,6 +388,14 @@ export class SourceManagement {
     return override;
   }
 
+  #now(sourceId: string): string {
+    const value = this.#clock();
+    if (!isIsoTimestamp(value)) {
+      throw new SourceManagementError("invalid_request", sourceId);
+    }
+    return value;
+  }
+
   #assertActive(source: KnowledgeSource): void {
     try {
       assertSourceActive(source);
@@ -417,7 +486,27 @@ function mapRuntimeError(
   if (error instanceof OperationInterruptedError) {
     return new SourceManagementError(error.reason, sourceId);
   }
+  if (error instanceof SourceObservationStoreConflict) {
+    return new SourceManagementError("observation_store_conflict", sourceId);
+  }
+  if (error instanceof SourceObservationStoreUnavailable) {
+    return new SourceManagementError("observation_store_unavailable", sourceId);
+  }
   return mapAdapterError(error, sourceId);
+}
+
+function assertRetentionLeaseOption(
+  lease: RequestObservationOptions["retentionLease"],
+  sourceId: string,
+): void {
+  if (
+    lease !== undefined &&
+    (!isId(lease.leaseId, "lease") ||
+      !Number.isSafeInteger(lease.durationMs) ||
+      lease.durationMs <= 0)
+  ) {
+    throw new SourceManagementError("invalid_request", sourceId);
+  }
 }
 
 function mapAdapterError(

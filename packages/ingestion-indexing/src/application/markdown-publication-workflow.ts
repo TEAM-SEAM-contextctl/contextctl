@@ -9,6 +9,7 @@ import type { IncrementalDocumentReindexer } from "./reindex-document-incrementa
 import type {
   RegisterSourceCommand,
   SourceManagement,
+  SourceObservationResult,
 } from "./source-management.js";
 import {
   DEFAULT_DOCUMENT_INDEXING_POLICY,
@@ -44,6 +45,10 @@ import type {
   MarkdownPublicationStageStatus,
   PublicationReadyNotifier,
 } from "../ports/markdown-publication.js";
+import type { SourceObservationStore } from "../ports/source-observation.js";
+
+export const DEFAULT_MARKDOWN_OBSERVATION_RETENTION_LEASE_MS =
+  60 * 60 * 1_000;
 
 const DOWNSTREAM_STAGES: readonly MarkdownPublicationStage[] = [
   "capture",
@@ -53,6 +58,11 @@ const DOWNSTREAM_STAGES: readonly MarkdownPublicationStage[] = [
   "ingestion_publication",
   "ready_notification",
 ];
+
+type ChangedSourceObservationResult = Extract<
+  SourceObservationResult,
+  { readonly observation: unknown }
+>;
 
 export interface PublishMarkdownSourceCommand {
   readonly source: RegisterSourceCommand;
@@ -94,6 +104,7 @@ export class MarkdownPublicationWorkflowError extends Error {
 
 export interface MarkdownPublicationWorkflowDependencies {
   readonly sourceManagement: SourceManagement;
+  readonly observations: SourceObservationStore;
   readonly checkpoints: MarkdownPublicationCheckpointStore;
   readonly captureMarkdown: (
     command: CaptureMarkdownCommand,
@@ -108,6 +119,7 @@ export interface MarkdownPublicationWorkflowDependencies {
   /** One workflow instance is bound to exactly one provider security domain. */
   readonly securityDomain: string;
   readonly indexingPolicy?: DocumentIndexingPolicySet;
+  readonly observationRetentionLeaseMs?: number;
   readonly clock?: () => string;
 }
 
@@ -119,6 +131,7 @@ export class MarkdownPublicationWorkflow {
   readonly #dependencies: MarkdownPublicationWorkflowDependencies;
   readonly #policy: DocumentIndexingPolicySet;
   readonly #clock: () => string;
+  readonly #observationRetentionLeaseMs: number;
   #nextOperation = 1;
 
   constructor(dependencies: MarkdownPublicationWorkflowDependencies) {
@@ -131,6 +144,15 @@ export class MarkdownPublicationWorkflow {
     this.#dependencies = dependencies;
     this.#policy = dependencies.indexingPolicy ?? DEFAULT_DOCUMENT_INDEXING_POLICY;
     this.#clock = dependencies.clock ?? (() => new Date().toISOString());
+    this.#observationRetentionLeaseMs =
+      dependencies.observationRetentionLeaseMs ??
+      DEFAULT_MARKDOWN_OBSERVATION_RETENTION_LEASE_MS;
+    if (
+      !Number.isSafeInteger(this.#observationRetentionLeaseMs) ||
+      this.#observationRetentionLeaseMs <= 0
+    ) {
+      throw new TypeError("Markdown observation retention lease is invalid");
+    }
   }
 
   async publish(
@@ -205,6 +227,8 @@ export class MarkdownPublicationWorkflow {
     checkpoint = { ...checkpoint, source: inspection.source };
 
     const observed = await operation.run("observation", async () => {
+      await this.#ensureComparisonBaseline(checkpoint);
+      const retentionLeaseId = `lease_${operation.operationId}`;
       const result = await this.#dependencies.sourceManagement.requestObservation(
         checkpoint.source,
         {
@@ -215,6 +239,10 @@ export class MarkdownPublicationWorkflow {
           ...(command.source.timeoutMs === undefined
             ? {}
             : { timeoutMs: command.source.timeoutMs }),
+          retentionLease: {
+            leaseId: retentionLeaseId,
+            durationMs: this.#observationRetentionLeaseMs,
+          },
         },
       );
       await this.#dependencies.checkpoints.save({
@@ -227,7 +255,7 @@ export class MarkdownPublicationWorkflow {
               result.source.id,
             )
           : undefined;
-      return { result, latest };
+      return { result, latest, retentionLeaseId };
     });
     const observation = observed.result;
     checkpoint = { ...checkpoint, source: observation.source };
@@ -249,17 +277,43 @@ export class MarkdownPublicationWorkflow {
         diagnostics: operation.diagnostics,
       };
     }
+    if (!("observation" in observation)) {
+      throw operation.failure("observation", "observation_not_stored");
+    }
+    const observationId = observation.observation.id;
+    operation.bind({ observationId });
+    try {
+      return await this.#publishChanged(
+        command,
+        checkpoint,
+        observation,
+        observationId,
+        operation,
+      );
+    } finally {
+      try {
+        await this.#dependencies.observations.releaseRetentionLease(
+          observed.retentionLeaseId,
+          observationId,
+        );
+      } catch {
+        // The bounded lease expires without risking a referenced snapshot.
+      }
+    }
+  }
+
+  async #publishChanged(
+    command: PublishMarkdownSourceCommand,
+    checkpoint: MarkdownPublicationCheckpoint,
+    observation: ChangedSourceObservationResult,
+    observationId: string,
+    operation: OperationContext,
+  ): Promise<PublishMarkdownSourceResult> {
     if (!isMarkdownSourceSnapshot(observation.attempt.payload)) {
       throw operation.failure("capture", "invalid_markdown_snapshot");
     }
     const snapshot = observation.attempt.payload;
     const changeToken = observation.attempt.changeSignal.token;
-
-    const observationId = stableIdentity("obs", {
-      sourceId: checkpoint.source.id,
-      changeToken,
-    });
-    operation.bind({ observationId });
     const previousDocument = checkpointDocument(checkpoint);
     const document = await operation.run("capture", () =>
       this.#dependencies.captureMarkdown({
@@ -267,9 +321,7 @@ export class MarkdownPublicationWorkflow {
         observationId,
         documentId: checkpoint.documentId,
         snapshot,
-        ...(previousDocument === undefined
-          ? {}
-          : { previousDocument }),
+        ...(previousDocument === undefined ? {} : { previousDocument }),
       }),
     );
     const provisionalUnits = await operation.run("segmentation", () =>
@@ -320,14 +372,22 @@ export class MarkdownPublicationWorkflow {
         checkpoint.indexingSnapshot,
         currentSnapshot,
       );
-      await operation.run("ingestion_publication", () =>
-        this.#dependencies.checkpoints.save({
+      await operation.run("ingestion_publication", async () => {
+        await this.#dependencies.checkpoints.save({
           source: checkpoint.source,
           documentId: checkpoint.documentId,
+          observationId,
           previousChangeToken: changeToken,
           indexingSnapshot: recoveredSnapshot,
-        }),
-      );
+        });
+        await this.#dependencies.observations.markComparisonBaseline({
+          sourceId: checkpoint.source.id,
+          observationId,
+          ...(checkpoint.observationId === undefined
+            ? {}
+            : { expectedObservationId: checkpoint.observationId }),
+        });
+      });
       await this.#flushPendingReady(operation);
       const existingIndexVersion = managedIndexVersion(previousPublication);
       return {
@@ -402,8 +462,16 @@ export class MarkdownPublicationWorkflow {
       await this.#dependencies.checkpoints.save({
         source: checkpoint.source,
         documentId: checkpoint.documentId,
+        observationId,
         previousChangeToken: changeToken,
         indexingSnapshot,
+      });
+      await this.#dependencies.observations.markComparisonBaseline({
+        sourceId: checkpoint.source.id,
+        observationId,
+        ...(checkpoint.observationId === undefined
+          ? {}
+          : { expectedObservationId: checkpoint.observationId }),
       });
       return result;
     });
@@ -436,6 +504,39 @@ export class MarkdownPublicationWorkflow {
         await this.#dependencies.publications.markReadyNotified(
           notification.publicationId,
         );
+      });
+    }
+  }
+
+  async #ensureComparisonBaseline(
+    checkpoint: MarkdownPublicationCheckpoint,
+  ): Promise<void> {
+    if (checkpoint.observationId === undefined) return;
+    const baseline = await this.#dependencies.observations.find(
+      checkpoint.observationId,
+    );
+    if (
+      baseline?.sourceId !== checkpoint.source.id ||
+      !isMarkdownSourceSnapshot(baseline.payload)
+    ) {
+      throw new StageFault("observation_baseline_corrupt");
+    }
+    const current = await this.#dependencies.observations.comparisonForSource(
+      checkpoint.source.id,
+    );
+    if (current?.id !== baseline.id) {
+      const persisted = await this.#dependencies.checkpoints.findBySourceId(
+        checkpoint.source.id,
+      );
+      if (persisted?.observationId !== checkpoint.observationId) {
+        throw new StageFault("observation_baseline_stale");
+      }
+      await this.#dependencies.observations.markComparisonBaseline({
+        sourceId: checkpoint.source.id,
+        observationId: baseline.id,
+        ...(current === undefined
+          ? {}
+          : { expectedObservationId: current.id }),
       });
     }
   }

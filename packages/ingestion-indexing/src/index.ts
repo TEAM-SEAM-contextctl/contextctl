@@ -11,12 +11,29 @@ export {
 export {
   MarkdownPublicationWorkflow,
   MarkdownPublicationWorkflowError,
+  DEFAULT_MARKDOWN_OBSERVATION_RETENTION_LEASE_MS,
   type MarkdownPublicationDiagnostic,
   type MarkdownPublicationWorkflowDependencies,
   type MarkdownPublicationWorkflowErrorCode,
   type PublishMarkdownSourceCommand,
   type PublishMarkdownSourceResult,
 } from "./application/markdown-publication-workflow.js";
+export {
+  SourceObservationRetention,
+  DEFAULT_SOURCE_OBSERVATION_RETENTION_POLICY,
+  type SourceObservationRetentionDependencies,
+  type SourceObservationRetentionItem,
+  type SourceObservationRetentionPolicy,
+  type SourceObservationRetentionReport,
+} from "./application/retain-source-observations.js";
+export {
+  createSourceObservation,
+  assertValidSourceObservation,
+  SourceObservationValidationError,
+  type CreateSourceObservationInput,
+  type SourceObservation,
+  type SourceObservationPayload,
+} from "./domain/source-observation.js";
 export {
   SourceManagement,
   SourceManagementError,
@@ -246,6 +263,9 @@ export {
   InMemoryPublicationReadyNotifier,
 } from "./infrastructure/in-memory-publication-ready-notifier.js";
 export {
+  InMemorySourceObservationStore,
+} from "./infrastructure/in-memory-source-observation-store.js";
+export {
   INGESTION_DATABASE_SCHEMA_VERSION,
   IngestionDatabaseSchemaError,
   openIngestionDatabase,
@@ -266,6 +286,9 @@ export {
   MarkdownPublicationCheckpointStoreUnavailable,
   SqliteMarkdownPublicationCheckpointStore,
 } from "./infrastructure/sqlite-markdown-publication-checkpoint-store.js";
+export {
+  SqliteSourceObservationStore,
+} from "./infrastructure/sqlite-source-observation-store.js";
 export {
   StaticQueryEmbeddingProviderRegistry,
   StaticVectorIndexConnectorRegistry,
@@ -416,6 +439,16 @@ export {
   type QueryEmbeddingProviderResolver,
   type VectorIndexConnectorResolver,
 } from "./ports/managed-document-search.js";
+export {
+  SourceObservationStoreConflict,
+  SourceObservationStoreUnavailable,
+  type CommitSourceObservationInput,
+  type CommitSourceObservationResult,
+  type DeleteSourceObservationResult,
+  type SourceObservationRetentionCandidateInput,
+  type SourceObservationRetentionLease,
+  type SourceObservationStore,
+} from "./ports/source-observation.js";
 export {
   SourceAdapterFault,
   type CredentialResolver,

@@ -46,6 +46,8 @@ export interface MarkdownPublicationEventSink {
 export interface MarkdownPublicationCheckpoint {
   readonly source: KnowledgeSource;
   readonly documentId: string;
+  /** Observation whose derived snapshot is the incremental comparison baseline. */
+  readonly observationId?: string;
   readonly previousChangeToken?: string;
   readonly document?: NormalizedDocument;
   readonly semanticUnits?: readonly DocumentSemanticUnit[];
