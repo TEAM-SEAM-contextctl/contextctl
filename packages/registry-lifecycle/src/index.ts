@@ -10,6 +10,7 @@ export {
   appendCardVersion,
   createCardVersionHistory,
   getCurrentCardVersion,
+  precedesCurrentCardVersion,
   promoteCardVersion,
   withdrawCurrentVersion,
   type CardId,
@@ -93,6 +94,7 @@ export {
   approveCardVersion,
   disableCard,
   rejectCardVersion,
+  rollbackCardVersion,
   type CardDecisionPorts,
   type OperatorDecision,
 } from "./application/approve-card-version.js";

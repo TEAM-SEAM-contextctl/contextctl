@@ -191,10 +191,12 @@ describe("runOperatorCommand", () => {
   });
 
   it("rejects an unknown command and shows usage", async () => {
-    const result = await runOperatorCommand(ports, ["rollback", "unit_a"]);
+    // Was `rollback` until that became a real command. Anything the table does
+    // not carry has to fall here rather than be attempted.
+    const result = await runOperatorCommand(ports, ["purge", "unit_a"]);
 
     expect(result.status).toBe("usage_error");
-    expect(result.output).toContain("unknown command: rollback");
+    expect(result.output).toContain("unknown command: purge");
     expect(result.output).toContain("usage:");
   });
 
@@ -426,6 +428,162 @@ describe("runOperatorCommand", () => {
 
       expect(result.status).toBe("ok");
       expect(result.output).toContain("no scope versions have been processed yet");
+    });
+  });
+
+  describe("rollback", () => {
+    // 두 개의 validated 버전을 가진 Card. 픽스처의 unit_a는 validated 하나와
+    // draft 하나여서 되돌릴 곳이 없다.
+    let twoPorts: OperatorCommandPorts;
+    let twoEvents: SqliteLifecycleEventStore;
+
+    beforeEach(async () => {
+      const twoDatabase = openRegistryDatabase(":memory:");
+      const store = new SqliteCardStore(twoDatabase);
+      twoEvents = new SqliteLifecycleEventStore(twoDatabase);
+      twoPorts = {
+        ...ports,
+        cards: store,
+        scopes: new SqliteScopeReachabilityStore(twoDatabase),
+      };
+      await store.saveCard(
+        cardWith("unit_b", [
+          version("cv_first", "unit_b", "validated"),
+          version("cv_second", "unit_b", "validated"),
+          version("cv_draft", "unit_b", "draft"),
+        ]),
+        [],
+      );
+      await runOperatorCommand(twoPorts, [
+        "approve",
+        "unit_b",
+        "cv_second",
+        "--by",
+        "operator@example.test",
+      ]);
+    });
+
+    async function currentVersionId(): Promise<string | undefined> {
+      return (await twoPorts.cards.findCard("unit_b"))?.versions
+        .currentVersionId;
+    }
+
+    it("moves the pointer back to an earlier version", async () => {
+      const result = await runOperatorCommand(twoPorts, [
+        "rollback",
+        "unit_b",
+        "cv_first",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      expect(result).toEqual({
+        status: "ok",
+        output: "rolled unit_b back to cv_first",
+      });
+      expect(await currentVersionId()).toBe("cv_first");
+    });
+
+    it("leaves the version history intact", async () => {
+      await runOperatorCommand(twoPorts, [
+        "rollback",
+        "unit_b",
+        "cv_first",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      const card = await twoPorts.cards.findCard("unit_b");
+      expect(card?.versions.versions.map((entry) => entry.id)).toEqual([
+        "cv_first",
+        "cv_second",
+        "cv_draft",
+      ]);
+    });
+
+    it("refuses a target that does not precede the current version", async () => {
+      // Reaching for a rollback and mistyping the id must not promote something
+      // forward under that word.
+      const result = await runOperatorCommand(twoPorts, [
+        "rollback",
+        "unit_b",
+        "cv_second",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      expect(result.status).toBe("refused");
+      expect(result.output).toContain("does not precede the current version");
+      expect(await currentVersionId()).toBe("cv_second");
+    });
+
+    it("refuses a draft target even though it was never current", async () => {
+      const result = await runOperatorCommand(twoPorts, [
+        "rollback",
+        "unit_b",
+        "cv_draft",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      expect(result.status).toBe("refused");
+      expect(await currentVersionId()).toBe("cv_second");
+    });
+
+    it("records the move as a promotion whose previous version came later", async () => {
+      await runOperatorCommand(twoPorts, [
+        "rollback",
+        "unit_b",
+        "cv_first",
+        "--by",
+        "operator@example.test",
+        "--note",
+        "회귀 확인 후 되돌림",
+      ]);
+
+      // One event kind covers both directions; the pair of ids is what says
+      // this was a rollback.
+      expect((await twoEvents.listForCard("unit_b")).at(-1)).toMatchObject({
+        kind: "card_version_promoted",
+        versionId: "cv_first",
+        previousVersionId: "cv_second",
+        decidedBy: "operator@example.test",
+        note: "회귀 확인 후 되돌림",
+      });
+    });
+
+    it("requires --by like every other operator decision", async () => {
+      const result = await runOperatorCommand(twoPorts, [
+        "rollback",
+        "unit_b",
+        "cv_first",
+      ]);
+
+      expect(result.status).toBe("usage_error");
+      expect(result.output).toContain("--by is required");
+      expect(await currentVersionId()).toBe("cv_second");
+    });
+
+    it("refuses a rollback on a Card that serves nothing", async () => {
+      await runOperatorCommand(twoPorts, [
+        "disable",
+        "unit_b",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      const result = await runOperatorCommand(twoPorts, [
+        "rollback",
+        "unit_b",
+        "cv_first",
+        "--by",
+        "operator@example.test",
+      ]);
+
+      // There is no "back" from nothing. Re-approving is the way forward, and
+      // that path already exists.
+      expect(result.status).toBe("refused");
+      expect(await currentVersionId()).toBeUndefined();
     });
   });
 });

@@ -1,11 +1,13 @@
 import {
   getCurrentCardVersion,
+  precedesCurrentCardVersion,
   promoteCardVersion,
   withdrawCurrentVersion,
   type CardId,
   type CardVersionId,
 } from "../domain/card-version.js";
 import { withCardVersions, type ContextCard } from "../domain/context-card.js";
+import { CardVersionInvariantError } from "../domain/errors.js";
 import type { LifecycleEvent } from "../domain/lifecycle-event.js";
 import { CardNotFoundError } from "./errors.js";
 import type { CardStore } from "../ports/card-store.js";
@@ -51,6 +53,37 @@ export async function approveCardVersion(
     decidedBy: decision.decidedBy,
     note: decision.note,
   });
+}
+
+/**
+ * Moves the current pointer back to an earlier Card Version.
+ *
+ * The pointer move itself is what `approveCardVersion` already does, and the
+ * domain applies the same rule to both directions: only a validated version
+ * may become current. What this adds is the direction check. An operator
+ * reaching for a rollback has a version in mind that already served, and
+ * mistyping that id into a plain approval would promote something forward
+ * under the word "rollback" — the opposite of the intent, recorded as though
+ * it had been meant.
+ *
+ * No new event kind: `card_version_promoted` carries `previousVersionId`, and
+ * comparing the two ids against the history is what tells a rollback from a
+ * forward promotion in the trail.
+ */
+export async function rollbackCardVersion(
+  ports: CardDecisionPorts,
+  cardId: CardId,
+  versionId: CardVersionId,
+  decision: OperatorDecision,
+): Promise<ContextCard> {
+  const card = await loadCard(ports, cardId);
+  if (!precedesCurrentCardVersion(card.versions, versionId)) {
+    throw new CardVersionInvariantError(
+      `card version ${versionId} does not precede the current version of ${cardId}, so it cannot be a rollback`,
+    );
+  }
+
+  return approveCardVersion(ports, cardId, versionId, decision);
 }
 
 /**

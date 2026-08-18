@@ -80,6 +80,30 @@ export function withdrawCurrentVersion(
   return { ...history, currentVersionId: undefined };
 }
 
+/**
+ * Whether `versionId` sits before the current pointer in the history.
+ *
+ * Append order is the only ordering that exists here: versions carry a
+ * `createdAt`, but two written in the same millisecond would tie, and the
+ * stored order is what the append-only history actually guarantees. False when
+ * the Card serves nothing, because there is no "back" to go to.
+ */
+export function precedesCurrentCardVersion(
+  history: CardVersionHistory,
+  versionId: CardVersionId,
+): boolean {
+  if (history.currentVersionId === undefined) {
+    return false;
+  }
+  const target = history.versions.findIndex(
+    (version) => version.id === versionId,
+  );
+  const current = history.versions.findIndex(
+    (version) => version.id === history.currentVersionId,
+  );
+  return target !== -1 && current !== -1 && target < current;
+}
+
 export function getCurrentCardVersion(
   history: CardVersionHistory,
 ): CardVersion | undefined {
