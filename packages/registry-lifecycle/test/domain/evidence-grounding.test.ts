@@ -153,4 +153,108 @@ describe("groundCardVersion", () => {
       "scope.present",
     ]);
   });
+
+  describe("approved-card-read-v1 limits", () => {
+    // Nothing here is truncated. A description cut mid-sentence still reads
+    // like a description, so it would be served as if it were whole and the
+    // operator who could have fixed it never learns it was too long.
+    function ground(overrides: Partial<CardMeaning>) {
+      return groundCardVersion(documentCoordinate, [documentScope], {
+        ...meaning,
+        ...overrides,
+      });
+    }
+
+    it("rejects a description over 1,024 code units", () => {
+      const result = ground({ description: "가".repeat(1_025) });
+
+      expect(rules(result)).toContain("meaning.description");
+      expect(result.outcome).toBe("rejected");
+    });
+
+    it("accepts a description exactly at the limit", () => {
+      expect(ground({ description: "가".repeat(1_024) }).outcome).toBe(
+        "validated",
+      );
+    });
+
+    it("rejects more than 16 representative questions", () => {
+      const result = ground({
+        representativeQuestions: Array.from(
+          { length: 17 },
+          (_value, index) => `질문 ${index}`,
+        ),
+      });
+
+      expect(rules(result)).toContain("meaning.representativeQuestions");
+    });
+
+    it("rejects a single question over 512 code units", () => {
+      const result = ground({ representativeQuestions: ["가".repeat(513)] });
+
+      expect(rules(result)).toContain("meaning.representativeQuestions");
+    });
+
+    it("rejects more than 32 aliases and an alias over 128 units", () => {
+      const tooMany = ground({
+        aliases: Array.from({ length: 33 }, (_value, index) => `alias${index}`),
+      });
+      const tooLong = ground({ aliases: ["a".repeat(129)] });
+
+      expect(rules(tooMany)).toContain("meaning.aliases");
+      expect(rules(tooLong)).toContain("meaning.aliases");
+    });
+
+    it("rejects more than 64 keywords and a keyword over 64 units", () => {
+      const tooMany = ground({
+        keywords: Array.from({ length: 65 }, (_value, index) => `kw${index}`),
+      });
+      const tooLong = ground({ keywords: ["k".repeat(65)] });
+
+      expect(rules(tooMany)).toContain("meaning.keywords");
+      expect(rules(tooLong)).toContain("meaning.keywords");
+    });
+
+    it("rejects a blank entry inside an optional list", () => {
+      // The list may be empty, but an entry that is present must say something.
+      expect(rules(ground({ aliases: ["payments", "   "] }))).toContain(
+        "meaning.aliases",
+      );
+    });
+
+    it("rejects control characters anywhere in the meaning", () => {
+      // They break canonical comparison, so a snapshot version would depend on
+      // bytes no reader can see.
+      expect(rules(ground({ description: "결제\u0007 실패" }))).toContain(
+        "meaning.description",
+      );
+      expect(rules(ground({ keywords: ["pay\u0000ments"] }))).toContain(
+        "meaning.keywords",
+      );
+    });
+
+    it("rejects more than 64 scopes on one Card", () => {
+      // Splitting the Card is the answer. A Card that silently covers fewer
+      // scopes than it claims is worse than one an operator was told to split.
+      const scopes = Array.from({ length: 65 }, (_value, index) => ({
+        ...documentScope,
+        reference: {
+          scopeId: `scope_${index}`,
+          scopeVersion: "scpv_aaaa",
+        },
+      }));
+
+      const result = groundCardVersion(documentCoordinate, scopes, meaning);
+
+      expect(rules(result)).toContain("scope.count");
+    });
+
+    it("accepts exactly 64 scopes", () => {
+      const scopes = Array.from({ length: 64 }, () => documentScope);
+
+      expect(rules(groundCardVersion(documentCoordinate, scopes, meaning))).not.toContain(
+        "scope.count",
+      );
+    });
+  });
 });

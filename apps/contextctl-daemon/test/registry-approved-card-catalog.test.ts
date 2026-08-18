@@ -10,6 +10,8 @@ import {
   openRegistryDatabase,
   SqliteCardStore,
   withCardVersions,
+  toApprovedCardCatalogSnapshot,
+  type ApprovedCardCatalogSnapshot,
   type CardCatalogEntry,
   type CardDecisionPorts,
   type CardStore,
@@ -104,8 +106,8 @@ class FixedEntryCardStore implements CardStore {
     return Promise.resolve([]);
   }
 
-  listApprovedCards(): Promise<readonly CardCatalogEntry[]> {
-    return Promise.resolve(this.#entries);
+  listApprovedCards(): Promise<ApprovedCardCatalogSnapshot> {
+    return Promise.resolve(toApprovedCardCatalogSnapshot(this.#entries));
   }
 
   saveCard(): Promise<void> {

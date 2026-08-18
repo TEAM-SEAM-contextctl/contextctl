@@ -26,6 +26,8 @@ export {
   type SourceId,
 } from "./identifiers.js";
 export {
+  canonicalContractByteLength,
+  canonicalContractJson,
   ContractValidationError,
   type ContractValidationIssue,
 } from "./contract-validation.js";

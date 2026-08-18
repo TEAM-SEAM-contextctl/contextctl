@@ -6,6 +6,10 @@ import {
   type CardId,
   type CardVersionId,
 } from "../domain/card-version.js";
+import {
+  checkCatalogSnapshotLimits,
+  toCardCatalogEntry,
+} from "../domain/card-catalog.js";
 import { withCardVersions, type ContextCard } from "../domain/context-card.js";
 import { CardVersionInvariantError } from "../domain/errors.js";
 import type { LifecycleEvent } from "../domain/lifecycle-event.js";
@@ -42,8 +46,10 @@ export async function approveCardVersion(
   const card = await loadCard(ports, cardId);
   const previousVersionId = card.versions.currentVersionId;
   const versions = promoteCardVersion(card.versions, versionId);
+  const promoted = withCardVersions(card, versions);
+  await refuseOversizedCatalog(ports, promoted);
 
-  return save(ports, withCardVersions(card, versions), {
+  return save(ports, promoted, {
     id: ports.ids.nextId(),
     kind: "card_version_promoted",
     cardId,
@@ -138,6 +144,34 @@ export async function disableCard(
     decidedBy: decision.decidedBy,
     note: decision.note,
   });
+}
+
+/**
+ * Refuses a promotion that would push the catalog past its ceilings.
+ *
+ * Checked here rather than when the catalog is read: a snapshot that cannot be
+ * served is a decision to undo, and undoing it after the pointer moved means
+ * the Card was briefly current and Selection may already have read it.
+ */
+async function refuseOversizedCatalog(
+  ports: CardDecisionPorts,
+  promoted: ContextCard,
+): Promise<void> {
+  const entry = toCardCatalogEntry(promoted);
+  if (entry === undefined) {
+    return;
+  }
+
+  const current = await ports.cards.listApprovedCards();
+  const findings = checkCatalogSnapshotLimits([
+    ...current.cards.filter((card) => card.cardId !== entry.cardId),
+    entry,
+  ]);
+  if (findings.length > 0) {
+    throw new CardVersionInvariantError(
+      findings.map((finding) => finding.message).join("; "),
+    );
+  }
 }
 
 async function loadCard(

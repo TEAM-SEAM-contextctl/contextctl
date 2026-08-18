@@ -1,6 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { CardCatalogEntry } from "../../domain/card-catalog.js";
+import {
+  toApprovedCardCatalogSnapshot,
+  type ApprovedCardCatalogSnapshot,
+  type CardCatalogEntry,
+} from "../../domain/card-catalog.js";
 import type {
   CardId,
   CardValidationState,
@@ -70,7 +74,7 @@ export class SqliteCardStore implements CardStore {
     return rows.map(toCardVersion);
   }
 
-  async listApprovedCards(): Promise<readonly CardCatalogEntry[]> {
+  async listApprovedCards(): Promise<ApprovedCardCatalogSnapshot> {
     // One join, not one query per Card: the join to current_version_id both
     // pulls the meaning alongside the scopes and drops unapproved Cards.
     const rows = this.#database
@@ -85,13 +89,15 @@ export class SqliteCardStore implements CardStore {
       )
       .all() as SqlRow[];
 
-    return rows.map((row) => ({
+    const cards: readonly CardCatalogEntry[] = rows.map((row) => ({
       cardId: readText(row, "card_id"),
       versionId: readText(row, "version_id"),
       meaning: readMeaning(row),
       policy: readPolicy(row),
       scopes: readJson<readonly RetrievalScope[]>(row, "scopes"),
     }));
+
+    return toApprovedCardCatalogSnapshot(cards);
   }
 
   async saveCard(
