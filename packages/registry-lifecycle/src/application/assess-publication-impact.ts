@@ -1,4 +1,4 @@
-import type { IngestionPublication } from "@contextctl/contracts";
+import type { IngestionPublicationV2 as IngestionPublication } from "@contextctl/contracts";
 
 import { analyzeCardImpact, type CardImpact } from "../domain/card-impact.js";
 import type { CardVersion } from "../domain/card-version.js";

@@ -1,6 +1,7 @@
 import type {
-  PublishedChange,
-  PublishedKnowledgeUnit,
+  PublishedChangedFieldV2 as PublishedChangedField,
+  PublishedChangeV2 as PublishedChange,
+  PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 
 import type { CardVersion } from "./card-version.js";
@@ -207,15 +208,60 @@ function findIndexDrift(
   });
 }
 
+/**
+ * What each changed field means for a Card, as a rule table.
+ *
+ * Publication v2 closed `changedFields` into five names, so the vocabulary can
+ * be enumerated instead of matched loosely. `undefined` means the field cannot
+ * make a Card stale on its own — the entry still has to exist, because a new
+ * name appearing in the contract must break the build rather than fall through
+ * a default and quietly decide nothing.
+ */
+const CHANGED_FIELD_RULES: Readonly<
+  Record<PublishedChangedField, { rule: string; describe: string } | undefined>
+> = {
+  facts: {
+    rule: "change.facts",
+    describe:
+      "the observed facts the card text was written from are no longer the same",
+  },
+  kind: {
+    rule: "change.kind",
+    describe:
+      "the knowledge unit changed kind, so the card may describe a different sort of thing",
+  },
+  "published.scopes": {
+    rule: "change.publishedScopes",
+    describe:
+      "the published search range changed, so the pinned scope reference needs a new revision",
+  },
+  "source.coordinate": {
+    rule: "change.sourceCoordinate",
+    describe: "the machine coordinate moved under the card",
+  },
+  // Provenance records how the observation was produced, not what the knowledge
+  // says. Anything that actually changes what a query can retrieve shows up as
+  // index drift or a scope change, both of which are judged above; treating a
+  // policy-version bump as staleness would flag every Card on every rebuild.
+  provenance: undefined,
+};
+
 function describeContentChange(
   change: Extract<PublishedChange, { kind: "added" | "updated" }>,
 ): CardImpactReason[] {
-  return change.kind === "updated"
-    ? [
-        {
-          rule: "change.updated",
-          message: `knowledge unit ${change.knowledgeUnitId} changed ${change.changedFields.join(", ")}`,
-        },
-      ]
-    : [];
+  if (change.kind !== "updated") {
+    return [];
+  }
+
+  return change.changedFields.flatMap((field) => {
+    const entry = CHANGED_FIELD_RULES[field];
+    return entry === undefined
+      ? []
+      : [
+          {
+            rule: entry.rule,
+            message: `knowledge unit ${change.knowledgeUnitId}: ${entry.describe}`,
+          },
+        ];
+  });
 }

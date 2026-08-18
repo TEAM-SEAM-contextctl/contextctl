@@ -1,7 +1,7 @@
 import type {
-  IngestionPublication,
+  IngestionPublicationV2 as IngestionPublication,
   PublicationId,
-  PublishedKnowledgeUnit,
+  PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 
 import type { CardVersion } from "../domain/card-version.js";
@@ -168,7 +168,7 @@ async function toCardVersion(
   const scopes = unit.publishedScopes.map(translatePublishedScope);
   const meaning = await ports.meanings.generate({
     coordinate: unit.sourceCoordinate,
-    evidence: unit.evidence,
+    facts: unit.facts,
   });
   const grounding = groundCardVersion(unit.sourceCoordinate, scopes, meaning);
 
