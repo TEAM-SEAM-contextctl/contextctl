@@ -86,10 +86,21 @@ export {
 export {
   DocumentIndexPublisher,
   DocumentIndexPublicationError,
+  DEFAULT_INDEX_STAGING_PUBLICATION_LEASE_MS,
   type DocumentIndexPublisherDependencies,
   type DocumentIndexPublicationErrorCode,
   type PublishDocumentIndexCommand,
 } from "./application/publish-document-index.js";
+export {
+  FailedIndexStagingCleanup,
+  DEFAULT_FAILED_INDEX_STAGING_CLEANUP_POLICY,
+  type FailedIndexStagingCleanupDependencies,
+  type FailedIndexStagingCleanupItem,
+  type FailedIndexStagingCleanupItemCode,
+  type FailedIndexStagingCleanupOutcome,
+  type FailedIndexStagingCleanupPolicy,
+  type FailedIndexStagingCleanupReport,
+} from "./application/cleanup-failed-index-staging.js";
 export {
   IncrementalDocumentReindexer,
   ReindexDocumentError,
@@ -220,6 +231,9 @@ export {
   InMemoryIndexPublicationStoreV2,
 } from "./infrastructure/in-memory-index-publication-store.js";
 export {
+  InMemoryIndexStagingAttemptStore,
+} from "./infrastructure/in-memory-index-staging-attempt-store.js";
+export {
   InMemoryIngestionPublicationStore,
 } from "./infrastructure/in-memory-ingestion-publication-store.js";
 export {
@@ -240,6 +254,9 @@ export {
 export {
   SqliteIndexPublicationStore,
 } from "./infrastructure/sqlite-index-publication-store.js";
+export {
+  SqliteIndexStagingAttemptStore,
+} from "./infrastructure/sqlite-index-staging-attempt-store.js";
 export {
   IngestionPublicationStoreCorrupt,
   IngestionPublicationStoreUnavailable,
@@ -366,6 +383,20 @@ export {
   type PublishedIndexVersionV2,
   type PublishedScopeCatalogEntry,
 } from "./ports/index-publication-store.js";
+export {
+  IndexStagingAttemptStoreConflict,
+  IndexStagingAttemptStoreUnavailable,
+  type AcquireIndexStagingPublicationInput,
+  type AcquireIndexStagingPublicationResult,
+  type ClaimIndexStagingCleanupInput,
+  type IndexStagingAttempt,
+  type IndexStagingAttemptKey,
+  type IndexStagingAttemptState,
+  type IndexStagingAttemptStore,
+  type IndexStagingLeaseInput,
+  type RenewIndexStagingCleanupInput,
+  type RenewIndexStagingPublicationInput,
+} from "./ports/index-staging-attempt.js";
 export {
   IngestionPublicationStoreConflict,
   MarkdownPublicationCheckpointConflict,

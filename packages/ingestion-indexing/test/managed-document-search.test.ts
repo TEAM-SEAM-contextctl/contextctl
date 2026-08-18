@@ -5,6 +5,7 @@ import {
   DocumentIndexPublisher,
   EmbeddingProviderFault,
   InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
+  InMemoryIndexStagingAttemptStore,
   InMemoryVectorIndexAdapter,
   ManagedDocumentSearch,
   StaticQueryEmbeddingProviderRegistry,
@@ -215,6 +216,7 @@ async function createHarness(
   const publication = await new DocumentIndexPublisher({
     vectorIndex,
     publications,
+    stagingAttempts: new InMemoryIndexStagingAttemptStore(),
     clock: () => "2026-08-13T00:00:00.000Z",
   }).publish({
     stateNamespaceId: "state_test",

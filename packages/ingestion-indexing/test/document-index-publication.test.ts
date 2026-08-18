@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DocumentIndexPublisher,
   InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
+  InMemoryIndexStagingAttemptStore,
   InMemoryVectorIndexAdapter,
   PublishedDocumentScopeError,
   computeRecordSetDigest,
@@ -33,12 +34,28 @@ const profile: EmbeddingProfile = {
   textMeasureProfileVersion: "unicode-estimate-v1",
 };
 
+function createPublisher(
+  dependencies: Omit<
+    ConstructorParameters<typeof DocumentIndexPublisher>[0],
+    "stagingAttempts"
+  > & {
+    readonly stagingAttempts?: InMemoryIndexStagingAttemptStore;
+  },
+): DocumentIndexPublisher {
+  const { stagingAttempts, ...publisherDependencies } = dependencies;
+  return new DocumentIndexPublisher({
+    ...publisherDependencies,
+    stagingAttempts:
+      stagingAttempts ?? new InMemoryIndexStagingAttemptStore(),
+  });
+}
+
 describe("DocumentIndexPublisher", () => {
   it("publishes a verified Manifest with deterministic document and semantic Scopes", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
     const publications = new InMemoryIndexPublicationStore();
     const command = createCommand(2);
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications,
       clock: () => "2026-08-09T00:00:00.000Z",
@@ -85,7 +102,7 @@ describe("DocumentIndexPublisher", () => {
     const vectorIndex = new RecordingVectorIndex(delegate);
     const publications = new InMemoryIndexPublicationStore();
     const command = createCommand(2);
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications,
       batchSize: 1,
@@ -110,7 +127,7 @@ describe("DocumentIndexPublisher", () => {
   it("rejects a different Scope definition under the same immutable Index version", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
     const publications = new InMemoryIndexPublicationStore();
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications,
       clock: () => "2026-08-09T00:00:00.000Z",
@@ -129,7 +146,7 @@ describe("DocumentIndexPublisher", () => {
   it("does not reuse an immutable version across security isolation domains", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
     const publications = new InMemoryIndexPublicationStore();
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications,
       clock: () => "2026-08-09T00:00:00.000Z",
@@ -148,7 +165,7 @@ describe("DocumentIndexPublisher", () => {
   it("does not move current backwards when an older version is committed again", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
     const publications = new InMemoryIndexPublicationStore();
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications,
       clock: () => "2026-08-09T00:00:00.000Z",
@@ -170,12 +187,12 @@ describe("DocumentIndexPublisher", () => {
       { semanticUnitIds: ["unit_payments"] },
       { semanticUnitIds: ["unit_payment_failures"] },
     ];
-    const firstPublisher = new DocumentIndexPublisher({
+    const firstPublisher = createPublisher({
       vectorIndex: new InMemoryVectorIndexAdapter(),
       publications: new InMemoryIndexPublicationStore(),
       clock: () => "2026-08-09T00:00:00.000Z",
     });
-    const secondPublisher = new DocumentIndexPublisher({
+    const secondPublisher = createPublisher({
       vectorIndex: new InMemoryVectorIndexAdapter(),
       publications: new InMemoryIndexPublicationStore(),
       clock: () => "2026-08-09T00:00:00.000Z",
@@ -201,18 +218,21 @@ describe("DocumentIndexPublisher", () => {
   it("keeps the last-known-good current version when a later batch is interrupted", async () => {
     const delegate = new InMemoryVectorIndexAdapter();
     const publications = new InMemoryIndexPublicationStore();
-    const initialPublisher = new DocumentIndexPublisher({
+    const stagingAttempts = new InMemoryIndexStagingAttemptStore();
+    const initialPublisher = createPublisher({
       vectorIndex: delegate,
       publications,
+      stagingAttempts,
       batchSize: 1,
       clock: () => "2026-08-09T00:00:00.000Z",
     });
     const initial = await initialPublisher.publish(createCommand(1));
     const interrupted = new RecordingVectorIndex(delegate);
     interrupted.failUpsertCall = 2;
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex: interrupted,
       publications,
+      stagingAttempts,
       batchSize: 1,
       clock: () => "2026-08-09T01:00:00.000Z",
     });
@@ -228,9 +248,10 @@ describe("DocumentIndexPublisher", () => {
       await publications.findVersion(versionIdentity(createCommand(3))),
     ).toBeUndefined();
 
-    const retried = await new DocumentIndexPublisher({
+    const retried = await createPublisher({
       vectorIndex: delegate,
       publications,
+      stagingAttempts,
       batchSize: 1,
       clock: () => "2026-08-09T01:00:00.000Z",
     }).publish(createCommand(3));
@@ -251,7 +272,7 @@ describe("DocumentIndexPublisher", () => {
     const vectorIndex = new RecordingVectorIndex(delegate);
     vectorIndex.omitRecordAfterUpsert = true;
     const publications = new InMemoryIndexPublicationStore();
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications,
       clock: () => "2026-08-09T00:00:00.000Z",
@@ -272,7 +293,7 @@ describe("DocumentIndexPublisher", () => {
     const command = createCommand(1);
     vectorIndex.reportedBeforeUpsert = [conflictingStoredRecord(command)];
     const publications = new InMemoryIndexPublicationStore();
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications,
       clock: () => "2026-08-09T00:00:00.000Z",
@@ -299,7 +320,7 @@ describe("DocumentIndexPublisher", () => {
         },
       },
     ];
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex,
       publications: new InMemoryIndexPublicationStore(),
     });
@@ -311,7 +332,7 @@ describe("DocumentIndexPublisher", () => {
   });
 
   it("rejects semantic Scope Units outside the Manifest", async () => {
-    const publisher = new DocumentIndexPublisher({
+    const publisher = createPublisher({
       vectorIndex: new InMemoryVectorIndexAdapter(),
       publications: new InMemoryIndexPublicationStore(),
     });

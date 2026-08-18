@@ -24,6 +24,7 @@ import {
   ManagedDocumentSearch,
   PublicationReadyReconciler,
   SqliteIndexPublicationStore,
+  SqliteIndexStagingAttemptStore,
   SqliteIngestionPublicationStore,
   SqliteMarkdownPublicationCheckpointStore,
   StaticQueryEmbeddingProviderRegistry,
@@ -163,6 +164,77 @@ describe("durable Index control plane", () => {
         code: "schema_invalid",
       }),
     );
+  });
+
+  it("migrates schema v2 and preserves failed staging ownership across restart", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "contextctl-staging-state-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "ingestion.sqlite");
+    const initialized = openTestDatabase(databasePath);
+    initialized.close();
+
+    const v2 = new DatabaseSync(databasePath);
+    v2.exec(`
+      DROP INDEX index_staging_attempts_by_eligibility;
+      DROP TABLE index_staging_attempts;
+      PRAGMA user_version = 2;
+    `);
+    v2.close();
+
+    const migrated = openTestDatabase(databasePath);
+    expect(migrated.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: INGESTION_DATABASE_SCHEMA_VERSION,
+    });
+    const attempts = new SqliteIndexStagingAttemptStore(migrated);
+    await attempts.acquirePublication({
+      documentIndexId: "didx_payments",
+      indexVersion: "idxv_aaaa",
+      connectorId: "vector.local",
+      accessHandle: "memory:v1:staging",
+      attemptedAt: "2026-08-14T00:00:00.000Z",
+      leaseId: "lease_durablepublisher",
+      leaseExpiresAt: "2026-08-14T00:15:00.000Z",
+    });
+    await attempts.abandonPublication({
+      documentIndexId: "didx_payments",
+      indexVersion: "idxv_aaaa",
+      leaseId: "lease_durablepublisher",
+    });
+    migrated.close();
+
+    const restarted = openTestDatabase(databasePath);
+    const restored = new SqliteIndexStagingAttemptStore(restarted);
+    await expect(
+      restored.find({
+        documentIndexId: "didx_payments",
+        indexVersion: "idxv_aaaa",
+      }),
+    ).resolves.toMatchObject({
+      state: "pending",
+      connectorId: "vector.local",
+      accessHandle: "memory:v1:staging",
+      firstAttemptedAt: "2026-08-14T00:00:00.000Z",
+    });
+    const claimed = await restored.claimCleanup({
+      eligibleBefore: "2026-08-17T00:00:00.000Z",
+      now: "2026-08-18T00:00:00.000Z",
+      leaseId: "lease_durablecleanup",
+      leaseExpiresAt: "2026-08-18T00:05:00.000Z",
+      limit: 10,
+    });
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]).toMatchObject({
+      state: "cleaning",
+      ownerLeaseId: "lease_durablecleanup",
+    });
+    expect(
+      await restored.releaseCleanup({
+        documentIndexId: "didx_payments",
+        indexVersion: "idxv_aaaa",
+        leaseId: "lease_durablecleanup",
+      }),
+    ).toBe(true);
+    restarted.close();
   });
 
   it.each(["memory", "sqlite"] as const)(
@@ -795,6 +867,7 @@ function createDurableRuntime(
     checkpoints: new SqliteMarkdownPublicationCheckpointStore(database),
     publications: new SqliteIngestionPublicationStore(database),
     indexPublications: new SqliteIndexPublicationStore(database),
+    stagingAttempts: new SqliteIndexStagingAttemptStore(database),
     sourceIds: new UuidSourceIdGenerator(),
     ...(readyNotifier === undefined ? {} : { readyNotifier }),
     clock: () => NOW,

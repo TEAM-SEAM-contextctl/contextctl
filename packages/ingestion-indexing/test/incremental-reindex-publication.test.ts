@@ -13,6 +13,7 @@ import {
   generateManagedChunks,
   IncrementalDocumentReindexer,
   InMemoryIndexPublicationStoreV2,
+  InMemoryIndexStagingAttemptStore,
   InMemoryVectorIndexAdapter,
   MarkdownCapture,
   reconcileSemanticUnitLineage,
@@ -312,6 +313,7 @@ function createHarness(): Harness {
     indexPublisher: new DocumentIndexPublisher({
       vectorIndex,
       publications,
+      stagingAttempts: new InMemoryIndexStagingAttemptStore(),
       clock: () => "2026-08-17T00:00:00.000Z",
     }),
   });
