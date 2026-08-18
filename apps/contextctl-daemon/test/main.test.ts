@@ -326,7 +326,7 @@ describe("createDaemonRuntime", () => {
 
       expect(runtime.embeddingProvider.providerKind).toBe("local");
       expect(runtime.embeddingProfile.id).toBe(
-        "document-granite-97m-multilingual-r2-q8-v1",
+        "document-granite-97m-multilingual-r2-fp32-v1",
       );
     });
 
