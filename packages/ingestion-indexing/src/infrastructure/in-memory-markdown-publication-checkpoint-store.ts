@@ -1,4 +1,5 @@
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
+import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
 import type {
   MarkdownPublicationCheckpoint,
   MarkdownPublicationCheckpointStore,
@@ -35,15 +36,18 @@ export class InMemoryMarkdownPublicationCheckpointStore
 
   async save(checkpoint: MarkdownPublicationCheckpoint): Promise<void> {
     const existing = this.#bySourceId.get(checkpoint.source.id);
+    assertCheckpointSnapshot(checkpoint);
+    const existingDocument = checkpointDocument(existing);
+    const nextDocument = checkpointDocument(checkpoint);
     if (
       existing === undefined ||
       existing.source.targetKey !== checkpoint.source.targetKey ||
       existing.documentId !== checkpoint.documentId ||
       (existing.previousChangeToken !== undefined &&
         checkpoint.previousChangeToken === undefined) ||
-      (existing.document !== undefined &&
-        checkpoint.document !== undefined &&
-        existing.document.sourceId !== checkpoint.document.sourceId)
+      (existingDocument !== undefined &&
+        nextDocument !== undefined &&
+        existingDocument.sourceId !== nextDocument.sourceId)
     ) {
       throw new MarkdownPublicationCheckpointConflict();
     }
@@ -55,5 +59,40 @@ export class InMemoryMarkdownPublicationCheckpointStore
   ): Promise<MarkdownPublicationCheckpoint | undefined> {
     const checkpoint = this.#bySourceId.get(sourceId);
     return checkpoint === undefined ? undefined : structuredClone(checkpoint);
+  }
+}
+
+function checkpointDocument(
+  checkpoint: MarkdownPublicationCheckpoint | undefined,
+) {
+  return checkpoint?.indexingSnapshot?.document ?? checkpoint?.document;
+}
+
+function assertCheckpointSnapshot(
+  checkpoint: MarkdownPublicationCheckpoint,
+): void {
+  if (
+    (checkpoint.document === undefined) !==
+      (checkpoint.semanticUnits === undefined) ||
+    (checkpoint.indexingSnapshot !== undefined &&
+      checkpoint.document !== undefined)
+  ) {
+    throw new MarkdownPublicationCheckpointConflict();
+  }
+  if (checkpoint.indexingSnapshot !== undefined) {
+    try {
+      assertValidDocumentIndexingSnapshot(
+        checkpoint.indexingSnapshot,
+        "previous",
+      );
+    } catch {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
+    if (
+      checkpoint.indexingSnapshot.document.sourceId !== checkpoint.source.id ||
+      checkpoint.indexingSnapshot.document.documentId !== checkpoint.documentId
+    ) {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
   }
 }

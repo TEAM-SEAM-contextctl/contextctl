@@ -4,6 +4,7 @@ import {
   validateDocumentSemanticUnits,
   validateNormalizedDocument,
 } from "../domain/document-model.js";
+import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 import type {
   MarkdownPublicationCheckpoint,
@@ -85,14 +86,16 @@ export class SqliteMarkdownPublicationCheckpointStore
           throw new MarkdownPublicationCheckpointConflict();
         }
         const stored = parseRow(existing);
+        const storedDocument = checkpointDocument(stored);
+        const nextDocument = checkpointDocument(validated);
         if (
           stored.source.targetKey !== validated.source.targetKey ||
           stored.documentId !== validated.documentId ||
           (stored.previousChangeToken !== undefined &&
             validated.previousChangeToken === undefined) ||
-          (stored.document !== undefined &&
-            validated.document !== undefined &&
-            stored.document.sourceId !== validated.document.sourceId)
+          (storedDocument !== undefined &&
+            nextDocument !== undefined &&
+            storedDocument.sourceId !== nextDocument.sourceId)
         ) {
           throw new MarkdownPublicationCheckpointConflict();
         }
@@ -170,7 +173,9 @@ function parseCheckpoint(input: unknown): MarkdownPublicationCheckpoint {
     (candidate.previousChangeToken !== undefined &&
       !isNonEmptyString(candidate.previousChangeToken)) ||
     (candidate.document === undefined) !==
-      (candidate.semanticUnits === undefined)
+      (candidate.semanticUnits === undefined) ||
+    (candidate.indexingSnapshot !== undefined &&
+      candidate.document !== undefined)
   ) {
     throw new MarkdownPublicationCheckpointConflict();
   }
@@ -187,7 +192,27 @@ function parseCheckpoint(input: unknown): MarkdownPublicationCheckpoint {
   ) {
     throw new MarkdownPublicationCheckpointConflict();
   }
+  if (candidate.indexingSnapshot !== undefined) {
+    try {
+      assertValidDocumentIndexingSnapshot(
+        candidate.indexingSnapshot,
+        "previous",
+      );
+    } catch {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
+    if (
+      candidate.indexingSnapshot.document.sourceId !== candidate.source.id ||
+      candidate.indexingSnapshot.document.documentId !== candidate.documentId
+    ) {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
+  }
   return structuredClone(candidate);
+}
+
+function checkpointDocument(checkpoint: MarkdownPublicationCheckpoint) {
+  return checkpoint.indexingSnapshot?.document ?? checkpoint.document;
 }
 
 function mapCheckpointError(error: unknown): Error {

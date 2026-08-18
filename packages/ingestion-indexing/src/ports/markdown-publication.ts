@@ -7,6 +7,7 @@ import type {
   DocumentSemanticUnit,
   NormalizedDocument,
 } from "../domain/document-model.js";
+import type { DocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 
 export type MarkdownPublicationStage =
@@ -16,8 +17,7 @@ export type MarkdownPublicationStage =
   | "capture"
   | "segmentation"
   | "chunking"
-  | "embedding"
-  | "index_publication"
+  | "index_update"
   | "ingestion_publication"
   | "ready_notification";
 
@@ -49,6 +49,8 @@ export interface MarkdownPublicationCheckpoint {
   readonly previousChangeToken?: string;
   readonly document?: NormalizedDocument;
   readonly semanticUnits?: readonly DocumentSemanticUnit[];
+  /** Complete durable baseline used by incremental re-indexing. */
+  readonly indexingSnapshot?: DocumentIndexingSnapshot;
 }
 
 export interface RegisterMarkdownCheckpointResult {

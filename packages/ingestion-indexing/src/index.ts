@@ -3,7 +3,9 @@ export {
   type CaptureMarkdownCommand,
 } from "./application/markdown-capture.js";
 export {
+  buildEmptyMarkdownPublication,
   buildMarkdownPublication,
+  type BuildEmptyMarkdownPublicationInput,
   type BuildMarkdownPublicationInput,
 } from "./application/build-markdown-publication.js";
 export {
@@ -48,6 +50,7 @@ export {
   type ManagedChunkIdSource,
 } from "./domain/managed-chunk-generation.js";
 export {
+  assertValidDocumentIndexingSnapshot,
   decideDocumentCapture,
   documentIndexEquivalenceViolations,
   DocumentIncrementalUpdateError,

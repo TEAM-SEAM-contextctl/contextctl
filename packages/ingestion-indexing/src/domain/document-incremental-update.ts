@@ -200,11 +200,11 @@ export function decideDocumentCapture(input: {
 export function planDocumentIncrementalUpdate(
   input: PlanDocumentIncrementalUpdateInput,
 ): DocumentIncrementalUpdatePlan {
-  validateSnapshot(input.current, "current");
+  assertValidDocumentIndexingSnapshot(input.current, "current");
   if (input.previous === undefined) {
     return fullRebuildPlan(undefined, input.current, ["baseline_missing"]);
   }
-  validateSnapshot(input.previous, "previous");
+  assertValidDocumentIndexingSnapshot(input.previous, "previous");
   assertSameDocument(input.previous, input.current);
 
   const rebuildReasons = fullRebuildReasons(input.previous, input.current);
@@ -387,9 +387,10 @@ function blockDigests(
   return new Map(document.blocks.map((block) => [block.id, block.contentDigest]));
 }
 
-function validateSnapshot(
+/** Validates one persisted or newly captured indexing baseline. */
+export function assertValidDocumentIndexingSnapshot(
   snapshot: DocumentIndexingSnapshot,
-  side: "current" | "previous",
+  side: "current" | "previous" = "current",
 ): void {
   let indexingPolicy: DocumentIndexingPolicySet;
   try {

@@ -3,6 +3,7 @@ import { ManagedDocumentSearch } from "../application/managed-document-search.js
 import { MarkdownCapture } from "../application/markdown-capture.js";
 import { MarkdownPublicationWorkflow } from "../application/markdown-publication-workflow.js";
 import { DocumentIndexPublisher } from "../application/publish-document-index.js";
+import { IncrementalDocumentReindexer } from "../application/reindex-document-incrementally.js";
 import { SourceManagement } from "../application/source-management.js";
 import type { BlockIdSource } from "../domain/document-capture.js";
 import type { EmbeddingProfile } from "../domain/embedding-profile.js";
@@ -102,6 +103,11 @@ export function createLocalMarkdownPublicationRuntime(
       ? {}
       : { policy: options.embeddingPolicy }),
   });
+  const indexPublisher = new DocumentIndexPublisher({
+    vectorIndex,
+    publications: indexPublications,
+    clock,
+  });
   const workflow = new MarkdownPublicationWorkflow({
     sourceManagement,
     checkpoints,
@@ -110,11 +116,11 @@ export function createLocalMarkdownPublicationRuntime(
         parser,
         ids: new StableBlockIdSource(command.observationId),
       }).capture(command),
-    embeddingPipeline,
-    indexPublisher: new DocumentIndexPublisher({
+    documentReindexer: new IncrementalDocumentReindexer({
       vectorIndex,
       publications: indexPublications,
-      clock,
+      embeddingPipeline,
+      indexPublisher,
     }),
     publications,
     readyNotifier: options.readyNotifier ?? readyNotifications,
