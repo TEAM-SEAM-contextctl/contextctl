@@ -262,7 +262,13 @@ describe("claimPublication chain order", () => {
     expect(result).toEqual({
       status: "deferred",
       publicationId: "pub_second",
+      sourceId: "src_payments",
       awaiting: "pub_first",
+      diagnostic: {
+        code: "publication_chain_gap",
+        detail:
+          "publication pub_second follows pub_first, which has not been consumed",
+      },
     });
     // Nothing claimed, so the checkpoint did not move and the notification is
     // still work for the reconciler.
@@ -310,6 +316,32 @@ describe("claimPublication chain order", () => {
 
     expect(result.status).toBe("forked");
     expect(ports.processedCalls).toEqual(["pub_first"]);
+  });
+
+  /**
+   * A refusal has to say which Source it belongs to and what kind it is.
+   *
+   * The daemon degrades one Source's lane, not Registry as a whole, and it groups
+   * refusals by cause. Both facts have to travel with the result: deriving the
+   * Source would mean reading back the Publication that was just refused, and a
+   * sentence cannot be grouped.
+   */
+  it("reports a fork with its Source and a machine-readable code", async () => {
+    const { first } = chain();
+    const rival = createIngestionPublicationFixture("pub_rival");
+    const ports = createFakePorts([first, rival]);
+
+    await consume(ports, "pub_first");
+    const result = await consume(ports, "pub_rival");
+
+    if (result.status !== "forked") {
+      throw new Error(`expected a fork, got ${result.status}`);
+    }
+    expect(result.sourceId).toBe("src_payments");
+    expect(result.diagnostic.code).toBe("publication_chain_forked");
+    // The specific collision belongs in the detail: an operator resolving this
+    // by hand needs the ids, and a code carrying them could not be grouped.
+    expect(result.diagnostic.detail).toContain("pub_rival");
   });
 
   it("treats redelivery of a consumed Publication as already claimed", async () => {

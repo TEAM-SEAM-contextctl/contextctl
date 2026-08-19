@@ -10,6 +10,7 @@ import {
   type CardStore,
   type CardValidationState,
   type ClaimPublicationPorts,
+  type ConsumptionDiagnostic,
   type ContextCard,
   type GroundingFinding,
   type LifecycleEvent,
@@ -88,7 +89,9 @@ export type RegistryIntakeResult =
       readonly status: "deferred";
       readonly publicationId: string;
       readonly cardVersions: readonly IntakenCardVersion[];
+      readonly sourceId: string;
       readonly awaiting: string;
+      readonly diagnostic: ConsumptionDiagnostic;
     }
   /**
    * The Source's chain is not linear and Registry consumed nothing. Reported
@@ -99,7 +102,8 @@ export type RegistryIntakeResult =
       readonly status: "forked";
       readonly publicationId: string;
       readonly cardVersions: readonly IntakenCardVersion[];
-      readonly reason: string;
+      readonly sourceId: string;
+      readonly diagnostic: ConsumptionDiagnostic;
     };
 
 /** The Publication shape this file reads, derived so no contract import appears. */
@@ -140,12 +144,18 @@ export class RegistryIntake {
     if (claimed.status === "already_claimed") {
       return { status: "already_claimed", publicationId, cardVersions: [] };
     }
+    // Both refusals are passed through with their diagnostic intact rather than
+    // being flattened into a message. The code is what a lane status can be
+    // keyed on, and `sourceId` says which lane — this file is not the place that
+    // decides either, so it forwards both instead of interpreting them.
     if (claimed.status === "deferred") {
       return {
         status: "deferred",
         publicationId,
         cardVersions: [],
+        sourceId: claimed.sourceId,
         awaiting: claimed.awaiting,
+        diagnostic: claimed.diagnostic,
       };
     }
     if (claimed.status === "forked") {
@@ -153,7 +163,8 @@ export class RegistryIntake {
         status: "forked",
         publicationId,
         cardVersions: [],
-        reason: claimed.reason,
+        sourceId: claimed.sourceId,
+        diagnostic: claimed.diagnostic,
       };
     }
 
