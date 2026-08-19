@@ -8,14 +8,21 @@ import {
   withCardVersions,
   type CardVersion,
   type ContextCard,
-  type RetrievalScope,
+  type ManagedDocumentScope,
 } from "@contextctl/registry-lifecycle";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { parseCliArguments } from "../../src/cli/arguments.js";
 import { runCardsDecision, runReachability } from "../../src/cli/commands.js";
 import { EXIT_CODES } from "../../src/cli/exit-codes.js";
-import type { RegistryOnlyRuntime } from "../../src/cli/runtime.js";
+import {
+  openRegistryOnlyRuntime,
+  type RegistryOnlyRuntime,
+} from "../../src/cli/runtime.js";
 
 /**
  * The four operator decisions and the reachability report, reached the way the
@@ -44,7 +51,7 @@ const meaning = {
   keywords: ["payment", "retry"],
 };
 
-const scope: RetrievalScope = {
+const scope: ManagedDocumentScope = {
   kind: "managed_document",
   reference: { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
   documentIndex: {
@@ -247,5 +254,107 @@ describe("reachability", () => {
     // typo in a script is fixed in the script, a failed gate stops a release.
     expect(outcome.exitCode).toBe(EXIT_CODES.usageError);
     expect(outcome.exitCode).not.toBe(EXIT_CODES.gateFailed);
+  });
+});
+
+describe("the runtime these commands open", () => {
+  it("creates its home rather than reporting a corrupt database", async () => {
+    // A missing parent directory makes SQLite say `unable to open database file`,
+    // which reads as damage rather than as a first run — and `reachability` is a
+    // legitimate first command, so it reached an operator as an uncaught stack
+    // trace before this.
+    const parent = await mkdtemp(join(tmpdir(), "contextctl-fresh-"));
+    const home = join(parent, "nested", "deeper");
+
+    const runtime = openRegistryOnlyRuntime({
+      environment: { CONTEXTCTL_HOME: home },
+    });
+    try {
+      const outcome = await runReachability(runtime, { kind: "reachability" });
+      expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+    } finally {
+      runtime.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a decision handed no version", () => {
+  it.each(["reject", "rollback"] as const)(
+    "refuses %s as a usage error rather than picking one",
+    async (decision) => {
+      // The parser blocks this, and the command refuses it again: resolving "the
+      // newest" here would record a decision about a version the operator never
+      // named, and the two rules have to agree or the guard is decorative.
+      const outcome = await runCardsDecision(cli, {
+        kind: "cards_decision",
+        decision,
+        cardId: "card_payments",
+        by: "kim",
+      });
+
+      expect(outcome.exitCode).toBe(EXIT_CODES.usageError);
+      expect(await currentVersionOf("card_payments")).toBeUndefined();
+    },
+  );
+});
+
+describe("reachability when the gate does not pass", () => {
+  /**
+   * Two approved Cards describe the same Scope version differently, which is what
+   * `broken` means: one of them points at something that is no longer what it
+   * says it is. The gate treats any `broken` Scope as a release blocker.
+   */
+  async function breakOneScope(): Promise<void> {
+    const rival = createContextCard("card_refunds", meaning, {
+      sensitive: false,
+      allowedUsage: ["retrieval"],
+    });
+    const disagreeing: CardVersion = {
+      ...versionOf("card_refunds", "cv_rival", "2026-08-03T00:00:00.000Z"),
+      scopes: [
+        {
+          ...scope,
+          documentIndex: { ...scope.documentIndex, indexVersion: "idxv_bbbb" },
+        },
+      ],
+    };
+    await cards.saveCard(
+      withCardVersions(rival, appendCardVersion(rival.versions, disagreeing)),
+      [],
+    );
+
+    for (const [cardId, versionId] of [
+      ["card_payments", "cv_2"],
+      ["card_refunds", "cv_rival"],
+    ] as const) {
+      await runCardsDecision(cli, {
+        kind: "cards_decision",
+        decision: "approve",
+        cardId,
+        versionId,
+        by: "kim",
+      });
+    }
+  }
+
+  it("exits with the gate code", async () => {
+    await breakOneScope();
+
+    const outcome = await runReachability(cli, { kind: "reachability" });
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.gateFailed);
+  });
+
+  it("keeps the report on stdout, where the reason is", async () => {
+    await breakOneScope();
+
+    const outcome = await runReachability(cli, { kind: "reachability" });
+
+    // The verdict without the reason is not actionable, and CI captures stdout.
+    // Moving the report to stderr on failure would hand back an exit code and a
+    // sentence naming no Scope.
+    expect(outcome.stdout).toContain("broken");
+    expect(outcome.stderr.join("\n")).toContain("registry-reachability-v1");
   });
 });
