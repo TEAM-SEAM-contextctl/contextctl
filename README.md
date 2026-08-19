@@ -40,6 +40,17 @@ curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/mai
 
 ## 첫 실행
 
+> **모든 명령이 아래 두 줄을 `stderr` 로 냅니다. 정상입니다.**
+>
+> ```
+> (node:12345) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+> (Use `node --trace-warnings ...` to show where the warning was created)
+> ```
+>
+> Registry 와 Ingestion 저장소가 Node 내장 `node:sqlite` 를 쓰기 때문이고, 무해합니다.
+> 아래 출력 예시에는 이 두 줄을 생략했지만 실제로는 함께 나옵니다.
+> 억제 플래그는 안내하지 않습니다 — 이 경고를 끄면 정작 중요한 경고도 함께 사라집니다.
+
 ### 1. Qdrant 를 띄웁니다
 
 ```bash
