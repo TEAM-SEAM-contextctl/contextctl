@@ -48,8 +48,6 @@ function documentScope(
       sourceId: "src_payments",
       documentId: "doc_payments",
       indexVersion,
-      connectorId: "vector.local",
-      accessHandle: `documents/payments/indexes/${scopeVersion}`,
     },
     selection: {
       kind: "semantic_units",

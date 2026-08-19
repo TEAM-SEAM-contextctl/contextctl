@@ -28,8 +28,6 @@ function documentScope(
       sourceId: "src_payments",
       documentId: "doc_payments",
       indexVersion: overrides.indexVersion ?? "idxv_aaaa",
-      connectorId: "vector.local",
-      accessHandle: "documents/payments/indexes/aaaa",
     },
     selection: {
       kind: "semantic_units",

@@ -31,8 +31,6 @@ describe("translatePublishedScope", () => {
         sourceId: "src_payments",
         documentId: "doc_payments",
         indexVersion: "idxv_aaaa",
-        connectorId: "vector.local",
-        accessHandle: "documents/payments/indexes/aaaa",
       },
       selection: {
         kind: "semantic_units",
@@ -66,6 +64,7 @@ describe("translatePublishedScope", () => {
       kind: "sql_source",
       reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
       connector: "postgres.main",
+      schema: "public",
       table: "payments",
       columns: ["failed_reason", "status"],
     });
@@ -80,6 +79,8 @@ describe("translatePublishedScope", () => {
       connector: "payments.api",
       method: "GET",
       path: "/payments/{id}",
+      operationId: "getPayment",
+      parameters: [{ location: "path", name: "id", required: true }],
     });
   });
 

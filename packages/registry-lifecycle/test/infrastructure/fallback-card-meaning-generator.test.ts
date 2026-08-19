@@ -1,4 +1,4 @@
-import type { PublishedSourceCoordinate } from "@contextctl/contracts";
+import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { CardMeaning } from "../../src/domain/context-card.js";
@@ -22,7 +22,7 @@ const coordinate: PublishedSourceCoordinate = {
 
 const request: CardMeaningRequest = {
   coordinate,
-  evidence: [{ name: "heading", value: "결제 실패" }],
+  facts: [{ name: "section.label", value: "결제 실패" }],
 };
 
 const modelMeaning: CardMeaning = {

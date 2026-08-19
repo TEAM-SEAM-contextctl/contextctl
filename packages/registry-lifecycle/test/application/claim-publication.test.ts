@@ -1,4 +1,4 @@
-import type { IngestionPublication, PublicationId } from "@contextctl/contracts";
+import type { IngestionPublicationV2 as IngestionPublication, PublicationId } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -96,8 +96,6 @@ describe("claimPublication", () => {
                   sourceId: "src_payments",
                   documentId: "doc_payments",
                   indexVersion: "idxv_aaaa",
-                  connectorId: "vector.local",
-                  accessHandle: "documents/payments/indexes/aaaa",
                 },
                 selection: {
                   kind: "semantic_units",
@@ -148,6 +146,7 @@ describe("claimPublication", () => {
           scopeVersion: "scpv_cccc",
         },
         connector: "postgres.main",
+        schema: "public",
         table: "payments",
         columns: ["failed_reason", "status"],
       },

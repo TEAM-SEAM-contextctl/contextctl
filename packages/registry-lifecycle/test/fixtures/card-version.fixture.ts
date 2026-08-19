@@ -13,8 +13,6 @@ export function createDocumentCardVersion(
       sourceId: "src_payments",
       documentId: "doc_payments",
       indexVersion: overrides.indexVersion ?? "idxv_aaaa",
-      connectorId: "vector.local",
-      accessHandle: "documents/payments/indexes/aaaa",
     },
     selection: {
       kind: "semantic_units",
@@ -44,6 +42,7 @@ export function createSqlCardVersion(
     kind: "sql_source",
     reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
     connector: "postgres.main",
+    schema: "public",
     table: "payments",
     columns: overrides.columns ?? ["failed_reason", "status"],
   };
@@ -70,6 +69,8 @@ export function createHttpCardVersion(): CardVersion {
     connector: "payments.api",
     method: "GET",
     path: "/payments/{id}",
+    operationId: "getPayment",
+    parameters: [{ location: "path", name: "id", required: true }],
   };
 
   return {

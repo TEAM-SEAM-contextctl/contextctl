@@ -144,8 +144,6 @@ describe("SqliteCardStore", () => {
           sourceId: "src_payments",
           documentId: "doc_payments",
           indexVersion: "idxv_aaaa",
-          connectorId: "vector.local",
-          accessHandle: "documents/payments/indexes/aaaa",
         },
         selection: {
           kind: "semantic_units",

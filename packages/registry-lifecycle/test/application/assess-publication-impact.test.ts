@@ -1,6 +1,7 @@
 import {
-  parseIngestionPublication,
-  type IngestionPublication,
+  computePublishedKnowledgeUnitV2Digest,
+  parseIngestionPublicationV2 as parseIngestionPublication,
+  type IngestionPublicationV2 as IngestionPublication,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -14,10 +15,17 @@ import {
 } from "../fixtures/card-version.fixture.js";
 import { createIngestionPublicationFixture } from "../fixtures/ingestion-publication.fixture.js";
 
-const digest =
-  "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-const changedDigest =
-  "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+// Taken from the fixture rather than written down: v2 refuses a unit whose
+// digest is not the canonical digest of its own content, so a change fixture
+// cannot name two digests it made up.
+const initialUnit = (() => {
+  const unit = createIngestionPublicationFixture().knowledgeUnits[0];
+  if (unit === undefined) {
+    throw new Error("fixture must publish one knowledge unit");
+  }
+  return unit;
+})();
+const digest = initialUnit.contentDigest;
 
 function createPorts(): AssessPublicationImpactPorts {
   let nextId = 0;
@@ -35,23 +43,33 @@ function createPorts(): AssessPublicationImpactPorts {
 /** Second publication for the same document, carrying an updated paragraph. */
 function createUpdatePublication(): IngestionPublication {
   const initial = createIngestionPublicationFixture();
-  const unit = initial.knowledgeUnits[0];
-  if (unit === undefined) {
-    throw new Error("fixture must publish one knowledge unit");
-  }
+  // The edit is real: one observed fact reads differently, which is what makes
+  // the digest differ. Stamping a new digest onto identical content would be
+  // refused, and would also describe a publication Ingestion cannot produce.
+  const { contentDigest: _previous, ...content } = initialUnit;
+  const edited = {
+    ...content,
+    facts: [
+      { name: "section.label" as const, value: "Payment failures, revised" },
+    ],
+  };
+  const unit = {
+    ...edited,
+    contentDigest: computePublishedKnowledgeUnitV2Digest(edited),
+  };
 
   return parseIngestionPublication({
     ...initial,
     publicationId: "pub_second",
     previousPublicationId: "pub_initial",
-    knowledgeUnits: [{ ...unit, contentDigest: changedDigest }],
+    knowledgeUnits: [unit],
     changes: [
       {
         kind: "updated",
         knowledgeUnitId: "unit_payment_failures",
         previousContentDigest: digest,
-        currentContentDigest: changedDigest,
-        changedFields: ["content"],
+        currentContentDigest: unit.contentDigest,
+        changedFields: ["facts"],
       },
     ],
   });
@@ -90,8 +108,9 @@ describe("assessPublicationImpact", () => {
         decision: "review",
         reasons: [
           {
-            rule: "change.updated",
-            message: "knowledge unit unit_payment_failures changed content",
+            rule: "change.facts",
+            message:
+              "knowledge unit unit_payment_failures: the observed facts the card text was written from are no longer the same",
           },
         ],
       },
@@ -106,8 +125,9 @@ describe("assessPublicationImpact", () => {
         decision: "review",
         reasons: [
           {
-            rule: "change.updated",
-            message: "knowledge unit unit_payment_failures changed content",
+            rule: "change.facts",
+            message:
+              "knowledge unit unit_payment_failures: the observed facts the card text was written from are no longer the same",
           },
         ],
       },

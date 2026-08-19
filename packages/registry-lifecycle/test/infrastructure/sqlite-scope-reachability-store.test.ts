@@ -160,6 +160,7 @@ describe("SqliteScopeReachabilityStore", () => {
             scopeVersion: "scpv_cccc",
           },
           connector: "postgres.main",
+          schema: "public",
           table: "payments",
           columns: ["status"],
         },

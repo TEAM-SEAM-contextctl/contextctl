@@ -1,6 +1,7 @@
 import type {
-  PublishedChange,
-  PublishedKnowledgeUnit,
+  PublishedChangedFieldV2 as PublishedChangedField,
+  PublishedChangeV2 as PublishedChange,
+  PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -33,7 +34,9 @@ function onlyUnit(
 
 function updated(
   knowledgeUnitId: string,
-  changedFields: readonly string[],
+  // v2 closed this vocabulary, so a change can no longer name a field the
+  // contract does not have.
+  changedFields: readonly PublishedChangedField[],
 ): PublishedChange {
   return {
     kind: "updated",
@@ -56,7 +59,7 @@ describe("analyzeCardImpact", () => {
   it("ignores a change that belongs to another knowledge unit", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_unrelated", ["content"]),
+      updated("unit_unrelated", ["facts"]),
       undefined,
     );
 
@@ -70,12 +73,12 @@ describe("analyzeCardImpact", () => {
   it("marks an edited paragraph for review", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_payment_failures", ["content"]),
+      updated("unit_payment_failures", ["facts"]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
     expect(impact.decision).toBe("review");
-    expect(rules(impact)).toEqual(["change.updated"]);
+    expect(rules(impact)).toEqual(["change.facts"]);
   });
 
   it("disables a card whose document was deleted", () => {
@@ -115,12 +118,12 @@ describe("analyzeCardImpact", () => {
 
     const impact = analyzeCardImpact(
       createSqlCardVersion(),
-      updated("unit_payments_table", ["columns"]),
+      updated("unit_payments_table", ["source.coordinate"]),
       widened,
     );
 
     expect(impact.decision).toBe("review");
-    expect(rules(impact)).toEqual(["change.updated"]);
+    expect(rules(impact)).toEqual(["change.sourceCoordinate"]);
   });
 
   it("blocks a card that referenced a DB column the source dropped", () => {
@@ -137,7 +140,7 @@ describe("analyzeCardImpact", () => {
 
     const impact = analyzeCardImpact(
       createSqlCardVersion(),
-      updated("unit_payments_table", ["columns"]),
+      updated("unit_payments_table", ["source.coordinate"]),
       narrowed,
     );
 
@@ -151,7 +154,7 @@ describe("analyzeCardImpact", () => {
     // freshly generated index, which is how an embedding model change surfaces.
     const impact = analyzeCardImpact(
       createDocumentCardVersion({ indexVersion: "idxv_zzzz" }),
-      updated("unit_payment_failures", ["content"]),
+      updated("unit_payment_failures", ["facts"]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
@@ -176,7 +179,7 @@ describe("analyzeCardImpact", () => {
   it("blocks when an added or updated unit is missing from the publication", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_payment_failures", ["content"]),
+      updated("unit_payment_failures", ["facts"]),
       undefined,
     );
 
@@ -204,7 +207,7 @@ describe("analyzeCardImpact", () => {
 
   it("is deterministic: the same input yields the same decision", () => {
     const version = createSqlCardVersion();
-    const change = updated("unit_payments_table", ["columns"]);
+    const change = updated("unit_payments_table", ["source.coordinate"]);
     const unit = onlyUnit(createSqlPublicationFixture());
 
     expect(analyzeCardImpact(version, change, unit)).toEqual(

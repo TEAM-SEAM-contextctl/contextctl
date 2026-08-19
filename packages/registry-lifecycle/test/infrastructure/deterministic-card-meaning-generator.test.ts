@@ -1,6 +1,6 @@
 import type {
-  PublishedFact,
-  PublishedSourceCoordinate,
+  PublishedFactV2 as PublishedFact,
+  PublishedSourceCoordinateV2 as PublishedSourceCoordinate,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -36,6 +36,8 @@ const httpCoordinate: PublishedSourceCoordinate = {
   sourceId: "src_payments_api",
   method: "GET",
   path: "/payments/{id}",
+  operationId: "getPayment",
+  parameters: [{ location: "path", name: "id", required: true }],
 };
 
 const documentScope: RetrievalScope = {
@@ -46,8 +48,6 @@ const documentScope: RetrievalScope = {
     sourceId: "src_payments",
     documentId: "doc_payments",
     indexVersion: "idxv_aaaa",
-    connectorId: "vector.local",
-    accessHandle: "documents/payments/indexes/aaaa",
   },
   selection: {
     kind: "semantic_units",
@@ -59,6 +59,7 @@ const sqlScope: RetrievalScope = {
   kind: "sql_source",
   reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
   connector: "postgres.main",
+  schema: "public",
   table: "payments",
   columns: ["failed_reason", "status"],
 };
@@ -69,10 +70,14 @@ const httpScope: RetrievalScope = {
   connector: "payments.api",
   method: "GET",
   path: "/payments/{id}",
+  operationId: "getPayment",
+  parameters: [{ location: "path", name: "id", required: true }],
 };
 
+// Fact names are a closed vocabulary in v2, so a test cannot invent one. That
+// is the point: grounding checks a generated identifier against a name it knows.
 const summary: PublishedFact = {
-  name: "summary",
+  name: "section.label",
   value: "Failed payments are retried after five minutes.",
 };
 
@@ -80,7 +85,7 @@ describe("DeterministicCardMeaningGenerator", () => {
   it("produces meaning that passes grounding for a document coordinate", async () => {
     const meaning = await generator.generate({
       coordinate: documentCoordinate,
-      evidence: [summary],
+      facts: [summary],
     });
 
     expect(groundCardVersion(documentCoordinate, [documentScope], meaning)).toEqual(
@@ -95,7 +100,7 @@ describe("DeterministicCardMeaningGenerator", () => {
   it("produces meaning that passes grounding for a table coordinate", async () => {
     const meaning = await generator.generate({
       coordinate: sqlCoordinate,
-      evidence: [{ name: "row.count", value: 1200 }],
+      facts: [{ name: "sql.approximate_row_count", value: 1200 }],
     });
 
     expect(groundCardVersion(sqlCoordinate, [sqlScope], meaning)).toEqual({
@@ -109,7 +114,7 @@ describe("DeterministicCardMeaningGenerator", () => {
   it("produces meaning that passes grounding for an operation coordinate", async () => {
     const meaning = await generator.generate({
       coordinate: httpCoordinate,
-      evidence: [{ name: "operation.id", value: "getPayment" }],
+      facts: [{ name: "http.operation_id", value: "getPayment" }],
     });
 
     expect(groundCardVersion(httpCoordinate, [httpScope], meaning)).toEqual({
@@ -121,7 +126,7 @@ describe("DeterministicCardMeaningGenerator", () => {
   it("still passes grounding when evidence carries only one bare fact", async () => {
     const meaning = await generator.generate({
       coordinate: documentCoordinate,
-      evidence: [{ name: "heading", value: "" }],
+      facts: [{ name: "section.path", value: "" }],
     });
 
     // Grounding needs a non-blank description and one non-blank question; both
@@ -135,7 +140,7 @@ describe("DeterministicCardMeaningGenerator", () => {
   });
 
   it("returns the same meaning for the same request", async () => {
-    const request = { coordinate: sqlCoordinate, evidence: [summary] };
+    const request = { coordinate: sqlCoordinate, facts: [summary] };
 
     expect(await generator.generate(request)).toEqual(
       await generator.generate(request),
@@ -145,7 +150,7 @@ describe("DeterministicCardMeaningGenerator", () => {
   it("flattens a list-valued fact instead of printing an object", async () => {
     const meaning = await generator.generate({
       coordinate: sqlCoordinate,
-      evidence: [{ name: "enum.status", value: ["failed", "paid"] }],
+      facts: [{ name: "sql.columns", value: ["failed", "paid"] }],
     });
 
     expect(meaning.description).toContain("failed, paid");
@@ -153,14 +158,14 @@ describe("DeterministicCardMeaningGenerator", () => {
   });
 
   it("names nothing the request did not contain", async () => {
-    const evidence = [summary];
+    const facts = [summary];
     const meaning = await generator.generate({
       coordinate: sqlCoordinate,
-      evidence,
+      facts,
     });
     const supplied = JSON.stringify({
       coordinate: sqlCoordinate,
-      evidence,
+      facts,
     }).toLowerCase();
 
     // Every keyword is a token lifted from the request, so the generator cannot
