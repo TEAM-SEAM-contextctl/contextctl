@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
@@ -80,6 +82,13 @@ export function openRegistryOnlyRuntime(input: {
   readonly workingDirectory?: string;
 }): RegistryOnlyRuntime {
   const paths = resolveContextctlPaths(input.environment, input.workingDirectory);
+  // The directory is created rather than required. SQLite reports a missing
+  // parent as `unable to open database file`, which reads as a corrupt database
+  // rather than as a first run, and these commands are reachable before anything
+  // else has written to the home directory — `contextctl reachability` on a fresh
+  // machine is a legitimate first command. `sources-file.ts` does the same on
+  // write for the same reason.
+  mkdirSync(dirname(paths.registryDatabase), { recursive: true });
   const database = openRegistryDatabase(paths.registryDatabase);
   return {
     database,

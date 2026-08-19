@@ -155,24 +155,27 @@ export async function runCli(input: {
     );
   }
 
-  if (command.kind === "cards_decision" || command.kind === "reachability") {
-    const registry = openRegistryOnlyRuntime({
-      environment: input.environment,
-      workingDirectory,
-    });
-    try {
-      return emit(
-        input,
-        command.kind === "cards_decision"
-          ? await runCardsDecision(registry, command)
-          : await runReachability(registry, command),
-      );
-    } finally {
-      registry.close();
-    }
-  }
-
   try {
+    if (command.kind === "cards_decision" || command.kind === "reachability") {
+      // Inside the same guard as every other command on purpose: an unreadable
+      // database has to reach an operator as a sentence, and a branch outside it
+      // reported the first `contextctl reachability` on a fresh machine as an
+      // uncaught SQLite stack trace.
+      const registry = openRegistryOnlyRuntime({
+        environment: input.environment,
+        workingDirectory,
+      });
+      try {
+        return emit(
+          input,
+          command.kind === "cards_decision"
+            ? await runCardsDecision(registry, command)
+            : await runReachability(registry, command),
+        );
+      } finally {
+        registry.close();
+      }
+    }
     if (!needsRuntime(command)) {
       return emit(input, await runWithoutRuntime(command, paths.sourcesFile, workingDirectory));
     }

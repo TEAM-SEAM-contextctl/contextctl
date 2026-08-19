@@ -328,6 +328,17 @@ export async function runCardsDecision(
   if (command.decision === "disable") {
     return decide(cli, command, ["disable", command.cardId, "--by", decidedBy], decidedBy);
   }
+  if (versionId === undefined && command.decision !== "approve") {
+    // The parser already requires a version for these two, and this is the same
+    // rule stated where the resolution happens: only `approve` may be handed a
+    // Card and asked which version was meant. Resolving "the newest" for a
+    // rejection or a rollback would record a decision about a version the
+    // operator never named.
+    return failedWith(
+      EXIT_CODES.usageError,
+      `cards ${command.decision} 은 버전 식별자가 필요합니다.`,
+    );
+  }
   if (versionId === undefined) {
     const target = await resolveApprovalTarget(cli, command.cardId);
     switch (target.kind) {
@@ -451,6 +462,18 @@ export async function runReachability(
 
   if (result.status === "ok") {
     return ok(result.output);
+  }
+  if (result.status === "gate_failed") {
+    // The report still goes to stdout. It is the same text a passing gate
+    // prints, and it names which Scopes failed — sending it to stderr instead
+    // would mean a CI step that captures stdout keeps the verdict and loses the
+    // reason. The one-line verdict is repeated on stderr so it survives being
+    // piped away.
+    return {
+      stdout: result.output,
+      stderr: ["릴리스 기준을 넘기지 못했습니다: registry-reachability-v1"],
+      exitCode: EXIT_CODES.gateFailed,
+    };
   }
   return failedWith(operatorExitCode(result.status), result.output);
 }
