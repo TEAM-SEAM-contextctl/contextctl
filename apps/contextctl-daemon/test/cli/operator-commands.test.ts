@@ -1,6 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  openIngestionDatabase,
+  SqliteIngestionPublicationStore,
+} from "@contextctl/ingestion-indexing";
+import {
   appendCardVersion,
   createContextCard,
   openRegistryDatabase,
@@ -16,6 +20,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+  DEFAULT_SECURITY_DOMAIN,
+  DEFAULT_STATE_NAMESPACE_ID,
+} from "../../src/main.js";
 import { parseCliArguments } from "../../src/cli/arguments.js";
 import { runCardsDecision, runReachability } from "../../src/cli/commands.js";
 import { EXIT_CODES } from "../../src/cli/exit-codes.js";
@@ -95,6 +103,7 @@ function cardWithTwoVersions(cardId: string): ContextCard {
 }
 
 let database: DatabaseSync;
+let ingestionDatabase: DatabaseSync;
 let cards: SqliteCardStore;
 let cli: RegistryOnlyRuntime;
 
@@ -102,10 +111,17 @@ beforeEach(async () => {
   database = openRegistryDatabase(":memory:");
   cards = new SqliteCardStore(database);
   await cards.saveCard(cardWithTwoVersions("card_payments"), []);
+  ingestionDatabase = openIngestionDatabase({
+    location: ":memory:",
+    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+    securityDomain: DEFAULT_SECURITY_DOMAIN,
+  });
   cli = {
     database,
     cards,
+    publications: new SqliteIngestionPublicationStore(ingestionDatabase),
     close: () => {
+      ingestionDatabase.close();
       database.close();
     },
   };

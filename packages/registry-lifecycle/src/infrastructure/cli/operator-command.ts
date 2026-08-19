@@ -10,12 +10,20 @@ import { buildReachabilityReport } from "../../application/build-reachability-re
 import { CardNotFoundError } from "../../application/errors.js";
 import { CardVersionInvariantError } from "../../domain/errors.js";
 import {
+  STALE_PENDING_REGISTRY_MS,
+  stalePendingRegistryScopes,
+} from "../../domain/processing-lag.js";
+import {
   reachabilityGateViolations,
   type ReachabilityGateViolation,
   type ReachabilityReport,
   type ScopeReachabilityState,
 } from "../../domain/scope-reachability.js";
 import type { ConsumerCheckpointStore } from "../../ports/consumer-checkpoint-store.js";
+import type {
+  PublicationRepository,
+  SourcePublicationFeed,
+} from "../../ports/publication-repository.js";
 import type { ScopeReachabilityStore } from "../../ports/scope-reachability-store.js";
 
 /**
@@ -49,6 +57,14 @@ export interface OperatorCommandPorts extends CardDecisionPorts {
   readonly scopes: ScopeReachabilityStore;
   /** Read for the reachability report's per-Source checkpoints. */
   readonly checkpoints: ConsumerCheckpointStore;
+  /**
+   * How far each Source has been published, for the processing delay.
+   *
+   * Optional: the reachability states need only committed Card state, so a
+   * composition that has no publication reader still gets a full report — minus
+   * the delay, which is then reported as unknown rather than as caught up.
+   */
+  readonly publications?: SourcePublicationFeed & Partial<PublicationRepository>;
 }
 
 const USAGE = [
@@ -205,7 +221,67 @@ function formatSummary(report: ReachabilityReport): string {
   return [
     `reachability at ${report.generatedAt} — coverage ${coverage}% of ${report.scopes.length} scope version(s)`,
     ...lines,
+    ...formatProcessingDelay(report),
   ].join("\n");
+}
+
+/**
+ * Per-Source processing delay, and the stale `pending_registry` verdict.
+ *
+ * Printed with the states rather than behind a separate command, because the two
+ * answer one question together: a Scope sitting in `pending_registry` is only
+ * worrying if the Source it belongs to is also behind, and an operator holding
+ * one number without the other cannot tell a slow minute from a stuck hour.
+ *
+ * Sources that are caught up print nothing. Listing every healthy Source would
+ * bury the one that is not, and "no line" already means "nothing owed" — the
+ * summary above states the total, so silence here is not ambiguous.
+ */
+function formatProcessingDelay(report: ReachabilityReport): readonly string[] {
+  const behind = report.sourceCheckpoints.filter((source) => source.behind);
+  const stale = stalePendingRegistryScopes(report);
+  if (behind.length === 0 && stale.length === 0) {
+    return [];
+  }
+
+  const lines = behind.map((source) => {
+    const lag =
+      source.freshnessLagMs === undefined
+        ? "lag unknown"
+        : `lag ${formatDuration(source.freshnessLagMs)}`;
+    const processed = source.processedPublicationId ?? "nothing consumed";
+    return `  ${source.sourceId}: ${processed} -> ${source.latestReadyPublicationId ?? "?"} (${lag})`;
+  });
+
+  return [
+    behind.length === 0
+      ? "processing delay: every source is current"
+      : `processing delay: ${behind.length} source(s) behind`,
+    ...lines,
+    ...(stale.length === 0
+      ? []
+      : [
+          `pending_registry over ${formatDuration(STALE_PENDING_REGISTRY_MS)}: ${stale.length} scope version(s) — registry lane is degraded`,
+          ...stale.map(
+            (scope) =>
+              `  ${scope.reference.scopeId}@${scope.reference.scopeVersion} since ${scope.stateSince ?? "unknown"}`,
+          ),
+        ]),
+  ];
+}
+
+/** Milliseconds as something an operator reads, not as a number of millis. */
+function formatDuration(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1_000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
 function formatGate(

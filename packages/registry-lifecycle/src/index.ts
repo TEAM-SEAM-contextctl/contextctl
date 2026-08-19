@@ -37,6 +37,13 @@ export {
   type ConsumptionDiagnosticCode,
 } from "./domain/publication-chain.js";
 export {
+  judgeSourceProcessingLag,
+  stalePendingRegistryScopes,
+  STALE_PENDING_REGISTRY_MS,
+  type SourceConsumptionSighting,
+  type SourceProcessingLag,
+} from "./domain/processing-lag.js";
+export {
   collectScopeObservations,
   judgeScopeReachability,
   reachabilityGateViolations,
@@ -50,7 +57,6 @@ export {
   type ScopeReachability,
   type ScopeReachabilityState,
   type ScopeSighting,
-  type SourceCheckpoint,
 } from "./domain/scope-reachability.js";
 export {
   CardVersionInvariantError,
@@ -126,7 +132,10 @@ export type { Clock } from "./ports/clock.js";
 export type { ConsumerCheckpointStore } from "./ports/consumer-checkpoint-store.js";
 export type { IdGenerator } from "./ports/id-generator.js";
 export type { LifecycleEventStore } from "./ports/lifecycle-event-store.js";
-export type { PublicationRepository } from "./ports/publication-repository.js";
+export type {
+  PublicationRepository,
+  SourcePublicationFeed,
+} from "./ports/publication-repository.js";
 export type { ScopeReachabilityStore } from "./ports/scope-reachability-store.js";
 export {
   runOperatorCommand,

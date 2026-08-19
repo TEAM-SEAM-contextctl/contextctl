@@ -317,6 +317,81 @@ describe("runOperatorCommand", () => {
       ]);
     }
 
+    /**
+     * The processing delay, printed beside the states.
+     *
+     * The two belong together: a Scope in `pending_registry` is only worrying if
+     * its Source is also behind, so an operator holding one number without the
+     * other cannot tell a slow minute from a stuck hour.
+     */
+    describe("processing delay", () => {
+      const consumed = {
+        publicationId: "pub_first",
+        sourceId: "src_payments",
+        producedAt: "2026-08-18T22:00:00.000Z",
+      };
+      const newest = {
+        publicationId: "pub_latest",
+        sourceId: "src_payments",
+        producedAt: "2026-08-19T00:00:00.000Z",
+      };
+
+      function withFeed(latest: typeof newest | undefined): OperatorCommandPorts {
+        return {
+          ...soloPorts,
+          checkpoints: {
+            ...soloPorts.checkpoints,
+            listCursors: async () => [
+              { sourceId: "src_payments", publicationId: "pub_first" },
+            ],
+          },
+          publications: {
+            latestForSource: async () => latest as unknown as undefined,
+            findById: async (publicationId) =>
+              publicationId === "pub_first"
+                ? (consumed as unknown as undefined)
+                : undefined,
+          },
+        };
+      }
+
+      it("names the Source that is behind and how stale it is", async () => {
+        await approveSolo();
+
+        const result = await runOperatorCommand(withFeed(newest), ["reachability"]);
+
+        expect(result.output).toContain("1 source(s) behind");
+        expect(result.output).toContain("src_payments");
+        expect(result.output).toContain("pub_first -> pub_latest");
+        // Two hours, printed as an operator reads it rather than in millis.
+        expect(result.output).toContain("lag 2h 0m");
+      });
+
+      it("says nothing about a Source that is current", async () => {
+        // Listing every healthy Source would bury the one that is not, and the
+        // summary above already states the total, so silence is not ambiguous.
+        await approveSolo();
+
+        const result = await runOperatorCommand(
+          withFeed({ ...consumed } as typeof newest),
+          ["reachability"],
+        );
+
+        expect(result.output).not.toContain("source(s) behind");
+      });
+
+      it("reports no delay when no publication reader was assembled", async () => {
+        // `soloPorts` has no `publications`, which is a legitimate composition:
+        // the states need only committed Card state.
+        await approveSolo();
+
+        const result = await runOperatorCommand(soloPorts, ["reachability"]);
+
+        expect(result.output).not.toContain("source(s) behind");
+        expect(result.status).toBe("ok");
+      });
+    });
+
     it("summarises the states and passes the gate when nothing is unreachable", async () => {
       await approveSolo();
 

@@ -315,15 +315,17 @@ describe("scope provenance and source checkpoints", () => {
     });
 
     expect(report.sourceCheckpoints).toEqual([
-      { sourceId: "src_payments", processedPublicationId: "pub_p7" },
-      { sourceId: "src_refunds", processedPublicationId: "pub_r2" },
+      { sourceId: "src_payments", processedPublicationId: "pub_p7", behind: false },
+      { sourceId: "src_refunds", processedPublicationId: "pub_r2", behind: false },
     ]);
   });
 
-  it("leaves the latest ready Publication absent rather than guessing it", async () => {
-    // That value is Ingestion's to report and arrives with the notification
-    // path. Filling it from the newest thing we happened to see would make a
-    // Source look current when it is behind.
+  it("leaves the latest ready Publication absent when no reader was assembled", async () => {
+    // Absent is a legitimate composition: the reachability states need only
+    // committed Card state, so a caller that wants them should not have to
+    // assemble a publication reader. What must not happen is guessing the value
+    // from the newest thing we happened to see, which would make a Source that is
+    // behind look current.
     const report = await buildReachabilityReport({
       scopes: new FakeScopeReachabilityStore([sighting()]),
       checkpoints: {
@@ -335,9 +337,75 @@ describe("scope provenance and source checkpoints", () => {
       clock,
     });
 
-    expect(
-      report.sourceCheckpoints[0]?.latestReadyPublicationId,
-    ).toBeUndefined();
+    expect(report.sourceCheckpoints[0]?.latestReadyPublicationId).toBeUndefined();
+    expect(report.sourceCheckpoints[0]?.freshnessLagMs).toBeUndefined();
+  });
+
+  describe("with a publication reader assembled", () => {
+    const consumed = {
+      publicationId: "pub_p7",
+      sourceId: "src_payments",
+      producedAt: "2026-08-14T22:00:00.000Z",
+    };
+    const newest = {
+      publicationId: "pub_p9",
+      sourceId: "src_payments",
+      producedAt: "2026-08-15T00:00:00.000Z",
+    };
+
+    /** Answers the two reads Registry performs, and refuses anything else. */
+    function feed(latest: typeof newest | undefined) {
+      return {
+        latestForSource: async (sourceId: string) =>
+          sourceId === "src_payments"
+            ? (latest as unknown as undefined)
+            : undefined,
+        findById: async (publicationId: string) =>
+          publicationId === consumed.publicationId
+            ? (consumed as unknown as undefined)
+            : undefined,
+      };
+    }
+
+    const oneCursor: ConsumerCheckpointStore = {
+      ...noCursors,
+      listCursors: async () => [
+        { sourceId: "src_payments", publicationId: "pub_p7" },
+      ],
+    };
+
+    it("measures how far behind the Source is", async () => {
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting()]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed(newest),
+      });
+
+      expect(report.sourceCheckpoints).toEqual([
+        {
+          sourceId: "src_payments",
+          processedPublicationId: "pub_p7",
+          latestReadyPublicationId: "pub_p9",
+          behind: true,
+          freshnessLagMs: 2 * 60 * 60 * 1_000,
+        },
+      ]);
+    });
+
+    it("reports a Source that consumed the newest Publication as current", async () => {
+      // The control case. Without it every assertion above would also hold for a
+      // report that called every Source behind.
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting()]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed({ ...consumed } as typeof newest),
+      });
+
+      expect(report.sourceCheckpoints[0]?.behind).toBe(false);
+      expect(report.sourceCheckpoints[0]?.freshnessLagMs).toBe(0);
+    });
   });
 
   it("reports no checkpoint for a Source that consumed nothing", async () => {

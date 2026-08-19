@@ -436,6 +436,13 @@ function operatorPorts(cli: RegistryOnlyRuntime): OperatorCommandPorts {
     checkpoints: new SqliteConsumerCheckpointStore(cli.database, () =>
       new Date().toISOString(),
     ),
+    // Registry asks two questions of this store and neither is a write: the
+    // newest ready Publication per Source, and the `producedAt` of the one it
+    // consumed. `find` and `latestForSource` are exactly those two.
+    publications: {
+      latestForSource: (sourceId) => cli.publications.latestForSource(sourceId),
+      findById: (publicationId) => cli.publications.find(publicationId),
+    },
   };
 }
 

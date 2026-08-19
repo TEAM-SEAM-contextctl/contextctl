@@ -1,5 +1,6 @@
-import type { PublicationId, SourceId } from "@contextctl/contracts";
+import type { PublicationId } from "@contextctl/contracts";
 
+import type { SourceProcessingLag } from "./processing-lag.js";
 import type {
   CardId,
   CardValidationState,
@@ -169,12 +170,6 @@ export interface ScopeSighting extends ScopeCarrier {
  * and it is not an input to Selection: nothing here widens what a query can
  * reach.
  */
-/** How far one Source's chain has been consumed, and what is ready beyond it. */
-export interface SourceCheckpoint {
-  readonly sourceId: SourceId;
-  readonly processedPublicationId?: PublicationId | undefined;
-  readonly latestReadyPublicationId?: PublicationId | undefined;
-}
 
 export interface ReachabilityReport {
   readonly generatedAt: string;
@@ -186,7 +181,7 @@ export interface ReachabilityReport {
    * invent one, and a Source that is behind would look current whenever another
    * Source moved.
    */
-  readonly sourceCheckpoints: readonly SourceCheckpoint[];
+  readonly sourceCheckpoints: readonly SourceProcessingLag[];
   readonly counts: Readonly<Record<ScopeReachabilityState, number>>;
   /**
    * Share of exposable Scope versions that a query can actually reach.
@@ -269,7 +264,7 @@ export function collectScopeObservations(
 export function summarizeScopeReachability(
   generatedAt: string,
   verdicts: readonly ScopeReachability[],
-  sourceCheckpoints: readonly SourceCheckpoint[] = [],
+  sourceCheckpoints: readonly SourceProcessingLag[] = [],
 ): ReachabilityReport {
   const counts: Record<ScopeReachabilityState, number> = {
     pending_registry: 0,
