@@ -123,6 +123,16 @@ contextctl cards approve <cardId>
 수집만으로는 아무것도 검색되지 않습니다. 승인이 그 경계입니다.
 이미 승인된 Card 에 다시 실행하면 현재 승인 버전을 알려주고 정상 종료합니다.
 
+내용이 잘못됐다면 되돌릴 수 있습니다.
+
+```bash
+contextctl cards reject <cardId> <versionId>     # 이 버전은 쓰지 않는다
+contextctl cards disable <cardId>                # 서비스에서 내린다 (이력은 남습니다)
+contextctl cards rollback <cardId> <versionId>   # 이전 버전으로 되돌린다
+```
+
+`disable` 한 Card 는 다시 승인하면 복구됩니다. 다시 수집할 필요가 없습니다.
+
 ### 6. 질의합니다
 
 ```bash
@@ -207,6 +217,10 @@ contextctl source remove <ref>
 contextctl ingest [<ref>]
 contextctl cards list [--json]
 contextctl cards approve <cardId> [<versionId>] [--by <who>] [--note <text>]
+contextctl cards reject <cardId> <versionId> [--by <who>] [--note <text>]
+contextctl cards disable <cardId> [--by <who>] [--note <text>]
+contextctl cards rollback <cardId> <versionId> [--by <who>] [--note <text>]
+contextctl reachability [--state <state>]
 contextctl query "<질문>" [--json] [--max-context <n>]
 contextctl serve
 contextctl help [<command>]
@@ -214,7 +228,34 @@ contextctl --version
 ```
 
 `--source-directory` 는 미리 받아둔 디렉터리에서 모델을 설치합니다(다운로드 없음).
-`cards approve` 는 `--by` 를 생략하면 OS 계정을 감사 기록에 남깁니다.
+결정 명령(`approve`·`reject`·`disable`·`rollback`)은 `--by` 를 생략하면 OS 계정을 감사 기록에 남깁니다.
+`approve` 만 버전을 생략할 수 있습니다. `reject` 와 `rollback` 은 특정 버전에 대한 결정이라 추측하지 않습니다.
+
+### 종료 코드
+
+스크립트나 CI 가 결과로 분기할 수 있도록, 실패마다 다른 코드를 냅니다.
+
+| 코드 | 뜻 |
+| -- | -- |
+| `0` | 성공 |
+| `1` | Registry 가 규칙으로 거절 (미검증 버전 승격, 없는 Card 등) |
+| `2` | 명령이 틀림 |
+| `3` | `reachability` 릴리스 기준 미달 — `broken` 또는 이유 없는 `orphaned` 가 있습니다 |
+| `4` | `ingest` — 선행 Publication 을 아직 소비하지 않아 보류. **재시도로 해소됩니다** |
+| `5` | `ingest` — Source 의 체인이 갈라짐. **사람이 확인해야 합니다** |
+
+`4` 와 `5` 를 가른 이유는 재시도해도 되는 것과 안 되는 것이 다르기 때문입니다.
+
+### reachability
+
+인덱싱은 됐는데 **어떤 승인 Card 로도 도달할 수 없는 범위**를 찾습니다. 검색을 우회하는 기능이 아니라, 운영자가 그 범위를 발견해 Card 생성·승인·비노출 중 하나를 고르게 하는 것이 목적입니다.
+
+```bash
+contextctl reachability                      # 상태별 개수와 릴리스 기준 판정
+contextctl reachability --state orphaned     # 그 상태의 Scope 목록과 이유
+```
+
+`--state` 는 `pending_registry`, `broken`, `reachable`, `pending_approval`, `intentionally_unexposed`, `orphaned` 를 받습니다.
 
 ---
 
