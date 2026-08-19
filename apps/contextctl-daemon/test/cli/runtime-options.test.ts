@@ -48,6 +48,10 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
       paths,
       sourceConfigurations: { "source.payment": { path: "/tmp/payment.md" } },
       ingestionDatabase: ingestionDatabase(),
+      // The revision directory, as `buildCliRuntime` resolves it from the
+      // pointer. Passing `paths.embeddingAssetDirectory` here would restate the
+      // bug these options exist to prevent.
+      embeddingArtifactDirectory: "/tmp/contextctl-test-assets/revisions/abc",
       vectorBackend: resolveVectorBackend(environment),
       meaningBackend: resolveCardMeaningBackend({
         environment,
@@ -96,7 +100,16 @@ describe("CLI runtime options", () => {
     // `hybrid` selection real. A profile named here would be the CLI quietly
     // choosing deterministic vectors.
     expect(options.embeddingProfile).toBeUndefined();
-    expect(options.embeddingArtifactDirectory).toBe(paths.embeddingAssetDirectory);
+    // The resolved revision directory, never the managed root. The adapter reads
+    // its manifest directly out of whatever it is handed, so the root would send
+    // it one level too high — which is exactly how a passing `doctor` and a
+    // failing `ingest` coexisted.
+    expect(options.embeddingArtifactDirectory).toBe(
+      "/tmp/contextctl-test-assets/revisions/abc",
+    );
+    expect(options.embeddingArtifactDirectory).not.toBe(
+      paths.embeddingAssetDirectory,
+    );
   });
 
   it("carries the configured vector backend into the graph", () => {

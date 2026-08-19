@@ -17,6 +17,11 @@ import {
   type DaemonRuntimeOptions,
 } from "../main.js";
 import {
+  describeAssetDirectoryProblem,
+  resolveActiveAssetDirectory,
+  type AssetDirectoryProblem,
+} from "./asset-directory.js";
+import {
   resolveCardMeaningBackend,
   type CardMeaningBackend,
 } from "./meaning-generator.js";
@@ -86,6 +91,17 @@ export async function buildCliRuntime(
   const sources = await readSourcesFile(paths.sourcesFile);
   const sourceConfigurations = toSourceConfigurations(sources);
 
+  // Resolved here, and the failure is raised here rather than at the first
+  // embedding call. The adapter loads lazily by design, so a composition given
+  // a directory with no manifest in it assembles cleanly and then fails inside
+  // `ingest` — which is the furthest possible point from the mistake. Asking
+  // for the directory now turns that into a refusal to start, with the command
+  // that fixes it named.
+  const assets = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+  if (assets.status === "unavailable") {
+    throw new EmbeddingAssetsUnavailableError(assets.problem);
+  }
+
   // Opened before `createDaemonRuntime` so that a schema failure — an ingestion
   // database written under a different security domain, say — is reported as
   // itself rather than as a runtime that would not assemble.
@@ -98,7 +114,14 @@ export async function buildCliRuntime(
   let runtime: DaemonRuntime;
   try {
     runtime = createDaemonRuntime(
-      cliRuntimeOptions({ paths, sourceConfigurations, ingestionDatabase, vectorBackend, meaningBackend }),
+      cliRuntimeOptions({
+        paths,
+        sourceConfigurations,
+        ingestionDatabase,
+        vectorBackend,
+        meaningBackend,
+        embeddingArtifactDirectory: assets.directory,
+      }),
     );
   } catch (error) {
     // The Registry database is opened inside `createDaemonRuntime`, so on this
@@ -135,11 +158,21 @@ export function cliRuntimeOptions(input: {
   readonly ingestionDatabase: DatabaseSync;
   readonly vectorBackend: VectorBackend;
   readonly meaningBackend: CardMeaningBackend;
+  /**
+   * The revision directory, never the managed root.
+   *
+   * `paths.embeddingAssetDirectory` is the root that holds `active.json` and a
+   * `revisions/` tree; the adapter wants the immutable folder that directly
+   * contains the manifest. Passing the root is what made `doctor` and the
+   * runtime disagree, so this is taken as an argument — already resolved —
+   * rather than derived from `paths` a second time here.
+   */
+  readonly embeddingArtifactDirectory: string;
 }): DaemonRuntimeOptions {
   const { ingestionDatabase } = input;
   return {
     registryDatabaseLocation: input.paths.registryDatabase,
-    embeddingArtifactDirectory: input.paths.embeddingAssetDirectory,
+    embeddingArtifactDirectory: input.embeddingArtifactDirectory,
     sourceConfigurations: input.sourceConfigurations,
     vectorIndex: input.vectorBackend.vectorIndex,
     meanings: input.meaningBackend.generator,
@@ -151,4 +184,25 @@ export function cliRuntimeOptions(input: {
       stagingAttempts: new SqliteIndexStagingAttemptStore(ingestionDatabase),
     },
   };
+}
+
+
+/**
+ * The composition refused to start because no usable revision is installed.
+ *
+ * A distinct type rather than a generic failure, because the CLI answers it
+ * with an install instruction and answers nothing else that way. It also keeps
+ * the distinction the adapter cannot make: `verifyLocalEmbeddingAssets` folds a
+ * missing install, a wrong digest and a short file into one
+ * `embedding_artifact_unavailable`, and "you have not installed it" needs a
+ * different next step from "what is installed is not what this build pins".
+ */
+export class EmbeddingAssetsUnavailableError extends Error {
+  readonly problem: AssetDirectoryProblem;
+
+  constructor(problem: AssetDirectoryProblem) {
+    super(describeAssetDirectoryProblem(problem));
+    this.name = "EmbeddingAssetsUnavailableError";
+    this.problem = problem;
+  }
 }

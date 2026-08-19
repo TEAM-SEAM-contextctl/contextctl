@@ -4,6 +4,7 @@ import type { CardMeaningRequest } from "@contextctl/registry-lifecycle";
 
 import {
   CARD_MEANING_API_KEY_VARIABLE,
+  cardMeaningRequestUrl,
   CARD_MEANING_BASE_URL_VARIABLE,
   CARD_MEANING_CONTEXT_TOKENS_VARIABLE,
   CARD_MEANING_MAX_OUTPUT_TOKENS_VARIABLE,
@@ -240,5 +241,80 @@ describe("maskSecret", () => {
     // The credential is arbitrary text; treating it as a pattern would either
     // throw or match the wrong thing.
     expect(maskSecret("a.+b in the middle", "a.+b")).toBe("*** in the middle");
+  });
+});
+
+describe("base URL that already carries the version prefix", () => {
+  const complete = (baseUrl: string) => ({
+    CONTEXTCTL_CARD_MEANING_BASE_URL: baseUrl,
+    CONTEXTCTL_CARD_MEANING_MODEL: "gemma4-12b-qat",
+    CONTEXTCTL_CARD_MEANING_API_KEY: "sk-super-secret",
+  });
+
+  it("builds the URL the adapter will request", () => {
+    // Mirrors `openai-compatible-card-meaning-generator.ts`, which appends this
+    // path privately. `doctor` shows the result so an operator can compare it
+    // against the endpoint they verified by hand.
+    expect(cardMeaningRequestUrl("https://host.example.com")).toBe(
+      "https://host.example.com/v1/chat/completions",
+    );
+    expect(cardMeaningRequestUrl("https://host.example.com/")).toBe(
+      "https://host.example.com/v1/chat/completions",
+    );
+  });
+
+  it("warns when the root ends in /v1, with the doubled URL and the fix", () => {
+    const backend = resolveCardMeaningBackend({
+      environment: complete("https://gllm.dilato.kr/v1"),
+      onFallback: () => {},
+    });
+
+    expect(backend.kind).toBe("llm_with_fallback");
+    expect(backend.notices).toHaveLength(1);
+    const notice = backend.notices[0] ?? "";
+    // The doubled path, because naming it is what makes the 404 legible.
+    expect(notice).toContain("https://gllm.dilato.kr/v1/v1/chat/completions");
+    // And the value to use instead, because a warning without a fix is a note.
+    expect(notice).toContain("https://gllm.dilato.kr");
+  });
+
+  it("warns for a trailing slash after the prefix too", () => {
+    const backend = resolveCardMeaningBackend({
+      environment: complete("https://gllm.dilato.kr/v1/"),
+      onFallback: () => {},
+    });
+
+    expect(backend.notices).toHaveLength(1);
+  });
+
+  it("stays silent for a root without the prefix", () => {
+    const backend = resolveCardMeaningBackend({
+      environment: complete("https://gllm.dilato.kr"),
+      onFallback: () => {},
+    });
+
+    expect(backend.kind).toBe("llm_with_fallback");
+    expect(backend.notices).toEqual([]);
+  });
+
+  it("does not trim the prefix away on the operator's behalf", () => {
+    const backend = resolveCardMeaningBackend({
+      environment: complete("https://gllm.dilato.kr/v1"),
+      onFallback: () => {},
+    });
+
+    // A deployment may genuinely serve its API under its own `/v1`. Rewriting
+    // the setting would send the request somewhere the operator never named and
+    // replace a legible 404 with a silent one.
+    expect(backend.endpoint).toBe("https://gllm.dilato.kr/v1");
+  });
+
+  it("keeps the credential out of the warning", () => {
+    const backend = resolveCardMeaningBackend({
+      environment: complete("https://gllm.dilato.kr/v1"),
+      onFallback: () => {},
+    });
+
+    expect(JSON.stringify(backend.notices)).not.toContain("sk-super-secret");
   });
 });

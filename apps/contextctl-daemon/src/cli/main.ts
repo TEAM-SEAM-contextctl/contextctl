@@ -26,7 +26,13 @@ import {
   runSourceRemove,
   type CommandOutcome,
 } from "./commands.js";
-import { buildCliRuntime, cliRuntimeOptions, type CliRuntime } from "./runtime.js";
+import {
+  buildCliRuntime,
+  cliRuntimeOptions,
+  EmbeddingAssetsUnavailableError,
+  type CliRuntime,
+} from "./runtime.js";
+import { resolveActiveAssetDirectory } from "./asset-directory.js";
 import { resolveContextctlPaths } from "./paths.js";
 import { readSourcesFile, SourcesFileError, toSourceConfigurations } from "./sources-file.js";
 import { resolveCardMeaningBackend } from "./meaning-generator.js";
@@ -243,8 +249,17 @@ async function runServe(
     stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
     securityDomain: DEFAULT_SECURITY_DOMAIN,
   });
+  // `serve` resolves the pointer exactly as `buildCliRuntime` does. It cannot
+  // reuse that function — a served process holds its databases open for life
+  // while `buildCliRuntime` returns something the caller closes — so the one
+  // thing it must not do is work the directory out for itself.
+  const assets = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+  if (assets.status === "unavailable") {
+    throw new EmbeddingAssetsUnavailableError(assets.problem);
+  }
   const options = cliRuntimeOptions({
     paths,
+    embeddingArtifactDirectory: assets.directory,
     sourceConfigurations: toSourceConfigurations(sources),
     ingestionDatabase,
     vectorBackend: resolveVectorBackend(environment),
@@ -327,6 +342,12 @@ async function promptForConsent(write: (text: string) => void): Promise<boolean>
 
 /** Turns an exception into the one sentence an operator can act on. */
 function describeFailure(error: unknown): string {
+  if (error instanceof EmbeddingAssetsUnavailableError) {
+    // Reported before the generic fault below, and with the pointer problem's
+    // own sentence: the adapter's `embedding_artifact_unavailable` cannot say
+    // which of several situations it is in, and this can.
+    return [error.message, "", INSTALL_ASSETS_HINT].join("\n");
+  }
   if (
     error instanceof EmbeddingProviderFault &&
     error.code === "embedding_artifact_unavailable"
