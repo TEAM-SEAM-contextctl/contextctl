@@ -74,6 +74,16 @@ export interface CliRuntime {
 export interface RegistryOnlyRuntime {
   readonly database: DatabaseSync;
   readonly cards: SqliteCardStore;
+  /**
+   * How far each Source has been published, read from Ingestion's own store.
+   *
+   * Needed for the processing delay: the reachability report compares what
+   * Registry consumed against what Ingestion made ready, and only Ingestion knows
+   * the second half. Opening its database costs nothing an operator has to
+   * install — it is a second SQLite file, not the embedding artifact — so the
+   * decision commands stay runnable on a machine with no model.
+   */
+  readonly publications: SqliteIngestionPublicationStore;
   close(): void;
 }
 
@@ -90,10 +100,27 @@ export function openRegistryOnlyRuntime(input: {
   // write for the same reason.
   mkdirSync(dirname(paths.registryDatabase), { recursive: true });
   const database = openRegistryDatabase(paths.registryDatabase);
+  let ingestionDatabase: DatabaseSync;
+  try {
+    mkdirSync(dirname(paths.ingestionDatabase), { recursive: true });
+    ingestionDatabase = openIngestionDatabase({
+      location: paths.ingestionDatabase,
+      stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+      securityDomain: DEFAULT_SECURITY_DOMAIN,
+    });
+  } catch (error: unknown) {
+    // The Registry database is already open at this point, and leaving it open
+    // would leak a file handle for every failed invocation.
+    database.close();
+    throw error;
+  }
+
   return {
     database,
     cards: new SqliteCardStore(database),
+    publications: new SqliteIngestionPublicationStore(ingestionDatabase),
     close: () => {
+      ingestionDatabase.close();
       database.close();
     },
   };
