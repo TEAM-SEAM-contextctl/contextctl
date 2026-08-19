@@ -214,6 +214,35 @@ export function embeddingProfilesMatch(
   return canonicalJson(left) === canonicalJson(right);
 }
 
+export const EMBEDDING_L2_NORM_TOLERANCE = 1e-3;
+
+/** Verifies the vector shape and the exact normalization semantics in a profile. */
+export function embeddingVectorMatchesProfile(
+  profile: EmbeddingProfile,
+  vector: readonly number[],
+): boolean {
+  if (
+    vector.length !== profile.dimensions ||
+    vector.some((component) => !Number.isFinite(component))
+  ) {
+    return false;
+  }
+  if (
+    !isDocumentRetrievalEmbeddingProfile(profile) ||
+    profile.normalization !== "l2"
+  ) {
+    return true;
+  }
+  const squaredNorm = vector.reduce(
+    (sum, component) => sum + component * component,
+    0,
+  );
+  if (!Number.isFinite(squaredNorm) || squaredNorm <= 0) return false;
+  return (
+    Math.abs(Math.sqrt(squaredNorm) - 1) <= EMBEDDING_L2_NORM_TOLERANCE
+  );
+}
+
 export function documentEmbeddingProfileChangeRequiresFullRebuild(
   previous: DocumentRetrievalEmbeddingProfile,
   next: DocumentRetrievalEmbeddingProfile,

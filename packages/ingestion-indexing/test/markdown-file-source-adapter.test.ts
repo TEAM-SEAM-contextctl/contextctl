@@ -6,6 +6,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -247,11 +248,11 @@ describe("Markdown file source adapter", () => {
     expect(await readFile(path, "utf8")).toContain("\r\n");
   });
 
-  it("returns the token for the payload observed after a change-detection race", async () => {
+  it("returns the token from the same snapshot as the observed payload", async () => {
     const directory = await createTemporaryDirectory();
     const path = join(directory, "mutable.md");
     await writeFile(path, "# Before\n", "utf8");
-    const adapter = new MutatingMarkdownFileSourceAdapter(path, {
+    const adapter = new MutatingAfterReadMarkdownAdapter(path, {
       now: () => new Date("2026-07-31T00:00:00.000Z"),
     });
     const management = createManagement(adapter, { path });
@@ -273,10 +274,34 @@ describe("Markdown file source adapter", () => {
       return;
     }
     expect(result.attempt.payload.content).toBe("# After\n");
+    expect(adapter.fullReadCount).toBe(2);
     expect(result.changeSignal).toEqual({
       status: "changed",
       token: result.attempt.payload.contentDigest,
     });
+  });
+
+  it("fails with a bounded code when every candidate snapshot changes in place", async () => {
+    const directory = await createTemporaryDirectory();
+    const path = join(directory, "unstable.md");
+    await writeFile(path, "# Initial\n", "utf8");
+    const adapter = new AlwaysMutatingMarkdownAdapter(path, {
+      stableReadAttempts: 2,
+    });
+    const management = createManagement(adapter, { path });
+    const source = await management.register({
+      sourceType: "markdown",
+      displayName: "Unstable fixture",
+      configReference: "source.markdown",
+      polling: { enabled: false },
+    });
+    const ready = (await management.inspect(source)).source;
+
+    const error = await sourceFailure(management.requestObservation(ready));
+
+    expect(error.code).toBe("source_unstable");
+    expect(adapter.fullReadCount).toBe(2);
+    expect(JSON.stringify(error)).not.toContain(directory);
   });
 });
 
@@ -316,20 +341,51 @@ class SequentialSourceIdGenerator implements SourceIdGenerator {
   }
 }
 
-class MutatingMarkdownFileSourceAdapter extends MarkdownFileSourceAdapter {
+class MutatingAfterReadMarkdownAdapter extends MarkdownFileSourceAdapter {
+  fullReadCount = 0;
+
   constructor(
-    readonly path: string,
+    private readonly path: string,
     options: ConstructorParameters<typeof MarkdownFileSourceAdapter>[0],
   ) {
     super(options);
   }
 
-  override async detectChange(
-    ...input: Parameters<MarkdownFileSourceAdapter["detectChange"]>
-  ): ReturnType<MarkdownFileSourceAdapter["detectChange"]> {
-    const change = await super.detectChange(...input);
-    await writeFile(this.path, "# After\n", "utf8");
-    return change;
+  protected override async readSnapshotBytes(
+    handle: FileHandle,
+    signal: AbortSignal,
+  ): Promise<Uint8Array> {
+    const bytes = await super.readSnapshotBytes(handle, signal);
+    this.fullReadCount += 1;
+    if (this.fullReadCount === 1) {
+      await writeFile(this.path, "# After\n", "utf8");
+    }
+    return bytes;
+  }
+}
+
+class AlwaysMutatingMarkdownAdapter extends MarkdownFileSourceAdapter {
+  fullReadCount = 0;
+
+  constructor(
+    private readonly path: string,
+    options: ConstructorParameters<typeof MarkdownFileSourceAdapter>[0],
+  ) {
+    super(options);
+  }
+
+  protected override async readSnapshotBytes(
+    handle: FileHandle,
+    signal: AbortSignal,
+  ): Promise<Uint8Array> {
+    const bytes = await super.readSnapshotBytes(handle, signal);
+    this.fullReadCount += 1;
+    await writeFile(
+      this.path,
+      `# Mutation ${String(this.fullReadCount)} ${"x".repeat(this.fullReadCount)}\n`,
+      "utf8",
+    );
+    return bytes;
   }
 }
 

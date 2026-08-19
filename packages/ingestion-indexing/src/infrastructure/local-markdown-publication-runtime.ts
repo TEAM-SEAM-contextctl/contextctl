@@ -6,6 +6,7 @@ import {
 import { ManagedDocumentSearch } from "../application/managed-document-search.js";
 import { MarkdownCapture } from "../application/markdown-capture.js";
 import { MarkdownPublicationWorkflow } from "../application/markdown-publication-workflow.js";
+import { PublicationReadyReconciler } from "../application/reconcile-publication-ready.js";
 import { DocumentIndexPublisher } from "../application/publish-document-index.js";
 import { IncrementalDocumentReindexer } from "../application/reindex-document-incrementally.js";
 import { SourceManagement } from "../application/source-management.js";
@@ -14,7 +15,10 @@ import {
   type SourceObservationRetentionPolicy,
 } from "../application/retain-source-observations.js";
 import type { BlockIdSource } from "../domain/document-capture.js";
-import type { EmbeddingProfile } from "../domain/embedding-profile.js";
+import {
+  isDocumentRetrievalEmbeddingProfile,
+  type EmbeddingProfile,
+} from "../domain/embedding-profile.js";
 import { stableIdentity } from "../domain/revision-identity.js";
 import type { EmbeddingPort } from "../ports/embedding.js";
 import type { PublicationReadyNotifier } from "../ports/markdown-publication.js";
@@ -31,7 +35,6 @@ import type {
   SourceIdGenerator,
 } from "../ports/source-adapter.js";
 import type { VectorIndexPort } from "../ports/vector-index.js";
-import { DeterministicEmbeddingAdapter } from "./deterministic-embedding-adapter.js";
 import { InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore } from "./in-memory-index-publication-store.js";
 import { InMemoryIndexStagingAttemptStore } from "./in-memory-index-staging-attempt-store.js";
 import { InMemoryIngestionPublicationStore } from "./in-memory-ingestion-publication-store.js";
@@ -47,6 +50,7 @@ import {
   StaticQueryEmbeddingProviderRegistry,
   StaticVectorIndexConnectorRegistry,
 } from "./static-managed-search-registries.js";
+import { assertProductionEmbeddingProvider } from "./transformers-js-local-embedding-adapter.js";
 
 export interface LocalMarkdownPublicationRuntimeOptions {
   readonly configurations: Readonly<Record<string, unknown>>;
@@ -55,7 +59,8 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly connectorId: string;
   readonly stateNamespaceId: string;
   readonly securityDomain: string;
-  readonly embeddingProvider?: EmbeddingPort;
+  /** Explicit provider bound to the exact document and query profile. */
+  readonly embeddingProvider: EmbeddingPort;
   readonly vectorIndex?: VectorIndexPort;
   readonly readyNotifier?: PublicationReadyNotifier;
   readonly checkpoints?: MarkdownPublicationCheckpointStore;
@@ -80,7 +85,9 @@ export interface LocalMarkdownPublicationRuntime {
   readonly publications: IngestionPublicationStore;
   readonly observations: SourceObservationStore;
   readonly observationRetention: SourceObservationRetention;
-  readonly readyNotifications: InMemoryPublicationReadyNotifier;
+  readonly readyNotifier: PublicationReadyNotifier;
+  readonly readyNotifications: InMemoryPublicationReadyNotifier | undefined;
+  readonly readyReconciler: PublicationReadyReconciler;
   readonly events: InMemoryMarkdownPublicationEventSink;
   readonly indexPublications: IndexPublicationStore;
   readonly stagingAttempts: IndexStagingAttemptStore;
@@ -95,6 +102,15 @@ export interface LocalMarkdownPublicationRuntime {
 export function createLocalMarkdownPublicationRuntime(
   options: LocalMarkdownPublicationRuntimeOptions,
 ): LocalMarkdownPublicationRuntime {
+  if (options.embeddingProvider === undefined) {
+    throw new TypeError("an explicit embedding provider is required");
+  }
+  if (isDocumentRetrievalEmbeddingProfile(options.embeddingProfile)) {
+    assertProductionEmbeddingProvider(
+      options.embeddingProfile,
+      options.embeddingProvider,
+    );
+  }
   if (
     options.indexPublications !== undefined &&
     options.stagingAttempts === undefined
@@ -119,14 +135,17 @@ export function createLocalMarkdownPublicationRuntime(
     defaultTimeoutMs: options.defaultSourceTimeoutMs ?? 30_000,
     clock,
   });
-  const embeddingProvider =
-    options.embeddingProvider ?? new DeterministicEmbeddingAdapter();
+  const embeddingProvider = options.embeddingProvider;
   const vectorIndex = options.vectorIndex ?? new InMemoryVectorIndexAdapter();
   const checkpoints =
     options.checkpoints ?? new InMemoryMarkdownPublicationCheckpointStore();
   const publications =
     options.publications ?? new InMemoryIngestionPublicationStore();
-  const readyNotifications = new InMemoryPublicationReadyNotifier();
+  const readyNotifications =
+    options.readyNotifier === undefined
+      ? new InMemoryPublicationReadyNotifier()
+      : undefined;
+  const readyNotifier = options.readyNotifier ?? readyNotifications!;
   const events = new InMemoryMarkdownPublicationEventSink();
   const indexPublications =
     options.indexPublications ?? new InMemoryIndexPublicationStore();
@@ -164,7 +183,6 @@ export function createLocalMarkdownPublicationRuntime(
       indexPublisher,
     }),
     publications,
-    readyNotifier: options.readyNotifier ?? readyNotifications,
     events,
     embeddingProfile: options.embeddingProfile,
     stateNamespaceId: options.stateNamespaceId,
@@ -200,7 +218,13 @@ export function createLocalMarkdownPublicationRuntime(
         : { policy: options.observationRetentionPolicy }),
       clock,
     }),
+    readyNotifier,
     readyNotifications,
+    readyReconciler: new PublicationReadyReconciler({
+      publications,
+      notifier: readyNotifier,
+      clock,
+    }),
     events,
     indexPublications,
     stagingAttempts,

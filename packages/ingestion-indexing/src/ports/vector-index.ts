@@ -80,9 +80,10 @@ export interface VectorIndexRetentionLease {
 
 /** Outbound storage contract owned by the Ingestion indexing workflow. */
 export interface VectorIndexPort {
-  prepare(
-    compatibility: VectorIndexCompatibilityInput,
-  ): Promise<PreparedVectorIndex>;
+  prepare(input: {
+    readonly compatibility: VectorIndexCompatibilityInput;
+    readonly signal: AbortSignal;
+  }): Promise<PreparedVectorIndex>;
   /**
    * Restores a published opaque binding after process-local adapter state was
    * lost. Unlike prepare, this operation must not create missing storage.
@@ -90,16 +91,19 @@ export interface VectorIndexPort {
   rehydrate(input: {
     readonly accessHandle: string;
     readonly compatibility: VectorIndexCompatibilityInput;
+    readonly signal: AbortSignal;
   }): Promise<RehydratedVectorIndex>;
   upsertRecords(input: {
     readonly accessHandle: string;
     readonly embeddingProfile: EmbeddingProfile;
     readonly records: readonly VectorIndexRecord[];
+    readonly signal: AbortSignal;
   }): Promise<void>;
   listVersionRecords(input: {
     readonly accessHandle: string;
     readonly documentIndexId: string;
     readonly indexVersion: string;
+    readonly signal: AbortSignal;
   }): Promise<readonly VectorIndexStoredRecord[]>;
   /**
    * Reads back the stored vectors of an already published version. Requested
@@ -111,26 +115,31 @@ export interface VectorIndexPort {
     readonly documentIndexId: string;
     readonly indexVersion: string;
     readonly chunkRevisionIds: readonly string[];
+    readonly signal: AbortSignal;
   }): Promise<readonly VectorIndexStoredVector[]>;
   search(input: {
     readonly accessHandle: string;
     readonly scope: VectorIndexScope;
     readonly queryVector: readonly number[];
     readonly limit: number;
+    readonly signal: AbortSignal;
   }): Promise<readonly VectorIndexSearchHit[]>;
   retainVersion(input: {
     readonly accessHandle: string;
     readonly lease: VectorIndexRetentionLease;
+    readonly signal: AbortSignal;
   }): Promise<void>;
   releaseRetentionLease(input: {
     readonly accessHandle: string;
     readonly leaseId: string;
+    readonly signal: AbortSignal;
   }): Promise<void>;
   deleteVersion(input: {
     readonly accessHandle: string;
     readonly documentIndexId: string;
     readonly indexVersion: string;
     readonly now: string;
+    readonly signal: AbortSignal;
   }): Promise<void>;
 }
 
@@ -139,6 +148,7 @@ export type VectorIndexFaultCode =
   | "filter_not_supported"
   | "index_unavailable"
   | "index_version_retained"
+  | "invalid_result"
   | "invalid_request"
   | "storage_unavailable";
 

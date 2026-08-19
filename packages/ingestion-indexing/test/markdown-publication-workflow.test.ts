@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
   InMemoryMarkdownPublicationCheckpointStore,
+  PublicationReadyReconciler,
   createLocalMarkdownPublicationRuntime,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
@@ -68,13 +69,16 @@ describe("MarkdownPublicationWorkflow", () => {
     expect(result.status).toBe("published");
     expect(result.publication).toBeDefined();
     const publication = requiredPublication(result.publication);
-    expect(runtime.readyNotifications.notifications).toEqual([
+    await expect(runtime.readyReconciler.reconcile()).resolves.toEqual([
+      { publicationId: publication.publicationId, status: "delivered" },
+    ]);
+    expect(runtime.readyNotifications?.notifications).toEqual([
       { schemaVersion: 1, publicationId: publication.publicationId },
     ]);
     expect(
       await runtime.publications.find(publication.publicationId),
     ).toEqual(publication);
-    expect(await runtime.publications.pendingReady()).toEqual([]);
+    await expect(runtime.readyReconciler.reconcile()).resolves.toEqual([]);
     expect(
       await runtime.observations.find(result.observationId!),
     ).toMatchObject({
@@ -132,7 +136,6 @@ describe("MarkdownPublicationWorkflow", () => {
       ["chunking", "completed"],
       ["index_update", "completed"],
       ["ingestion_publication", "completed"],
-      ["ready_notification", "completed"],
     ]);
     expect(runtime.events.events.every((event) => event.operationId !== "")).toBe(
       true,
@@ -163,6 +166,7 @@ describe("MarkdownPublicationWorkflow", () => {
       clock: () => NOW,
     });
     const first = await runtime.workflow.publish(command());
+    await runtime.readyReconciler.reconcile();
     const embeddingCallsAfterFirst = embeddings.requests.length;
 
     const repeated = await runtime.workflow.publish(command());
@@ -175,8 +179,8 @@ describe("MarkdownPublicationWorkflow", () => {
       publication: { publicationId: first.publication?.publicationId },
     });
     expect(embeddings.requests).toHaveLength(embeddingCallsAfterFirst);
-    expect(runtime.readyNotifications.notifications).toHaveLength(1);
-    expect(await runtime.publications.pendingReady()).toEqual([]);
+    expect(runtime.readyNotifications?.notifications).toHaveLength(1);
+    await expect(runtime.readyReconciler.reconcile()).resolves.toEqual([]);
     expect(
       repeated.diagnostics
         .filter((diagnostic) => diagnostic.status === "skipped")
@@ -187,7 +191,6 @@ describe("MarkdownPublicationWorkflow", () => {
       "chunking",
       "index_update",
       "ingestion_publication",
-      "ready_notification",
     ]);
     const documentScope = first.publication?.knowledgeUnits
       .flatMap((unit) => unit.publishedScopes)
@@ -284,6 +287,7 @@ describe("MarkdownPublicationWorkflow", () => {
     const runtime = createLocalMarkdownPublicationRuntime({
       configurations: { "source.fixture": { path: fixture.path } },
       embeddingProfile: profile,
+      embeddingProvider: new DeterministicEmbeddingAdapter(),
       connectorId: "vector.local",
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
@@ -365,6 +369,7 @@ describe("MarkdownPublicationWorkflow", () => {
         "source.unsupported": { path: UNSUPPORTED_FIXTURE },
       },
       embeddingProfile: profile,
+      embeddingProvider: new DeterministicEmbeddingAdapter(),
       connectorId: "vector.local",
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
@@ -394,7 +399,7 @@ describe("MarkdownPublicationWorkflow", () => {
     expect(JSON.stringify(runtime.events.events)).not.toContain(
       "obviously-fake-sensitive-content",
     );
-    expect(runtime.readyNotifications.notifications).toEqual([]);
+    expect(runtime.readyNotifications?.notifications).toEqual([]);
   });
 
   it("rejects a security domain that is not bound to the workflow provider", async () => {
@@ -439,6 +444,7 @@ describe("MarkdownPublicationWorkflow", () => {
         "source.fixture": { path: STRUCTURE_FIXTURE },
       },
       embeddingProfile: profile,
+      embeddingProvider: new DeterministicEmbeddingAdapter(),
       connectorId: "vector.local",
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
@@ -446,29 +452,44 @@ describe("MarkdownPublicationWorkflow", () => {
       clock: () => NOW,
     });
 
-    const error = await runtime.workflow
-      .publish(command())
-      .catch((caught: unknown) => caught);
-
-    expect(error).toMatchObject({
-      code: "stage_failed",
-      stage: "ready_notification",
-      diagnosticCode: "notification_unavailable",
-    });
-    const pending = await runtime.publications.pendingReady();
-    expect(pending).toHaveLength(1);
+    const published = await runtime.workflow.publish(command());
+    expect(published.status).toBe("published");
+    await expect(runtime.readyReconciler.reconcile()).resolves.toEqual([
+      {
+        publicationId: published.publication?.publicationId,
+        status: "failed",
+        diagnosticCode: "notification_unavailable",
+      },
+    ]);
     const stored = await runtime.publications.find(
-      pending[0]!.publicationId,
+      published.publication!.publicationId,
     );
     expect(stored).toBeDefined();
 
     const retry = await runtime.workflow.publish(command());
 
     expect(retry.status).toBe("unchanged");
-    expect(notifier.delivered).toEqual(pending);
-    expect(await runtime.publications.pendingReady()).toEqual([]);
+    expect(notifier.delivered).toEqual([]);
+    const retryReconciler = new PublicationReadyReconciler({
+      publications: runtime.publications,
+      notifier,
+      clock: () => "2026-08-13T06:00:01.000Z",
+    });
+    await expect(retryReconciler.reconcile()).resolves.toEqual([
+      {
+        publicationId: published.publication?.publicationId,
+        status: "delivered",
+      },
+    ]);
+    expect(notifier.delivered).toEqual([
+      {
+        schemaVersion: 1,
+        publicationId: published.publication?.publicationId,
+      },
+    ]);
+    await expect(retryReconciler.reconcile()).resolves.toEqual([]);
     expect(
-      await runtime.publications.find(pending[0]!.publicationId),
+      await runtime.publications.find(published.publication!.publicationId),
     ).toEqual(stored);
   });
 
@@ -514,7 +535,8 @@ describe("MarkdownPublicationWorkflow", () => {
     expect(checkpoint?.indexingSnapshot).toBeDefined();
     expect(checkpoint?.observationId).toBe(recovered.observationId);
     await expect(runtime.observations.count()).resolves.toBe(1);
-    expect(await runtime.publications.pendingReady()).toEqual([]);
+    await expect(runtime.readyReconciler.reconcile()).resolves.toHaveLength(1);
+    await expect(runtime.readyReconciler.reconcile()).resolves.toEqual([]);
   });
 });
 

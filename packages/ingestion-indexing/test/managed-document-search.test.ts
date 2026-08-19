@@ -104,6 +104,7 @@ describe("ManagedDocumentSearch", () => {
           retrievalText: "Inventory stock policy",
         }),
       ],
+      signal: new AbortController().signal,
     });
     await harness.vectorIndex.upsertRecords({
       accessHandle,
@@ -121,6 +122,7 @@ describe("ManagedDocumentSearch", () => {
           retrievalText: "A later immutable version",
         }),
       ],
+      signal: new AbortController().signal,
     });
 
     const hits = await harness.search.search({
@@ -182,6 +184,20 @@ describe("ManagedDocumentSearch", () => {
     ).rejects.toMatchObject({ code: "search_result_invalid" });
   });
 
+  it("fails closed when a Chunk is relabeled to another valid Unit", async () => {
+    const harness = await createHarness();
+    harness.vectorIndex.corruptSemanticUnitId = "unit_payments";
+
+    await expect(
+      harness.search.search({
+        queryText: "payment retry",
+        securityDomain: "tenant-a",
+        scopeRef: ref(requiredScope(harness.publication, "document")),
+        limit: 5,
+      }),
+    ).rejects.toMatchObject({ code: "search_result_invalid" });
+  });
+
   it.each([
     ["embedding_artifact_unavailable", "embedding_artifact_unavailable"],
     ["input_limit_exceeded", "query_input_limit_exceeded"],
@@ -204,10 +220,42 @@ describe("ManagedDocumentSearch", () => {
       ).rejects.toMatchObject({ code: searchCode, retriable: false });
     },
   );
+
+  it("stops dispatching queued batch targets after caller cancellation", async () => {
+    const harness = await createHarness(
+      new DeterministicEmbeddingAdapter(),
+      2,
+    );
+    const controller = new AbortController();
+    harness.vectorIndex.onSearchStarted = () => controller.abort();
+    const scopeRef = ref(requiredScope(harness.publication, "document"));
+
+    const items = await harness.search.searchBatch({
+      queryText: "payment retry",
+      securityDomain: "tenant-a",
+      targets: Array.from({ length: 8 }, (_unused, index) => ({
+        targetKey: `target-${String(index)}`,
+        scopeRef,
+        limit: 5,
+      })),
+      signal: controller.signal,
+    });
+
+    expect(harness.vectorIndex.searchCalls).toBeGreaterThan(0);
+    expect(harness.vectorIndex.searchCalls).toBeLessThanOrEqual(2);
+    expect(items).toHaveLength(8);
+    expect(
+      items.every(
+        (item) =>
+          item.status === "failed" && item.failure.code === "cancelled",
+      ),
+    ).toBe(true);
+  });
 });
 
 async function createHarness(
   embeddingDelegate: EmbeddingPort = new DeterministicEmbeddingAdapter(),
+  maxConcurrency?: number,
 ) {
   const delegate = new InMemoryVectorIndexAdapter();
   const vectorIndex = new RecordingVectorIndex(delegate);
@@ -260,6 +308,7 @@ async function createHarness(
         { connectorId: "vector.main", vectorIndex },
       ]),
       publications,
+      ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
     }),
   };
 }
@@ -334,7 +383,9 @@ class RecordingEmbeddingPort implements EmbeddingPort {
 
 class RecordingVectorIndex implements VectorIndexPort {
   searchCalls = 0;
+  onSearchStarted: (() => void) | undefined;
   corruptRetrievalText = false;
+  corruptSemanticUnitId: string | undefined;
 
   constructor(private readonly delegate: VectorIndexPort) {}
 
@@ -356,9 +407,23 @@ class RecordingVectorIndex implements VectorIndexPort {
 
   async search(input: Parameters<VectorIndexPort["search"]>[0]) {
     this.searchCalls += 1;
+    this.onSearchStarted?.();
     const hits = await this.delegate.search(input);
-    return this.corruptRetrievalText && hits[0] !== undefined
-      ? [{ ...hits[0], retrievalText: "tampered text" }, ...hits.slice(1)]
-      : hits;
+    if (hits[0] === undefined) return hits;
+    const first = {
+      ...hits[0],
+      ...(this.corruptRetrievalText
+        ? { retrievalText: "tampered text" }
+        : {}),
+      ...(this.corruptSemanticUnitId === undefined
+        ? {}
+        : {
+            metadata: {
+              ...hits[0].metadata,
+              semanticUnitId: this.corruptSemanticUnitId,
+            },
+          }),
+    };
+    return [first, ...hits.slice(1)];
   }
 }

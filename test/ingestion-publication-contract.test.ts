@@ -8,6 +8,7 @@ import {
   parseIngestionPublication as parseIngestionPublicationV1,
   parseIngestionPublicationV2 as parseIngestionPublication,
   parsePublicationReady,
+  PublishedFactV2Schema,
   type IngestionPublicationV2 as IngestionPublication,
   type PublishedKnowledgeUnitV2,
 } from "@contextctl/contracts";
@@ -130,6 +131,38 @@ describe("IngestionPublication contract", () => {
 
     expect(parseIngestionPublication(fixture).knowledgeUnits[0]?.kind).toBe(
       "segment",
+    );
+  });
+
+  it("keeps boolean in the frozen fact scalar schema", () => {
+    expect(
+      PublishedFactV2Schema.safeParse({
+        name: "keywords.derived",
+        value: true,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an array disguised as document.media_type", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<{
+        facts: Array<{ name: string; value: unknown }>;
+        contentDigest: string;
+      }>;
+      changes: Array<{ currentContentDigest?: string }>;
+    };
+    const unit = fixture.knowledgeUnits[0]!;
+    const mediaType = unit.facts.find(
+      (fact) => fact.name === "document.media_type",
+    )!;
+    mediaType.value = ["text/markdown"];
+    unit.contentDigest = computePublishedKnowledgeUnitV2Digest(
+      unit as PublishedKnowledgeUnitV2,
+    );
+    fixture.changes[0]!.currentContentDigest = unit.contentDigest;
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
     );
   });
 

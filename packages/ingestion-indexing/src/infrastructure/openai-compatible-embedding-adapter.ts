@@ -1,3 +1,4 @@
+import { embeddingVectorMatchesProfile } from "../domain/embedding-profile.js";
 import {
   EmbeddingProviderFault,
   type EmbeddingPort,
@@ -163,7 +164,10 @@ function parseResponse(
   }
   return request.inputs.map((input, index) => {
     const vector = byIndex.get(index);
-    if (vector === undefined) {
+    if (
+      vector === undefined ||
+      !embeddingVectorMatchesProfile(request.profile, vector)
+    ) {
       throw new EmbeddingProviderFault("invalid_response", false);
     }
     return { key: input.key, vector };

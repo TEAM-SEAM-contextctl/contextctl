@@ -23,6 +23,8 @@ import {
 } from "./publication-scope-v2.js";
 
 const BoundedCoordinateTextSchema = z.string().min(1).max(256);
+export const MAX_PUBLICATION_FACTS = 64;
+export const MAX_PUBLICATION_FACT_BYTES = 16 * 1_024;
 
 const PublishedDocumentCoordinateSchema = z
   .object({
@@ -92,6 +94,7 @@ export const PublicationFactNameSchema = z.enum([
 const PublishedFactScalarSchema = z.union([
   z.string().min(1).max(2_048),
   z.number().finite(),
+  z.boolean(),
 ]);
 
 export const PublishedFactSchema = z
@@ -175,7 +178,7 @@ export const PublishedKnowledgeUnitSchema = z
     id: KnowledgeUnitIdSchema,
     kind: z.enum(["document", "section", "segment", "table", "operation"]),
     sourceCoordinate: PublishedSourceCoordinateSchema,
-    facts: z.array(PublishedFactSchema).max(64),
+    facts: z.array(PublishedFactSchema).max(MAX_PUBLICATION_FACTS),
     publishedScopes: z.array(PublishedScopeSchema).min(1).max(64),
     provenance: PublicationProvenanceSchema,
     contentDigest: ContentDigestSchema,
@@ -210,7 +213,7 @@ function validateFacts(
 ): void {
   const names = unit.facts.map((fact) => fact.name);
   validateSortedUnique(names, "publication fact names", context);
-  if (canonicalContractByteLength(unit.facts) > 16 * 1_024) {
+  if (canonicalContractByteLength(unit.facts) > MAX_PUBLICATION_FACT_BYTES) {
     context.addIssue({
       code: "custom",
       path: ["facts"],
@@ -254,7 +257,8 @@ function validateFactValue(
   ) issue("fact requires a non-empty string");
   if (
     fact.name === "document.media_type" &&
-    !["text/markdown", "text/plain", "application/pdf"].includes(String(value))
+    (typeof value !== "string" ||
+      !["text/markdown", "text/plain", "application/pdf"].includes(value))
   ) issue("document media type is unsupported");
   if (
     fact.name === "unit.kind" &&

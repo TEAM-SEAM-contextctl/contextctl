@@ -443,9 +443,47 @@ describe("Qdrant vector index adapter", () => {
       }],
     };
     await expect(search(adapter, prepared.accessHandle)).rejects.toMatchObject({
-      code: "storage_unavailable",
+      code: "invalid_result",
       retriable: false,
     });
+  });
+
+  it("rejects a collection whose compatibility ownership marker changed", async () => {
+    const client = new FakeQdrantClient();
+    const prepared = await qdrant(client).prepare(compatibility);
+    client.compatibilityMetadata = "0".repeat(64);
+
+    await expect(
+      qdrant(client).rehydrate({
+        accessHandle: prepared.accessHandle,
+        compatibility,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_request", retriable: false });
+  });
+
+  it("propagates caller cancellation to the Qdrant query request", async () => {
+    const client = new FakeQdrantClient();
+    const adapter = qdrant(client);
+    const prepared = await adapter.prepare(compatibility);
+    client.blockQueryUntilAbort = true;
+    const controller = new AbortController();
+
+    const pending = adapter.search({
+      accessHandle: prepared.accessHandle,
+      scope: {
+        documentIndexId: "didx_payments",
+        indexVersion: "idxv_aaaa",
+        documentId: "doc_payments",
+      },
+      queryVector: [1, 0, 0],
+      limit: 5,
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(client.lastQuerySignal).toBe(controller.signal);
   });
 
   it("rejects credential-bearing and non-local plaintext endpoints", () => {
@@ -476,6 +514,7 @@ async function search(
     },
     queryVector: [1, 0, 0],
     limit: 10,
+    signal: new AbortController().signal,
   });
 }
 
@@ -530,8 +569,11 @@ class FakeQdrantClient {
   lastFilter: unknown;
   lastCountRequest: unknown;
   activeLeaseCount = 0;
+  compatibilityMetadata: string | undefined;
   queryResult: unknown = { points: [] };
   scrollResult: unknown = { points: [], next_page_offset: null };
+  blockQueryUntilAbort = false;
+  lastQuerySignal: AbortSignal | undefined;
 
   async collectionExists() {
     this.raise();
@@ -542,13 +584,23 @@ class FakeQdrantClient {
     this.raise();
     this.exists = true;
     this.createdCollections.push(request);
+    this.compatibilityMetadata = (
+      request as {
+        readonly metadata?: { readonly contextctlCompatibility?: string };
+      }
+    ).metadata?.contextctlCompatibility;
     return true;
   }
 
   async getCollection() {
     this.raise();
     return {
-      config: { params: { vectors: { size: 3, distance: "Cosine" } } },
+      config: {
+        params: { vectors: { size: 3, distance: "Cosine" } },
+        metadata: {
+          contextctlCompatibility: this.compatibilityMetadata,
+        },
+      },
       payload_schema: Object.fromEntries(
         [...this.payloadIndexes].map(([field, dataType]) => [field, { data_type: dataType }]),
       ),
@@ -575,9 +627,21 @@ class FakeQdrantClient {
     return { status: "completed" };
   }
 
-  async query(_name: string, request: object) {
+  async query(_name: string, request: object, signal?: AbortSignal) {
     this.raise();
+    this.lastQuerySignal = signal;
     this.lastFilter = (request as { filter: unknown }).filter;
+    if (this.blockQueryUntilAbort) {
+      await new Promise<never>((_resolve, reject) => {
+        if (signal?.aborted === true) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    }
     return this.queryResult;
   }
 

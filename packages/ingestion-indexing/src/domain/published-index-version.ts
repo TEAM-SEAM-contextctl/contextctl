@@ -8,7 +8,11 @@ import {
 } from "@contextctl/contracts";
 
 import { validateEmbeddingProfile } from "./embedding-profile.js";
-import type { IndexManifest, ScopeRevision } from "./index-manifest.js";
+import type {
+  IndexChunkBinding,
+  IndexManifest,
+  ScopeRevision,
+} from "./index-manifest.js";
 import {
   isDigest,
   isId,
@@ -139,6 +143,7 @@ const PUBLICATION_KEYS = [
 ] as const;
 
 const MANIFEST_KEYS = [
+  "chunkBindings",
   "chunkPolicyVersion",
   "chunkRevisions",
   "documentId",
@@ -148,6 +153,7 @@ const MANIFEST_KEYS = [
   "fallbackCounts",
   "indexVersion",
   "lineagePolicyVersion",
+  "manifestSchemaVersion",
   "normalizationPolicyVersion",
   "observationId",
   "parserVersion",
@@ -167,6 +173,9 @@ const MANIFEST_KEYS = [
 function parseManifest(input: unknown): IndexManifest {
   if (!isRecord(input)) {
     throw new PublishedIndexVersionValidationError("corrupt_record");
+  }
+  if (input.manifestSchemaVersion !== 2) {
+    throw new PublishedIndexVersionValidationError("schema_unsupported");
   }
   if (
     typeof input.payloadSchemaVersion === "number" &&
@@ -189,6 +198,7 @@ function parseManifest(input: unknown): IndexManifest {
     "chk",
     "crv",
   );
+  const chunkBindings = parseChunkBindings(input.chunkBindings);
   const fallbackCounts = parseNumberRecord(input.fallbackCounts);
   const documentIndexId = requiredString(input.documentIndexId);
   const stateNamespaceId = requiredString(input.stateNamespaceId);
@@ -222,7 +232,14 @@ function parseManifest(input: unknown): IndexManifest {
     !isPositiveInteger(input.documentSchemaVersion) ||
     !isNonNegativeInteger(recordCount) ||
     recordCount !== Object.keys(chunkRevisions).length ||
+    recordCount !== Object.keys(chunkBindings).length ||
     Object.keys(semanticUnitRevisions).length === 0 ||
+    Object.entries(chunkBindings).some(
+      ([chunkId, binding]) =>
+        chunkRevisions[chunkId] !== binding.chunkRevisionId ||
+        semanticUnitRevisions[binding.semanticUnitId] !==
+          binding.semanticUnitRevisionId,
+    ) ||
     !isDigest(recordSetDigest) ||
     !isIsoTimestamp(publishedAt) ||
     embeddingProfile.textMeasureProfileVersion !==
@@ -231,6 +248,7 @@ function parseManifest(input: unknown): IndexManifest {
     throw new PublishedIndexVersionValidationError("corrupt_record");
   }
   return {
+    manifestSchemaVersion: 2,
     stateNamespaceId,
     securityDomain,
     documentIndexId,
@@ -249,6 +267,7 @@ function parseManifest(input: unknown): IndexManifest {
     payloadSchemaVersion: 2,
     semanticUnitRevisions,
     chunkRevisions,
+    chunkBindings,
     recordCount,
     recordSetDigest,
     scopeRevisions,
@@ -361,6 +380,44 @@ function parseRevisionRecord(
     }
   }
   return structuredClone(input) as Readonly<Record<string, string>>;
+}
+
+function parseChunkBindings(
+  input: unknown,
+): Readonly<Record<string, IndexChunkBinding>> {
+  if (!isRecord(input)) {
+    throw new PublishedIndexVersionValidationError("corrupt_record");
+  }
+  const bindings: Record<string, IndexChunkBinding> = {};
+  for (const [chunkId, candidate] of Object.entries(input)) {
+    if (
+      !isId(chunkId, "chk") ||
+      !isRecord(candidate) ||
+      !hasExactKeys(candidate, [
+        "chunkRevisionId",
+        "contentDigest",
+        "semanticUnitId",
+        "semanticUnitRevisionId",
+      ]) ||
+      !isNonEmptyString(candidate.chunkRevisionId) ||
+      !isRevisionId(candidate.chunkRevisionId, "crv") ||
+      !isNonEmptyString(candidate.semanticUnitId) ||
+      !isId(candidate.semanticUnitId, "unit") ||
+      !isNonEmptyString(candidate.semanticUnitRevisionId) ||
+      !isRevisionId(candidate.semanticUnitRevisionId, "urv") ||
+      !isNonEmptyString(candidate.contentDigest) ||
+      !isDigest(candidate.contentDigest)
+    ) {
+      throw new PublishedIndexVersionValidationError("corrupt_record");
+    }
+    bindings[chunkId] = {
+      chunkRevisionId: candidate.chunkRevisionId,
+      semanticUnitId: candidate.semanticUnitId,
+      semanticUnitRevisionId: candidate.semanticUnitRevisionId,
+      contentDigest: candidate.contentDigest,
+    };
+  }
+  return bindings;
 }
 
 function parseNumberRecord(input: unknown): Readonly<Record<string, number>> {

@@ -324,6 +324,7 @@ function contentManifest(manifest: IndexManifest): unknown {
     scopeRevisions: _scopeRevisions,
     semanticUnitRevisions: _semanticUnitRevisions,
     chunkRevisions: _chunkRevisions,
+    chunkBindings: _chunkBindings,
     ...content
   } = manifest;
   return content;

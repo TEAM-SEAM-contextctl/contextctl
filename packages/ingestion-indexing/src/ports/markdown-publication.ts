@@ -18,8 +18,7 @@ export type MarkdownPublicationStage =
   | "segmentation"
   | "chunking"
   | "index_update"
-  | "ingestion_publication"
-  | "ready_notification";
+  | "ingestion_publication";
 
 export type MarkdownPublicationStageStatus =
   | "started"
@@ -95,6 +94,35 @@ export interface PreparePublicationRecoveryIntentResult {
   readonly intent: PublicationRecoveryIntent;
 }
 
+export const MAX_PUBLICATION_READY_BATCH_SIZE = 100;
+
+export interface ClaimPublicationReadyBatchInput {
+  readonly ownerId: string;
+  readonly now: string;
+  readonly leaseDurationMs: number;
+  readonly limit: number;
+}
+
+export interface ClaimedPublicationReady extends PublicationReady {
+  readonly ownerId: string;
+  readonly ownerExpiresAt: string;
+  /** One-based delivery attempt count after this claim. */
+  readonly attemptCount: number;
+}
+
+export interface CompletePublicationReadyDeliveryInput {
+  readonly publicationId: string;
+  readonly ownerId: string;
+  readonly deliveredAt: string;
+}
+
+export interface ReschedulePublicationReadyDeliveryInput {
+  readonly publicationId: string;
+  readonly ownerId: string;
+  readonly nextAttemptAt: string;
+  readonly diagnosticCode: string;
+}
+
 /**
  * Stores immutable Publications and a ready-notification outbox together.
  * There is deliberately no purge operation before Registry acknowledgement.
@@ -116,8 +144,15 @@ export interface IngestionPublicationStore {
   latestForSource(
     sourceId: string,
   ): Promise<IngestionPublication | undefined>;
-  pendingReady(): Promise<readonly PublicationReady[]>;
-  markReadyNotified(publicationId: string): Promise<void>;
+  claimReadyBatch(
+    input: ClaimPublicationReadyBatchInput,
+  ): Promise<readonly ClaimedPublicationReady[]>;
+  completeReadyDelivery(
+    input: CompletePublicationReadyDeliveryInput,
+  ): Promise<void>;
+  rescheduleReadyDelivery(
+    input: ReschedulePublicationReadyDeliveryInput,
+  ): Promise<void>;
 }
 
 export interface PublicationReadyNotifier {

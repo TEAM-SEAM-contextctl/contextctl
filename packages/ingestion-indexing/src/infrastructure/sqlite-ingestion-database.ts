@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 
-export const INGESTION_DATABASE_SCHEMA_VERSION = 5;
+export const INGESTION_DATABASE_SCHEMA_VERSION = 6;
+export const INGESTION_DATABASE_APPLICATION_ID = 0x4354584c;
 
 export interface OpenIngestionDatabaseOptions {
   readonly location: string;
@@ -32,20 +33,83 @@ export function openIngestionDatabase(
   try {
     database.exec("PRAGMA foreign_keys = ON");
     database.exec("PRAGMA busy_timeout = 5000");
-    if (location !== ":memory:") {
-      database.exec("PRAGMA journal_mode = WAL");
-      database.exec("PRAGMA synchronous = NORMAL");
-    }
     if (stateNamespaceId.trim() === "" || securityDomain.trim() === "") {
       throw new TypeError("Ingestion database identity is invalid");
     }
+    assertDatabaseClaimable(database);
+    if (location !== ":memory:") {
+      configureDurability(database);
+    }
     migrate(database, stateNamespaceId, securityDomain);
+    claimDatabaseApplicationId(database);
     assertHealthy(database);
     return database;
   } catch (error) {
     database.close();
     throw error;
   }
+}
+
+function assertDatabaseClaimable(database: DatabaseSync): void {
+  const applicationId = readApplicationId(database);
+  if (
+    applicationId !== 0 &&
+    applicationId !== INGESTION_DATABASE_APPLICATION_ID
+  ) {
+    throw new IngestionDatabaseSchemaError("identity_mismatch");
+  }
+  if (readSchemaVersion(database) !== 0) return;
+  const object = database
+    .prepare(
+      `SELECT 1 AS present
+         FROM sqlite_schema
+        WHERE name NOT LIKE 'sqlite_%'
+        LIMIT 1`,
+    )
+    .get();
+  if (object !== undefined) {
+    throw new IngestionDatabaseSchemaError("schema_invalid");
+  }
+}
+
+function configureDurability(database: DatabaseSync): void {
+  database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA synchronous = FULL");
+  const journal = database.prepare("PRAGMA journal_mode").get() as
+    | { readonly journal_mode?: unknown }
+    | undefined;
+  const synchronous = database.prepare("PRAGMA synchronous").get() as
+    | { readonly synchronous?: unknown }
+    | undefined;
+  if (
+    typeof journal?.journal_mode !== "string" ||
+    journal.journal_mode.toLowerCase() !== "wal" ||
+    synchronous?.synchronous !== 2
+  ) {
+    throw new IngestionDatabaseSchemaError("schema_invalid");
+  }
+}
+
+function claimDatabaseApplicationId(database: DatabaseSync): void {
+  const applicationId = readApplicationId(database);
+  if (applicationId === 0) {
+    database.exec(
+      `PRAGMA application_id = ${String(INGESTION_DATABASE_APPLICATION_ID)}`,
+    );
+  }
+  if (readApplicationId(database) !== INGESTION_DATABASE_APPLICATION_ID) {
+    throw new IngestionDatabaseSchemaError("identity_mismatch");
+  }
+}
+
+function readApplicationId(database: DatabaseSync): number {
+  const row = database.prepare("PRAGMA application_id").get() as
+    | { readonly application_id?: unknown }
+    | undefined;
+  if (!Number.isSafeInteger(row?.application_id)) {
+    throw new IngestionDatabaseSchemaError("schema_invalid");
+  }
+  return row!.application_id as number;
 }
 
 function migrate(
@@ -62,11 +126,24 @@ function migrate(
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     return;
   }
+  if (version === 5) {
+    assertExpectedSchema(database, EXPECTED_SCHEMA_V5);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    inIngestionTransaction(database, () => {
+      createSchemaV6(database);
+      assertExpectedSchema(database);
+      database.exec(
+        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
+      );
+    });
+    return;
+  }
   if (version === 4) {
     assertExpectedSchema(database, EXPECTED_SCHEMA_V4);
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
     inIngestionTransaction(database, () => {
       createSchemaV5(database);
+      createSchemaV6(database);
       assertExpectedSchema(database);
       database.exec(
         `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
@@ -80,6 +157,7 @@ function migrate(
     inIngestionTransaction(database, () => {
       createSchemaV4(database);
       createSchemaV5(database);
+      createSchemaV6(database);
       assertExpectedSchema(database);
       database.exec(
         `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
@@ -94,6 +172,7 @@ function migrate(
       createSchemaV3(database);
       createSchemaV4(database);
       createSchemaV5(database);
+      createSchemaV6(database);
       assertExpectedSchema(database);
       database.exec(
         `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
@@ -110,6 +189,7 @@ function migrate(
     createSchemaV3(database);
     createSchemaV4(database);
     createSchemaV5(database);
+    createSchemaV6(database);
     database
       .prepare(
         `INSERT INTO ingestion_metadata (
@@ -122,6 +202,86 @@ function migrate(
       `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
     );
   });
+}
+
+function createSchemaV6(database: DatabaseSync): void {
+  database.exec(`
+    ALTER TABLE latest_ingestion_publications
+      RENAME TO latest_ingestion_publications_v5;
+    ALTER TABLE ingestion_publications
+      RENAME TO ingestion_publications_v5;
+    DROP INDEX ingestion_publications_by_source;
+
+    CREATE TABLE ingestion_publications (
+      publication_id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      previous_publication_id TEXT,
+      publication_json TEXT NOT NULL,
+      produced_at TEXT NOT NULL,
+      ready_state TEXT NOT NULL CHECK (
+        ready_state IN ('pending', 'delivering', 'delivered')
+      ),
+      ready_owner_id TEXT,
+      ready_owner_expires_at TEXT,
+      ready_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (
+        ready_attempt_count >= 0
+      ),
+      ready_next_attempt_at TEXT NOT NULL,
+      ready_last_diagnostic_code TEXT,
+      ready_delivered_at TEXT,
+      CHECK (
+        (ready_state = 'pending'
+          AND ready_owner_id IS NULL
+          AND ready_owner_expires_at IS NULL
+          AND ready_delivered_at IS NULL)
+        OR
+        (ready_state = 'delivering'
+          AND ready_owner_id IS NOT NULL
+          AND ready_owner_expires_at IS NOT NULL
+          AND ready_delivered_at IS NULL)
+        OR
+        (ready_state = 'delivered'
+          AND ready_owner_id IS NULL
+          AND ready_owner_expires_at IS NULL
+          AND ready_delivered_at IS NOT NULL)
+      )
+    );
+
+    CREATE INDEX ingestion_publications_by_source
+      ON ingestion_publications (source_id, produced_at, publication_id);
+
+    CREATE INDEX publication_ready_by_eligibility
+      ON ingestion_publications (
+        ready_state, ready_next_attempt_at, ready_owner_expires_at,
+        produced_at, publication_id
+      );
+
+    INSERT INTO ingestion_publications (
+      publication_id, source_id, previous_publication_id,
+      publication_json, produced_at, ready_state,
+      ready_owner_id, ready_owner_expires_at, ready_attempt_count,
+      ready_next_attempt_at, ready_last_diagnostic_code, ready_delivered_at
+    )
+    SELECT publication_id, source_id, previous_publication_id,
+           publication_json, produced_at,
+           CASE ready_notified WHEN 1 THEN 'delivered' ELSE 'pending' END,
+           NULL, NULL, 0, produced_at, NULL,
+           CASE ready_notified WHEN 1 THEN produced_at ELSE NULL END
+      FROM ingestion_publications_v5;
+
+    CREATE TABLE latest_ingestion_publications (
+      source_id TEXT PRIMARY KEY,
+      publication_id TEXT NOT NULL
+        REFERENCES ingestion_publications (publication_id)
+    );
+
+    INSERT INTO latest_ingestion_publications (source_id, publication_id)
+      SELECT source_id, publication_id
+        FROM latest_ingestion_publications_v5;
+
+    DROP TABLE latest_ingestion_publications_v5;
+    DROP TABLE ingestion_publications_v5;
+  `);
 }
 
 function createSchemaV5(database: DatabaseSync): void {
@@ -422,7 +582,7 @@ const EXPECTED_SCHEMA_V4 = {
   ],
 } as const;
 
-const EXPECTED_SCHEMA = {
+const EXPECTED_SCHEMA_V5 = {
   ...EXPECTED_SCHEMA_V4,
   publication_recovery_intents: [
     ["publication_id", "TEXT", 0, 1],
@@ -433,6 +593,24 @@ const EXPECTED_SCHEMA = {
     ["produced_at", "TEXT", 1, 0],
     ["fingerprint", "TEXT", 1, 0],
     ["committed", "INTEGER", 1, 0],
+  ],
+} as const;
+
+const EXPECTED_SCHEMA = {
+  ...EXPECTED_SCHEMA_V5,
+  ingestion_publications: [
+    ["publication_id", "TEXT", 0, 1],
+    ["source_id", "TEXT", 1, 0],
+    ["previous_publication_id", "TEXT", 0, 0],
+    ["publication_json", "TEXT", 1, 0],
+    ["produced_at", "TEXT", 1, 0],
+    ["ready_state", "TEXT", 1, 0],
+    ["ready_owner_id", "TEXT", 0, 0],
+    ["ready_owner_expires_at", "TEXT", 0, 0],
+    ["ready_attempt_count", "INTEGER", 1, 0],
+    ["ready_next_attempt_at", "TEXT", 1, 0],
+    ["ready_last_diagnostic_code", "TEXT", 0, 0],
+    ["ready_delivered_at", "TEXT", 0, 0],
   ],
 } as const;
 

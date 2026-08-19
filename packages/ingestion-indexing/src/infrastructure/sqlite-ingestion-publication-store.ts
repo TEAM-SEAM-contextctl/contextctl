@@ -5,22 +5,28 @@ import {
   parseIngestionPublicationV2 as parseIngestionPublication,
   parsePublicationReady,
   type IngestionPublicationV2 as IngestionPublication,
-  type PublicationReady,
 } from "@contextctl/contracts";
 
+import { expirationAfter } from "../domain/index-staging-attempt.js";
+import { isIsoTimestamp } from "../domain/model-validation.js";
 import {
   canonicalDigest,
   canonicalJson,
 } from "../domain/revision-identity.js";
 import type {
+  ClaimedPublicationReady,
+  ClaimPublicationReadyBatchInput,
   CommitIngestionPublicationResult,
+  CompletePublicationReadyDeliveryInput,
   IngestionPublicationStore,
   PreparePublicationRecoveryIntentResult,
   PublicationRecoveryIntent,
+  ReschedulePublicationReadyDeliveryInput,
 } from "../ports/markdown-publication.js";
 import {
   IngestionPublicationCommitIncomplete,
   IngestionPublicationStoreConflict,
+  MAX_PUBLICATION_READY_BATCH_SIZE,
 } from "../ports/markdown-publication.js";
 import { inIngestionTransaction } from "./sqlite-ingestion-database.js";
 
@@ -30,7 +36,13 @@ interface PublicationRow {
   readonly previous_publication_id: string | null;
   readonly publication_json: string;
   readonly produced_at: string;
-  readonly ready_notified: number;
+  readonly ready_state: "pending" | "delivering" | "delivered";
+  readonly ready_owner_id: string | null;
+  readonly ready_owner_expires_at: string | null;
+  readonly ready_attempt_count: number;
+  readonly ready_next_attempt_at: string;
+  readonly ready_last_diagnostic_code: string | null;
+  readonly ready_delivered_at: string | null;
 }
 
 interface RecoveryIntentRow {
@@ -187,14 +199,16 @@ export class SqliteIngestionPublicationStore
           .prepare(
             `INSERT INTO ingestion_publications (
                publication_id, source_id, previous_publication_id,
-               publication_json, produced_at, ready_notified
-             ) VALUES (?, ?, ?, ?, ?, 0)`,
+               publication_json, produced_at, ready_state,
+               ready_attempt_count, ready_next_attempt_at
+             ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)`,
           )
           .run(
             publication.publicationId,
             publication.sourceId,
             publication.previousPublicationId ?? null,
             canonicalJson(publication),
+            publication.producedAt,
             publication.producedAt,
           );
         this.database
@@ -253,36 +267,122 @@ export class SqliteIngestionPublicationStore
     }
   }
 
-  async pendingReady(): Promise<readonly PublicationReady[]> {
+  async claimReadyBatch(
+    input: ClaimPublicationReadyBatchInput,
+  ): Promise<readonly ClaimedPublicationReady[]> {
+    assertClaimInput(input);
+    const ownerExpiresAt = expirationAfter(input.now, input.leaseDurationMs);
     try {
-      const rows = this.database
-        .prepare(
-          `SELECT * FROM ingestion_publications
-           WHERE ready_notified = 0
-           ORDER BY produced_at, publication_id`,
-        )
-        .all() as unknown as PublicationRow[];
-      return rows.map((row) => {
-        const publication = parseRow(row);
-        return parsePublicationReady({
-          schemaVersion: 1,
-          publicationId: publication.publicationId,
-        });
+      return inIngestionTransaction(this.database, () => {
+        const candidates = this.database
+          .prepare(
+            `SELECT * FROM ingestion_publications
+             WHERE (ready_state = 'pending' AND ready_next_attempt_at <= ?)
+                OR (ready_state = 'delivering' AND ready_owner_expires_at <= ?)
+             ORDER BY produced_at, publication_id
+             LIMIT ?`,
+          )
+          .all(input.now, input.now, input.limit) as unknown as PublicationRow[];
+        const claimed: ClaimedPublicationReady[] = [];
+        for (const row of candidates) {
+          const publication = parseRow(row);
+          const result = this.database
+            .prepare(
+              `UPDATE ingestion_publications
+                  SET ready_state = 'delivering',
+                      ready_owner_id = ?,
+                      ready_owner_expires_at = ?,
+                      ready_attempt_count = ready_attempt_count + 1,
+                      ready_last_diagnostic_code = NULL
+                WHERE publication_id = ?
+                  AND ((ready_state = 'pending' AND ready_next_attempt_at <= ?)
+                    OR (ready_state = 'delivering' AND ready_owner_expires_at <= ?))`,
+            )
+            .run(
+              input.ownerId,
+              ownerExpiresAt,
+              publication.publicationId,
+              input.now,
+              input.now,
+            );
+          if (result.changes !== 1) {
+            throw new IngestionPublicationStoreConflict();
+          }
+          const notification = parsePublicationReady({
+            schemaVersion: 1,
+            publicationId: publication.publicationId,
+          });
+          claimed.push({
+            ...notification,
+            ownerId: input.ownerId,
+            ownerExpiresAt,
+            attemptCount: row.ready_attempt_count + 1,
+          });
+        }
+        return claimed;
       });
     } catch (error) {
       throw mapStoreError(error);
     }
   }
 
-  async markReadyNotified(publicationId: string): Promise<void> {
+  async completeReadyDelivery(
+    input: CompletePublicationReadyDeliveryInput,
+  ): Promise<void> {
+    if (!isIsoTimestamp(input.deliveredAt) || input.ownerId.trim() === "") {
+      throw new IngestionPublicationStoreConflict();
+    }
     try {
       const result = this.database
         .prepare(
           `UPDATE ingestion_publications
-           SET ready_notified = 1
-           WHERE publication_id = ?`,
+              SET ready_state = 'delivered',
+                  ready_owner_id = NULL,
+                  ready_owner_expires_at = NULL,
+                  ready_last_diagnostic_code = NULL,
+                  ready_delivered_at = ?
+            WHERE publication_id = ?
+              AND ready_state = 'delivering'
+              AND ready_owner_id = ?`,
         )
-        .run(publicationId);
+        .run(input.deliveredAt, input.publicationId, input.ownerId);
+      if (result.changes !== 1) {
+        throw new IngestionPublicationStoreConflict();
+      }
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+  }
+
+  async rescheduleReadyDelivery(
+    input: ReschedulePublicationReadyDeliveryInput,
+  ): Promise<void> {
+    if (
+      input.ownerId.trim() === "" ||
+      !isIsoTimestamp(input.nextAttemptAt) ||
+      !isDiagnosticCode(input.diagnosticCode)
+    ) {
+      throw new IngestionPublicationStoreConflict();
+    }
+    try {
+      const result = this.database
+        .prepare(
+          `UPDATE ingestion_publications
+              SET ready_state = 'pending',
+                  ready_owner_id = NULL,
+                  ready_owner_expires_at = NULL,
+                  ready_next_attempt_at = ?,
+                  ready_last_diagnostic_code = ?
+            WHERE publication_id = ?
+              AND ready_state = 'delivering'
+              AND ready_owner_id = ?`,
+        )
+        .run(
+          input.nextAttemptAt,
+          input.diagnosticCode,
+          input.publicationId,
+          input.ownerId,
+        );
       if (result.changes !== 1) {
         throw new IngestionPublicationStoreConflict();
       }
@@ -376,11 +476,64 @@ function parseRow(row: PublicationRow): IngestionPublication {
     (publication.previousPublicationId ?? null) !==
       row.previous_publication_id ||
     publication.producedAt !== row.produced_at ||
-    (row.ready_notified !== 0 && row.ready_notified !== 1)
+    !isValidReadyState(row)
   ) {
     throw new IngestionPublicationStoreCorrupt();
   }
   return publication;
+}
+
+function isValidReadyState(row: PublicationRow): boolean {
+  if (
+    !Number.isSafeInteger(row.ready_attempt_count) ||
+    row.ready_attempt_count < 0 ||
+    !isIsoTimestamp(row.ready_next_attempt_at) ||
+    (row.ready_last_diagnostic_code !== null &&
+      !isDiagnosticCode(row.ready_last_diagnostic_code))
+  ) {
+    return false;
+  }
+  if (row.ready_state === "pending") {
+    return (
+      row.ready_owner_id === null &&
+      row.ready_owner_expires_at === null &&
+      row.ready_delivered_at === null
+    );
+  }
+  if (row.ready_state === "delivering") {
+    return (
+      typeof row.ready_owner_id === "string" &&
+      row.ready_owner_id.trim() !== "" &&
+      typeof row.ready_owner_expires_at === "string" &&
+      isIsoTimestamp(row.ready_owner_expires_at) &&
+      row.ready_delivered_at === null
+    );
+  }
+  return (
+    row.ready_state === "delivered" &&
+    row.ready_owner_id === null &&
+    row.ready_owner_expires_at === null &&
+    typeof row.ready_delivered_at === "string" &&
+    isIsoTimestamp(row.ready_delivered_at)
+  );
+}
+
+function assertClaimInput(input: ClaimPublicationReadyBatchInput): void {
+  if (
+    input.ownerId.trim() === "" ||
+    !isIsoTimestamp(input.now) ||
+    !Number.isSafeInteger(input.leaseDurationMs) ||
+    input.leaseDurationMs <= 0 ||
+    !Number.isSafeInteger(input.limit) ||
+    input.limit <= 0 ||
+    input.limit > MAX_PUBLICATION_READY_BATCH_SIZE
+  ) {
+    throw new IngestionPublicationStoreConflict();
+  }
+}
+
+function isDiagnosticCode(value: string): boolean {
+  return /^[a-z][a-z0-9_]*$/.test(value);
 }
 
 function parseIntentRow(row: RecoveryIntentRow): PublicationRecoveryIntent {

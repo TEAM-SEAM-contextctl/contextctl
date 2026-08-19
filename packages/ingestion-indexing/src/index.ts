@@ -5,8 +5,10 @@ export {
 export {
   buildEmptyMarkdownPublication,
   buildMarkdownPublication,
+  MarkdownPublicationBuildError,
   type BuildEmptyMarkdownPublicationInput,
   type BuildMarkdownPublicationInput,
+  type MarkdownPublicationBuildErrorCode,
 } from "./application/build-markdown-publication.js";
 export {
   MarkdownPublicationWorkflow,
@@ -160,7 +162,9 @@ export {
 export {
   assertValidEmbeddingProfile,
   documentEmbeddingProfileChangeRequiresFullRebuild,
+  EMBEDDING_L2_NORM_TOLERANCE,
   embeddingProfilesMatch,
+  embeddingVectorMatchesProfile,
   isDocumentRetrievalEmbeddingProfile,
   validateDocumentRetrievalEmbeddingProfile,
   validateEmbeddingProfile,
@@ -267,6 +271,7 @@ export {
   InMemorySourceObservationStore,
 } from "./infrastructure/in-memory-source-observation-store.js";
 export {
+  INGESTION_DATABASE_APPLICATION_ID,
   INGESTION_DATABASE_SCHEMA_VERSION,
   IngestionDatabaseSchemaError,
   openIngestionDatabase,
@@ -323,6 +328,8 @@ export {
 export {
   DirectoryLocalEmbeddingAssetSource,
   installLocalEmbeddingAssets,
+  LOCAL_EMBEDDING_ACTIVE_POINTER_FILE,
+  resolveActiveLocalEmbeddingAssets,
   type InstallLocalEmbeddingAssetsInput,
   type InstallLocalEmbeddingAssetsResult,
   type LocalEmbeddingAssetSource,
@@ -389,7 +396,9 @@ export {
 export {
   computeRecordSetDigest,
   createDocumentIndexId,
+  createIndexChunkBindings,
   createIndexVersion,
+  type IndexChunkBinding,
   type IndexManifest,
   type ScopeRevision,
   type VectorIndexRecord,
@@ -424,8 +433,12 @@ export {
 export {
   IngestionPublicationCommitIncomplete,
   IngestionPublicationStoreConflict,
+  MAX_PUBLICATION_READY_BATCH_SIZE,
   MarkdownPublicationCheckpointConflict,
+  type ClaimedPublicationReady,
+  type ClaimPublicationReadyBatchInput,
   type CommitIngestionPublicationResult,
+  type CompletePublicationReadyDeliveryInput,
   type IngestionPublicationStore,
   type MarkdownPublicationCheckpoint,
   type MarkdownPublicationCheckpointStore,
@@ -438,6 +451,7 @@ export {
   type PublicationRecoveryIntentState,
   type PublicationReadyNotifier,
   type RegisterMarkdownCheckpointResult,
+  type ReschedulePublicationReadyDeliveryInput,
 } from "./ports/markdown-publication.js";
 export {
   type QueryEmbeddingProviderBinding,

@@ -6,6 +6,7 @@ import {
   OpenAiCompatibleEmbeddingAdapter,
   type EmbeddingProfile,
   type EmbeddingProviderRequest,
+  type DocumentRetrievalEmbeddingProfile,
 } from "../src/index.js";
 
 const profile: EmbeddingProfile = {
@@ -130,7 +131,46 @@ describe("OpenAI-compatible embedding adapter", () => {
         }),
     ).toThrow(TypeError);
   });
+
+  it.each([
+    [[1, 1, 1], "unnormalized"],
+    [[0, 0, 0], "zero"],
+  ] as const)("rejects invalid L2 vectors declared by the production profile", async (vector, _kind) => {
+    const adapter = new OpenAiCompatibleEmbeddingAdapter({
+      endpoint: "https://embedding.example.test/v1/embeddings",
+      fetch: (async () =>
+        Response.json({ data: [{ index: 0, embedding: vector }] })) as typeof globalThis.fetch,
+    });
+
+    await expect(
+      adapter.embed({
+        profile: productionProfile,
+        inputs: [{ key: "crv_aaaa", text: "alpha" }],
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_response", retriable: false });
+  });
 });
+
+const productionProfile: DocumentRetrievalEmbeddingProfile = {
+  ...profile,
+  modelRevision: "revision-1",
+  execution: {
+    kind: "remote",
+    adapter: "openai-compatible",
+    adapterVersion: "1.0.0",
+    model: profile.model,
+  },
+  pooling: "provider_defined",
+  normalization: "l2",
+  documentInputTransformVersion: "identity-v1",
+  queryInputTransformVersion: "identity-v1",
+  modelMaxTokens: 512,
+  admissionLimit: {
+    textMeasureProfileVersion: profile.textMeasureProfileVersion,
+    maxUnits: profile.maxInputTokens,
+  },
+};
 
 function createRequest(): EmbeddingProviderRequest {
   return {

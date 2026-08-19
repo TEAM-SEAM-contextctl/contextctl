@@ -82,7 +82,11 @@ export class FailedIndexStagingCleanup {
       dependencies.policy ?? DEFAULT_FAILED_INDEX_STAGING_CLEANUP_POLICY;
   }
 
-  async execute(): Promise<FailedIndexStagingCleanupReport> {
+  async execute(
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<FailedIndexStagingCleanupReport> {
+    const signal = options.signal ?? new AbortController().signal;
+    signal.throwIfAborted();
     const startedAt = this.#now();
     const eligibleBefore = new Date(
       Date.parse(startedAt) - this.#policy.gracePeriodMs,
@@ -97,7 +101,8 @@ export class FailedIndexStagingCleanup {
     });
     const items: FailedIndexStagingCleanupItem[] = [];
     for (const attempt of attempts) {
-      items.push(await this.#cleanupOne(attempt, leaseId, this.#now()));
+      signal.throwIfAborted();
+      items.push(await this.#cleanupOne(attempt, leaseId, this.#now(), signal));
     }
     const completedAt = this.#now();
     if (Date.parse(completedAt) < Date.parse(startedAt)) {
@@ -127,6 +132,7 @@ export class FailedIndexStagingCleanup {
     attempt: IndexStagingAttempt,
     leaseId: string,
     now: string,
+    signal: AbortSignal,
   ): Promise<FailedIndexStagingCleanupItem> {
     const key = {
       documentIndexId: attempt.documentIndexId,
@@ -166,6 +172,7 @@ export class FailedIndexStagingCleanup {
         documentIndexId: attempt.documentIndexId,
         indexVersion: attempt.indexVersion,
         now,
+        signal,
       });
     } catch (error) {
       await this.#release(attempt, leaseId);

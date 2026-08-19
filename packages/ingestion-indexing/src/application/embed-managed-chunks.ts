@@ -1,5 +1,6 @@
 import {
   embeddingProfilesMatch,
+  embeddingVectorMatchesProfile,
   validateEmbeddingProfile,
   type EmbeddingProfile,
 } from "../domain/embedding-profile.js";
@@ -287,7 +288,7 @@ function reusableEmbeddingMap(
     }
     validateVector(
       candidate.vector,
-      profile.dimensions,
+      profile,
       "invalid_reusable_embedding",
       candidate.chunkRevisionId,
     );
@@ -315,7 +316,7 @@ function validateProviderOutputs(
     }
     validateVector(
       output.vector,
-      profile.dimensions,
+      profile,
       "invalid_provider_response",
       output.key,
     );
@@ -326,14 +327,11 @@ function validateProviderOutputs(
 
 function validateVector(
   vector: readonly number[],
-  dimensions: number,
+  profile: EmbeddingProfile,
   code: "invalid_provider_response" | "invalid_reusable_embedding",
   chunkRevisionId: string,
 ): void {
-  if (
-    vector.length !== dimensions ||
-    vector.some((component) => !Number.isFinite(component))
-  ) {
+  if (!embeddingVectorMatchesProfile(profile, vector)) {
     throw new EmbeddingPipelineError(code, chunkRevisionId);
   }
 }
