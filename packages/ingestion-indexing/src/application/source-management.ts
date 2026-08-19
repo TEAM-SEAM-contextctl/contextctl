@@ -222,21 +222,23 @@ export class SourceManagement {
       return await runWithDeadline(async (signal) => {
         const adapter = this.#resolveAdapter(source.sourceType, source.id);
         const context = await this.#createContext(source, adapter, signal);
-        const change = await adapter.detectChange(
+        const attempt = await adapter.observe(
           { ...context, signal },
           options.previousChangeToken,
         );
-        if (change.status === "unchanged") {
+        if (attempt.status === "unchanged") {
           return {
             source: completeSourceObservation(runningSource, "unchanged"),
-            changeSignal: change,
-            attempt: { status: "unchanged" },
+            changeSignal: {
+              status: "unchanged",
+              ...(options.previousChangeToken === undefined
+                ? {}
+                : { token: options.previousChangeToken }),
+            },
+            attempt,
           };
         }
-
-        const attempt = await adapter.observe({ ...context, signal });
         if (
-          attempt.status !== "changed" ||
           attempt.changeSignal.status !== "changed" ||
           attempt.changeSignal.token.trim().length === 0 ||
           !isIsoTimestamp(attempt.capturedAt) ||

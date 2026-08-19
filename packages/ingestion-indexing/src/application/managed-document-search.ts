@@ -10,7 +10,10 @@ import {
   measureText,
   TEXT_MEASURE_PROFILE_VERSION,
 } from "../domain/document-indexing-policy.js";
-import type { EmbeddingProfile } from "../domain/embedding-profile.js";
+import {
+  embeddingVectorMatchesProfile,
+  type EmbeddingProfile,
+} from "../domain/embedding-profile.js";
 import { canonicalJson } from "../domain/revision-identity.js";
 import { createVectorRecordId } from "../domain/vector-index.js";
 import { EmbeddingProviderFault } from "../ports/embedding.js";
@@ -239,11 +242,16 @@ export class ManagedDocumentSearch {
     return mapWithConcurrency(
       command.targets,
       this.#maxConcurrency,
+      context.signal,
       async (target): Promise<BatchManagedDocumentSearchItem> => {
         try {
+          context.signal.throwIfAborted();
           const hits = await this.#searchTarget(target, context);
           return { targetKey: target.targetKey, status: "fulfilled", hits };
         } catch (error) {
+          if (context.signal.aborted) {
+            return cancelledItem(target.targetKey);
+          }
           const failure = toManagedSearchError(error);
           return {
             targetKey: target.targetKey,
@@ -252,6 +260,7 @@ export class ManagedDocumentSearch {
           };
         }
       },
+      (target) => cancelledItem(target.targetKey),
     );
   }
 
@@ -259,6 +268,7 @@ export class ManagedDocumentSearch {
     target: BatchManagedDocumentSearchTarget,
     context: SearchRequestContext,
   ): Promise<readonly DocumentSearchHit[]> {
+    context.signal.throwIfAborted();
     const resolved = await this.#resolveTarget(target, context);
     let hits: readonly VectorIndexSearchHit[];
     try {
@@ -267,6 +277,7 @@ export class ManagedDocumentSearch {
         scope: resolved.vectorScope,
         queryVector: resolved.queryVector,
         limit: resolved.target.limit,
+        signal: context.signal,
       });
     } catch (error) {
       throw mapVectorSearchError(error);
@@ -440,9 +451,18 @@ export class ManagedDocumentSearch {
     if (pending === undefined) {
       pending = (async () => {
         try {
-          await vectorIndex.rehydrate({ accessHandle, compatibility });
+          context.signal.throwIfAborted();
+          await vectorIndex.rehydrate({
+            accessHandle,
+            compatibility,
+            signal: context.signal,
+          });
+          context.signal.throwIfAborted();
           return vectorIndex;
         } catch (error) {
+          if (context.signal.aborted) {
+            throw new ManagedDocumentSearchError("cancelled");
+          }
           throw mapBindingError(error);
         }
       })();
@@ -509,8 +529,7 @@ async function embedQuery(
   if (
     outputs.length !== 1 ||
     output?.key !== QUERY_EMBEDDING_KEY ||
-    output.vector.length !== profile.dimensions ||
-    output.vector.some((component) => !Number.isFinite(component))
+    !embeddingVectorMatchesProfile(profile, output.vector)
   ) {
     throw new ManagedDocumentSearchError("query_embedding_invalid");
   }
@@ -538,7 +557,9 @@ function validateBatchCommand(command: BatchManagedDocumentSearchCommand): void 
 async function mapWithConcurrency<T, R>(
   values: readonly T[],
   concurrency: number,
+  signal: AbortSignal,
   task: (value: T) => Promise<R>,
+  cancelled: (value: T) => R,
 ): Promise<readonly R[]> {
   const results = new Array<R>(values.length);
   let next = 0;
@@ -548,12 +569,23 @@ async function mapWithConcurrency<T, R>(
       while (next < values.length) {
         const index = next;
         next += 1;
-        results[index] = await task(values[index]!);
+        const value = values[index]!;
+        results[index] = signal.aborted
+          ? cancelled(value)
+          : await task(value);
       }
     },
   );
   await Promise.all(workers);
   return results;
+}
+
+function cancelledItem(targetKey: string): BatchManagedDocumentSearchItem {
+  return {
+    targetKey,
+    status: "failed",
+    failure: { code: "cancelled", retriable: false },
+  };
 }
 
 function parseTarget(
@@ -653,6 +685,9 @@ function mapCatalogError(error: unknown): ManagedDocumentSearchError {
 
 function mapBindingError(error: unknown): ManagedDocumentSearchError {
   if (error instanceof VectorIndexFault) {
+    if (error.code === "invalid_result") {
+      return new ManagedDocumentSearchError("search_result_invalid");
+    }
     if (
       error.code === "invalid_request" ||
       error.code === "filter_not_supported"
@@ -669,6 +704,9 @@ function mapBindingError(error: unknown): ManagedDocumentSearchError {
 
 function mapVectorSearchError(error: unknown): ManagedDocumentSearchError {
   if (error instanceof VectorIndexFault) {
+    if (error.code === "invalid_result") {
+      return new ManagedDocumentSearchError("search_result_invalid");
+    }
     if (
       error.code === "invalid_request" ||
       error.code === "filter_not_supported"
@@ -706,10 +744,22 @@ function projectHit(
     readonly indexVersion: string;
     readonly semanticUnitRevisions: Readonly<Record<string, string>>;
     readonly chunkRevisions: Readonly<Record<string, string>>;
+    readonly chunkBindings: Readonly<
+      Record<
+        string,
+        {
+          readonly chunkRevisionId: string;
+          readonly semanticUnitId: string;
+          readonly semanticUnitRevisionId: string;
+          readonly contentDigest: string;
+        }
+      >
+    >;
   },
   scope: VectorIndexScope,
 ): DocumentSearchHit {
   const metadata = hit.metadata;
+  const binding = manifest.chunkBindings[metadata.chunkId];
   if (
     metadata.payloadSchemaVersion !== 2 ||
     metadata.stateNamespaceId !== manifest.stateNamespaceId ||
@@ -729,6 +779,12 @@ function projectHit(
     !Number.isFinite(hit.score) ||
     manifest.semanticUnitRevisions[metadata.semanticUnitId] === undefined ||
     manifest.chunkRevisions[metadata.chunkId] !== metadata.chunkRevisionId ||
+    binding === undefined ||
+    binding.chunkRevisionId !== metadata.chunkRevisionId ||
+    binding.semanticUnitId !== metadata.semanticUnitId ||
+    binding.semanticUnitRevisionId !==
+      manifest.semanticUnitRevisions[metadata.semanticUnitId] ||
+    binding.contentDigest !== metadata.contentDigest ||
     metadata.contentDigest !== sha256Digest(hit.retrievalText) ||
     (scope.semanticUnitIds !== undefined &&
       !scope.semanticUnitIds.includes(metadata.semanticUnitId))

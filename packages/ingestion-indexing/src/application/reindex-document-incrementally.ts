@@ -152,6 +152,7 @@ export class IncrementalDocumentReindexer {
       ...(command.semanticScopes === undefined
         ? {}
         : { semanticScopes: command.semanticScopes }),
+      ...(command.signal === undefined ? {} : { signal: command.signal }),
     });
     // A profile-only rebuild replays every previous revision into the new
     // version, so "deleted" means dropped from the current set, not restaged.
@@ -224,8 +225,16 @@ export class IncrementalDocumentReindexer {
     );
     let stored;
     try {
-      stored = await this.#readVectors(head, [...digestByRevision.keys()], profile);
-    } catch {
+      stored = await this.#readVectors(
+        head,
+        [...digestByRevision.keys()],
+        profile,
+        command.signal ?? new AbortController().signal,
+      );
+    } catch (error) {
+      if (command.signal?.aborted === true) {
+        command.signal.throwIfAborted();
+      }
       return {
         reusable: [],
         discardedCount: 0,
@@ -254,6 +263,7 @@ export class IncrementalDocumentReindexer {
     head: PublishedIndexVersion,
     chunkRevisionIds: readonly string[],
     profile: DocumentIndexingSnapshot["embeddingProfile"],
+    signal: AbortSignal,
   ): Promise<
     readonly {
       readonly chunkRevisionId: string;
@@ -261,6 +271,7 @@ export class IncrementalDocumentReindexer {
       readonly embedding: readonly number[];
     }[]
   > {
+    signal.throwIfAborted();
     await this.#dependencies.vectorIndex.rehydrate({
       accessHandle: head.binding.accessHandle,
       compatibility: {
@@ -269,6 +280,7 @@ export class IncrementalDocumentReindexer {
         embeddingProfile: profile,
         payloadSchemaVersion: 2,
       },
+      signal,
     });
     const vectors = [];
     for (
@@ -285,6 +297,7 @@ export class IncrementalDocumentReindexer {
             offset,
             offset + MAX_VECTOR_VECTOR_READ,
           ),
+          signal,
         })),
       );
     }

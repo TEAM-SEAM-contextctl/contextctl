@@ -51,17 +51,18 @@ const REQUIRED_PAYLOAD_INDEXES = {
   expiresAt: "datetime",
   payloadSchemaVersion: "integer",
 } as const;
+const LEGACY_OPERATION_SIGNAL = new AbortController().signal;
 
 interface QdrantClientApi {
-  collectionExists(name: string): Promise<{ exists: boolean }>;
-  createCollection(name: string, request: object): Promise<boolean>;
-  getCollection(name: string): Promise<unknown>;
-  createPayloadIndex(name: string, request: object): Promise<unknown>;
-  upsert(name: string, request: object): Promise<unknown>;
-  query(name: string, request: object): Promise<unknown>;
-  scroll(name: string, request: object): Promise<unknown>;
-  count(name: string, request: object): Promise<unknown>;
-  delete(name: string, request: object): Promise<unknown>;
+  collectionExists(name: string, signal?: AbortSignal): Promise<{ exists: boolean }>;
+  createCollection(name: string, request: object, signal?: AbortSignal): Promise<boolean>;
+  getCollection(name: string, signal?: AbortSignal): Promise<unknown>;
+  createPayloadIndex(name: string, request: object, signal?: AbortSignal): Promise<unknown>;
+  upsert(name: string, request: object, signal?: AbortSignal): Promise<unknown>;
+  query(name: string, request: object, signal?: AbortSignal): Promise<unknown>;
+  scroll(name: string, request: object, signal?: AbortSignal): Promise<unknown>;
+  count(name: string, request: object, signal?: AbortSignal): Promise<unknown>;
+  delete(name: string, request: object, signal?: AbortSignal): Promise<unknown>;
 }
 
 export interface QdrantVectorIndexAdapterOptions {
@@ -72,32 +73,128 @@ export interface QdrantVectorIndexAdapterOptions {
 }
 
 export class QdrantVectorIndexAdapter implements VectorIndexPort {
-  readonly #client: QdrantClientApi;
+  readonly #collectionExists: (
+    name: string,
+    signal: AbortSignal,
+  ) => Promise<{ exists: boolean }>;
+  readonly #getCollection: (
+    name: string,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
+  readonly #query: (
+    name: string,
+    request: object,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
+  readonly #createCollection: QdrantOperation;
+  readonly #createPayloadIndex: QdrantOperation;
+  readonly #upsert: QdrantOperation;
+  readonly #scroll: QdrantOperation;
+  readonly #count: QdrantOperation;
+  readonly #delete: QdrantOperation;
   readonly #profiles = new Map<string, EmbeddingProfile>();
   readonly #versionOperations = new Map<string, Promise<void>>();
 
   constructor(options: QdrantVectorIndexAdapterOptions) {
     assertSafeEndpoint(options.url);
-    this.#client =
-      options.client ??
-      (new QdrantClient({
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new RangeError("Qdrant timeout must be a positive integer");
+    }
+    if (options.client !== undefined) {
+      this.#collectionExists = (name, signal) => {
+        signal.throwIfAborted();
+        return options.client!.collectionExists(name, signal);
+      };
+      this.#getCollection = (name, signal) => {
+        signal.throwIfAborted();
+        return options.client!.getCollection(name, signal);
+      };
+      this.#query = (name, request, signal) =>
+        options.client!.query(name, request, signal);
+      this.#createCollection = (name, request, signal) =>
+        options.client!.createCollection(name, request, signal);
+      this.#createPayloadIndex = (name, request, signal) =>
+        options.client!.createPayloadIndex(name, request, signal);
+      this.#upsert = (name, request, signal) =>
+        options.client!.upsert(name, request, signal);
+      this.#scroll = (name, request, signal) =>
+        options.client!.scroll(name, request, signal);
+      this.#count = (name, request, signal) =>
+        options.client!.count(name, request, signal);
+      this.#delete = (name, request, signal) =>
+        options.client!.delete(name, request, signal);
+    } else {
+      const client = new QdrantClient({
         url: options.url,
         ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
-        timeout: options.timeoutMs ?? 30_000,
+        // The SDK timeout middleware replaces, rather than composes, a caller
+        // signal. Disable it and compose the deadline here so cancellation
+        // reaches the underlying fetch request.
+        timeout: Number.POSITIVE_INFINITY,
         checkCompatibility: false,
-      }) as unknown as QdrantClientApi);
+      });
+      this.#collectionExists = (name, signal) =>
+        rawQdrantResult(client.api().collectionExists as unknown as RawQdrantCall, {
+          collection_name: name,
+        }, requestSignal(signal, timeoutMs)) as Promise<{ exists: boolean }>;
+      this.#getCollection = (name, signal) =>
+        rawQdrantResult(client.api().getCollection as unknown as RawQdrantCall, {
+          collection_name: name,
+        }, requestSignal(signal, timeoutMs));
+      this.#query = (name, request, signal) =>
+        rawQdrantResult(client.api().queryPoints as unknown as RawQdrantCall, {
+          collection_name: name,
+          ...request,
+        }, requestSignal(signal, timeoutMs));
+      this.#createCollection = rawOperation(
+        client.api().createCollection as unknown as RawQdrantCall,
+        "collection_name",
+        timeoutMs,
+      );
+      this.#createPayloadIndex = rawOperation(
+        client.api().createFieldIndex as unknown as RawQdrantCall,
+        "collection_name",
+        timeoutMs,
+      );
+      this.#upsert = rawOperation(
+        client.api().upsertPoints as unknown as RawQdrantCall,
+        "collection_name",
+        timeoutMs,
+      );
+      this.#scroll = rawOperation(
+        client.api().scrollPoints as unknown as RawQdrantCall,
+        "collection_name",
+        timeoutMs,
+      );
+      this.#count = rawOperation(
+        client.api().countPoints as unknown as RawQdrantCall,
+        "collection_name",
+        timeoutMs,
+      );
+      this.#delete = rawOperation(
+        client.api().deletePoints as unknown as RawQdrantCall,
+        "collection_name",
+        timeoutMs,
+      );
+    }
   }
 
-  async prepare(
-    compatibility: VectorIndexCompatibility,
-  ): Promise<PreparedVectorIndex> {
+  async prepare(input: VectorIndexCompatibility | {
+    readonly compatibility: VectorIndexCompatibility;
+    readonly signal: AbortSignal;
+  }): Promise<PreparedVectorIndex> {
+    const compatibility = "compatibility" in input ? input.compatibility : input;
+    const signal = "compatibility" in input ? input.signal : LEGACY_OPERATION_SIGNAL;
+    signal.throwIfAborted();
     assertInput(() => assertCompatibility(compatibility));
     const collection = collectionName(compatibility);
     const handle = `qdrant:v1:${compatibilityDigest(compatibility).slice(0, 32)}`;
     try {
-      const existence = await this.#client.collectionExists(collection);
+      const existence = await this.#collectionExists(collection, signal);
+      signal.throwIfAborted();
       if (!existence.exists) {
-        await this.#client.createCollection(collection, {
+        await this.#createCollection(collection, {
           vectors: {
             size: compatibility.embeddingProfile.dimensions,
             distance: qdrantDistance(compatibility.embeddingProfile.distance),
@@ -105,19 +202,29 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
           metadata: {
             contextctlCompatibility: compatibilityDigest(compatibility),
           },
-        });
+        }, signal);
       } else {
         assertCollectionCompatibility(
-          await this.#client.getCollection(collection),
+          await this.#getCollection(collection, signal),
           compatibility,
         );
       }
       for (const [fieldName, fieldSchema] of Object.entries(REQUIRED_PAYLOAD_INDEXES)) {
-        await ensurePayloadIndex(this.#client, collection, fieldName, fieldSchema);
+        signal.throwIfAborted();
+        await ensurePayloadIndex(
+          this.#getCollection,
+          this.#createPayloadIndex,
+          collection,
+          fieldName,
+          fieldSchema,
+          signal,
+        );
       }
-      const info = await this.#client.getCollection(collection);
+      signal.throwIfAborted();
+      const info = await this.#getCollection(collection, signal);
       assertRequiredPayloadIndexes(info);
     } catch (error) {
+      if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
     }
     this.#profiles.set(handle, structuredClone(compatibility.embeddingProfile));
@@ -127,7 +234,9 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
   async rehydrate(input: {
     readonly accessHandle: string;
     readonly compatibility: VectorIndexCompatibility;
+    readonly signal?: AbortSignal;
   }): Promise<{ readonly capabilities: { readonly metadataPreFilter: true } }> {
+    const signal = operationSignal(input.signal);
     assertInput(() => assertCompatibility(input.compatibility));
     const expectedHandle = `qdrant:v1:${compatibilityDigest(input.compatibility).slice(0, 32)}`;
     if (input.accessHandle !== expectedHandle) {
@@ -135,14 +244,17 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     }
     const collection = parseAccessHandle(input.accessHandle);
     try {
-      const existence = await this.#client.collectionExists(collection);
+      signal.throwIfAborted();
+      const existence = await this.#collectionExists(collection, signal);
       if (!existence.exists) {
         throw new VectorIndexFault("index_unavailable", false);
       }
-      const info = await this.#client.getCollection(collection);
+      const info = await this.#getCollection(collection, signal);
+      signal.throwIfAborted();
       assertCollectionCompatibility(info, input.compatibility);
       assertRequiredPayloadIndexes(info);
     } catch (error) {
+      if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
     }
     this.#profiles.set(
@@ -156,14 +268,17 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     readonly accessHandle: string;
     readonly embeddingProfile: EmbeddingProfile;
     readonly records: readonly VectorIndexRecord[];
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = parseAccessHandle(input.accessHandle);
     assertInput(() => {
       assertValidVectorRecordBatch(input.embeddingProfile, input.records);
       assertKnownProfile(this.#profiles, input.accessHandle, input.embeddingProfile);
     });
     try {
-      await this.#client.upsert(collection, {
+      await this.#upsert(collection, {
         wait: true,
         ordering: "strong",
         points: input.records.map((record) => ({
@@ -176,8 +291,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
             ...record.metadata,
           },
         })),
-      });
+      }, signal);
+      signal.throwIfAborted();
     } catch (error) {
+      if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
     }
   }
@@ -187,7 +304,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     readonly scope: VectorIndexScope;
     readonly queryVector: readonly number[];
     readonly limit: number;
+    readonly signal?: AbortSignal;
   }): Promise<readonly VectorIndexSearchHit[]> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = parseAccessHandle(input.accessHandle);
     const profile = this.#profiles.get(input.accessHandle);
     assertInput(() => assertValidVectorIndexScope(input.scope));
@@ -205,15 +325,17 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       throw new VectorIndexFault("invalid_request", false);
     }
     try {
-      const result = await this.#client.query(collection, {
+      const result = await this.#query(collection, {
         query: [...input.queryVector],
         filter: scopeFilter(input.scope),
         limit: input.limit,
         with_payload: true,
         with_vector: false,
-      });
+      }, signal);
+      signal.throwIfAborted();
       return parseSearchHits(result, input.scope);
     } catch (error) {
+      if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
     }
   }
@@ -222,7 +344,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     readonly accessHandle: string;
     readonly documentIndexId: string;
     readonly indexVersion: string;
+    readonly signal?: AbortSignal;
   }): Promise<readonly VectorIndexStoredRecord[]> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = parseAccessHandle(input.accessHandle);
     assertInput(() => assertValidVectorVersion(input));
     if (!this.#profiles.has(input.accessHandle)) {
@@ -233,7 +358,8 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     const seenOffsets = new Set<string>();
     try {
       do {
-        const result = await this.#client.scroll(collection, {
+        signal.throwIfAborted();
+        const result = await this.#scroll(collection, {
           filter: {
             must: [
               keyword("recordKind", "chunk"),
@@ -244,7 +370,7 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
           ...(offset === undefined ? {} : { offset }),
           with_payload: true,
           with_vector: false,
-        });
+        }, signal);
         const page = parseScrollPage(result, input);
         records.push(...page.records);
         offset = page.nextOffset;
@@ -260,6 +386,7 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
         left.recordId.localeCompare(right.recordId),
       );
     } catch (error) {
+      if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
     }
   }
@@ -269,7 +396,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     readonly documentIndexId: string;
     readonly indexVersion: string;
     readonly chunkRevisionIds: readonly string[];
+    readonly signal?: AbortSignal;
   }): Promise<readonly VectorIndexStoredVector[]> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = parseAccessHandle(input.accessHandle);
     assertInput(() =>
       assertValidVectorVectorRead(input, MAX_VECTOR_VECTOR_READ),
@@ -279,7 +409,7 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       throw new VectorIndexFault("index_unavailable", false);
     }
     try {
-      const result = await this.#client.query(collection, {
+      const result = await this.#query(collection, {
         filter: {
           must: [
             keyword("recordKind", "chunk"),
@@ -293,9 +423,11 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
         limit: input.chunkRevisionIds.length,
         with_payload: true,
         with_vector: true,
-      });
+      }, signal);
+      signal.throwIfAborted();
       return parseStoredVectors(result, input, profile.dimensions);
     } catch (error) {
+      if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
     }
   }
@@ -303,7 +435,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
   async retainVersion(input: {
     readonly accessHandle: string;
     readonly lease: VectorIndexRetentionLease;
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     assertInput(() => assertValidRetentionLease(input.lease));
     const collection = parseAccessHandle(input.accessHandle);
     const profile = this.#profiles.get(input.accessHandle);
@@ -312,7 +447,8 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     }
     await this.#serializeVersion(input.accessHandle, input.lease, async () => {
       try {
-        await this.#client.upsert(collection, {
+        signal.throwIfAborted();
+        await this.#upsert(collection, {
           wait: true,
           ordering: "strong",
           points: [
@@ -322,8 +458,9 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
               payload: { recordKind: "retention_lease", ...input.lease },
             },
           ],
-        });
+        }, signal);
       } catch (error) {
+        if (signal.aborted) signal.throwIfAborted();
         throw translateQdrantFault(error);
       }
     });
@@ -332,16 +469,20 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
   async releaseRetentionLease(input: {
     readonly accessHandle: string;
     readonly leaseId: string;
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = parseAccessHandle(input.accessHandle);
     assertInput(() => assertValidLeaseId(input.leaseId));
     try {
-      await this.#client.delete(collection, {
+      await this.#delete(collection, {
         wait: true,
         ordering: "strong",
         points: [qdrantPointId(`lease:${input.leaseId}`)],
-      });
+      }, signal);
     } catch (error) {
+      if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
     }
   }
@@ -351,13 +492,17 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     readonly documentIndexId: string;
     readonly indexVersion: string;
     readonly now: string;
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = parseAccessHandle(input.accessHandle);
     assertInput(() => assertValidVectorDeletion(input));
     const identity = versionMust(input.documentIndexId, input.indexVersion);
     await this.#serializeVersion(input.accessHandle, input, async () => {
       try {
-        const leases = await this.#client.count(collection, {
+        signal.throwIfAborted();
+        const leases = await this.#count(collection, {
           exact: true,
           filter: {
             must: [
@@ -366,16 +511,18 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
               { key: "expiresAt", range: { gt: input.now } },
             ],
           },
-        });
+        }, signal);
         if (countValue(leases) > 0) {
           throw new VectorIndexFault("index_version_retained", false);
         }
-        await this.#client.delete(collection, {
+        signal.throwIfAborted();
+        await this.#delete(collection, {
           wait: true,
           ordering: "strong",
           filter: { must: identity },
-        });
+        }, signal);
       } catch (error) {
+        if (signal.aborted) signal.throwIfAborted();
         if (error instanceof VectorIndexFault) throw error;
         throw translateQdrantFault(error);
       }
@@ -401,6 +548,51 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       if (this.#versionOperations.get(key) === tail) this.#versionOperations.delete(key);
     }
   }
+}
+
+type RawQdrantCall = (
+  input: Record<string, unknown>,
+  init?: RequestInit,
+) => Promise<unknown>;
+
+type QdrantOperation = (
+  name: string,
+  request: object,
+  signal: AbortSignal,
+) => Promise<unknown>;
+
+function rawOperation(
+  call: RawQdrantCall,
+  nameKey: string,
+  timeoutMs: number,
+): QdrantOperation {
+  return (name, request, signal) =>
+    rawQdrantResult(
+      call,
+      { [nameKey]: name, ...request },
+      requestSignal(signal, timeoutMs),
+    );
+}
+
+function requestSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {
+  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+}
+
+async function rawQdrantResult(
+  call: RawQdrantCall,
+  input: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<unknown> {
+  signal.throwIfAborted();
+  const response = await call(input, { signal });
+  if (!isRecord(response) || !isRecord(response.data) || !("result" in response.data)) {
+    throw new VectorIndexFault("storage_unavailable", false);
+  }
+  return response.data.result;
+}
+
+function operationSignal(signal: AbortSignal | undefined): AbortSignal {
+  return signal ?? LEGACY_OPERATION_SIGNAL;
 }
 
 function collectionName(compatibility: VectorIndexCompatibility): string {
@@ -443,19 +635,21 @@ function qdrantDistance(distance: EmbeddingProfile["distance"]): string {
 }
 
 async function ensurePayloadIndex(
-  client: QdrantClientApi,
+  getCollection: (name: string, signal: AbortSignal) => Promise<unknown>,
+  createPayloadIndex: QdrantOperation,
   collection: string,
   field_name: string,
   field_schema: "keyword" | "integer" | "datetime",
+  signal: AbortSignal,
 ): Promise<void> {
-  const info = await client.getCollection(collection);
+  const info = await getCollection(collection, signal);
   if (payloadIndexTypes(info).get(field_name) === undefined) {
-    await client.createPayloadIndex(collection, {
+    await createPayloadIndex(collection, {
       field_name,
       field_schema,
       wait: true,
       ordering: "strong",
-    });
+    }, signal);
   }
 }
 
@@ -485,10 +679,13 @@ function assertCollectionCompatibility(
   const config = info.config;
   const params = isRecord(config) ? config.params : undefined;
   const vectors = isRecord(params) ? params.vectors : undefined;
+  const metadata = isRecord(config) ? config.metadata : undefined;
   if (!isRecord(vectors)) throw new VectorIndexFault("index_unavailable", false);
   if (
     vectors.size !== compatibility.embeddingProfile.dimensions ||
-    vectors.distance !== qdrantDistance(compatibility.embeddingProfile.distance)
+    vectors.distance !== qdrantDistance(compatibility.embeddingProfile.distance) ||
+    !isRecord(metadata) ||
+    metadata.contextctlCompatibility !== compatibilityDigest(compatibility)
   ) {
     throw new VectorIndexFault("invalid_request", false);
   }
@@ -534,46 +731,50 @@ function keyword(key: string, value: string): object {
 
 function parseSearchHits(result: unknown, scope: VectorIndexScope): VectorIndexSearchHit[] {
   if (!isRecord(result) || !Array.isArray(result.points)) {
-    throw new VectorIndexFault("storage_unavailable", false);
+    throw new VectorIndexFault("invalid_result", false);
   }
   return result.points.map((point) => {
-    if (
-      !isRecord(point) ||
-      !isRecord(point.payload) ||
-      typeof point.score !== "number" ||
-      !Number.isFinite(point.score)
-    ) {
-      throw new VectorIndexFault("storage_unavailable", false);
+    try {
+      if (
+        !isRecord(point) ||
+        !isRecord(point.payload) ||
+        typeof point.score !== "number" ||
+        !Number.isFinite(point.score)
+      ) {
+        throw new VectorIndexFault("invalid_result", false);
+      }
+      const payload = point.payload;
+      const metadata = parseMetadata(payload);
+      const retrievalText = requiredString(payload.retrievalText);
+      if (
+        payload.recordKind !== "chunk" ||
+        metadata.documentIndexId !== scope.documentIndexId ||
+        metadata.indexVersion !== scope.indexVersion ||
+        metadata.documentId !== scope.documentId ||
+        (scope.semanticUnitIds !== undefined && !scope.semanticUnitIds.includes(metadata.semanticUnitId))
+      ) {
+        throw new VectorIndexFault("invalid_result", false);
+      }
+      const recordId = requiredString(payload.recordId);
+      if (
+        recordId !== createVectorRecordId(
+          metadata.stateNamespaceId,
+          metadata.documentIndexId,
+          metadata.indexVersion,
+          metadata.chunkRevisionId,
+        )
+      ) {
+        throw new VectorIndexFault("invalid_result", false);
+      }
+      return {
+        recordId,
+        score: point.score,
+        retrievalText,
+        metadata,
+      };
+    } catch {
+      throw new VectorIndexFault("invalid_result", false);
     }
-    const payload = point.payload;
-    const metadata = parseMetadata(payload);
-    const retrievalText = requiredString(payload.retrievalText);
-    if (
-      payload.recordKind !== "chunk" ||
-      metadata.documentIndexId !== scope.documentIndexId ||
-      metadata.indexVersion !== scope.indexVersion ||
-      metadata.documentId !== scope.documentId ||
-      (scope.semanticUnitIds !== undefined && !scope.semanticUnitIds.includes(metadata.semanticUnitId))
-    ) {
-      throw new VectorIndexFault("storage_unavailable", false);
-    }
-    const recordId = requiredString(payload.recordId);
-    if (
-      recordId !== createVectorRecordId(
-        metadata.stateNamespaceId,
-        metadata.documentIndexId,
-        metadata.indexVersion,
-        metadata.chunkRevisionId,
-      )
-    ) {
-      throw new VectorIndexFault("storage_unavailable", false);
-    }
-    return {
-      recordId,
-      score: point.score,
-      retrievalText,
-      metadata,
-    };
   });
 }
 

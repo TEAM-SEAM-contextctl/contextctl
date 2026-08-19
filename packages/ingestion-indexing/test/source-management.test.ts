@@ -85,7 +85,6 @@ describe("Source Management", () => {
       validateConfiguration: 3,
       validateConnection: 1,
       probeCapabilities: 1,
-      detectChange: 1,
       observe: 1,
     });
     if (!("observation" in observation)) {
@@ -124,7 +123,7 @@ describe("Source Management", () => {
       state: "succeeded",
       outcome: "unchanged",
     });
-    expect(adapter.calls.observe).toBe(0);
+    expect(adapter.calls.observe).toBe(1);
     await expect(observations.count()).resolves.toBe(0);
   });
 
@@ -586,7 +585,6 @@ class FakeSourceAdapter implements SourceAdapter {
     validateConfiguration: 0,
     validateConnection: 0,
     probeCapabilities: 0,
-    detectChange: 0,
     observe: 0,
   };
 
@@ -645,17 +643,16 @@ class FakeSourceAdapter implements SourceAdapter {
     ];
   }
 
-  async detectChange(): Promise<SourceChangeSignal> {
-    this.calls.detectChange += 1;
-    return this.changeSignal;
-  }
-
   async observe(
     context: SourceAdapterContext,
+    _previousToken?: string,
   ): Promise<SourceObservationAttempt> {
     this.calls.observe += 1;
     if (this.observationError !== undefined) {
       throw this.observationError;
+    }
+    if (this.changeSignal.status === "unchanged") {
+      return { status: "unchanged" };
     }
     return this.observation(context);
   }

@@ -1,6 +1,11 @@
 import {
+  canonicalContractByteLength,
   computePublicationV2Changes as computePublicationChanges,
   computePublishedKnowledgeUnitV2Digest as computePublishedKnowledgeUnitDigest,
+  ContractValidationError,
+  MAX_PUBLICATION_BYTES,
+  MAX_PUBLICATION_FACT_BYTES,
+  MAX_PUBLICATION_FACTS,
   parseIngestionPublicationV2 as parseIngestionPublication,
   type IngestionPublicationV2 as IngestionPublication,
   type PublishedDocumentScopeV2 as PublishedDocumentScope,
@@ -23,8 +28,8 @@ export interface BuildMarkdownPublicationInput {
   readonly previous?: IngestionPublication;
   readonly previousSemanticUnits?: readonly DocumentSemanticUnit[];
   /**
-   * Units the producer proved may keep their predecessor Scope. When omitted,
-   * an unchanged Unit revision alone decides inheritance.
+   * Units the producer proved may keep their predecessor Scope. Omission is
+   * fail-closed: no predecessor projection is inherited.
    */
   readonly inheritableUnitIds?: readonly string[];
 }
@@ -35,8 +40,28 @@ export interface BuildEmptyMarkdownPublicationInput {
   readonly previous?: IngestionPublication;
 }
 
+export type MarkdownPublicationBuildErrorCode =
+  | "publication_envelope_limit_exceeded"
+  | "publication_fact_limit_exceeded"
+  | "publication_projection_invalid";
+
+export class MarkdownPublicationBuildError extends Error {
+  constructor(readonly code: MarkdownPublicationBuildErrorCode) {
+    super(`Markdown publication build failed: ${code}`);
+    this.name = "MarkdownPublicationBuildError";
+  }
+}
+
 /** Builds and contract-validates the sole Registry-facing lifecycle payload. */
 export function buildMarkdownPublication(
+  input: BuildMarkdownPublicationInput,
+): IngestionPublication {
+  return mapPublicationBuildErrors(() =>
+    buildMarkdownPublicationUnchecked(input),
+  );
+}
+
+function buildMarkdownPublicationUnchecked(
   input: BuildMarkdownPublicationInput,
 ): IngestionPublication {
   const previousSemanticById = new Map(
@@ -45,28 +70,31 @@ export function buildMarkdownPublication(
   const previousPublishedById = new Map(
     (input.previous?.knowledgeUnits ?? []).map((unit) => [unit.id, unit]),
   );
-  const inheritable =
-    input.inheritableUnitIds === undefined
-      ? undefined
-      : new Set(input.inheritableUnitIds);
+  const inheritable = new Set(input.inheritableUnitIds ?? []);
+  const blockById = new Map(
+    input.document.blocks.map((block) => [block.id, block]),
+  );
   const knowledgeUnits = input.semanticUnits
     .map((unit) => {
       const previousSemantic = previousSemanticById.get(unit.id);
       const previousPublished = previousPublishedById.get(unit.id);
-      if (
-        previousSemantic !== undefined &&
-        previousPublished !== undefined &&
-        previousSemantic.revisionId === unit.revisionId &&
-        (inheritable === undefined || inheritable.has(unit.id))
-      ) {
-        return previousPublished;
-      }
-      return toPublishedKnowledgeUnit(
+      const currentPublished = toPublishedKnowledgeUnit(
         input.document,
         unit,
         input.manifest,
         input.scopes,
+        blockById,
       );
+      if (
+        previousSemantic !== undefined &&
+        previousPublished !== undefined &&
+        previousSemantic.revisionId === unit.revisionId &&
+        inheritable.has(unit.id) &&
+        sameInheritanceProjection(previousPublished, currentPublished)
+      ) {
+        return previousPublished;
+      }
+      return currentPublished;
     })
     .sort((left, right) => compareText(left.id, right.id));
   const publicationId = stableIdentity("pub", {
@@ -75,7 +103,7 @@ export function buildMarkdownPublication(
     previousPublicationId: input.previous?.publicationId,
     knowledgeUnits: knowledgeUnits.map((unit) => [unit.id, unit.contentDigest]),
   });
-  return parseIngestionPublication({
+  return parsePublicationCandidate({
     schemaVersion: 2,
     publicationId,
     sourceId: input.document.sourceId,
@@ -93,6 +121,14 @@ export function buildMarkdownPublication(
 export function buildEmptyMarkdownPublication(
   input: BuildEmptyMarkdownPublicationInput,
 ): IngestionPublication {
+  return mapPublicationBuildErrors(() =>
+    buildEmptyMarkdownPublicationUnchecked(input),
+  );
+}
+
+function buildEmptyMarkdownPublicationUnchecked(
+  input: BuildEmptyMarkdownPublicationInput,
+): IngestionPublication {
   const knowledgeUnits: readonly PublishedKnowledgeUnit[] = [];
   const publicationId = stableIdentity("pub", {
     sourceId: input.document.sourceId,
@@ -100,7 +136,7 @@ export function buildEmptyMarkdownPublication(
     previousPublicationId: input.previous?.publicationId,
     knowledgeUnits: [],
   });
-  return parseIngestionPublication({
+  return parsePublicationCandidate({
     schemaVersion: 2,
     publicationId,
     sourceId: input.document.sourceId,
@@ -119,10 +155,14 @@ function toPublishedKnowledgeUnit(
   unit: DocumentSemanticUnit,
   manifest: IndexManifest,
   scopes: readonly PublishedDocumentScope[],
+  blockById: ReadonlyMap<
+    string,
+    NormalizedDocument["blocks"][number]
+  >,
 ): PublishedKnowledgeUnit {
   const publishedScope = requiredUnitScope(unit, scopes);
   const blocks = unit.blockIds
-    .map((blockId) => document.blocks.find((block) => block.id === blockId))
+    .map((blockId) => blockById.get(blockId))
     .filter((block): block is NormalizedDocument["blocks"][number] => block !== undefined);
   const firstPath = blocks.find((block) => block.sectionPath.length > 0)?.sectionPath;
   const facts: PublishedFact[] = [
@@ -138,12 +178,18 @@ function toPublishedKnowledgeUnit(
     facts.push({ name: "document.title", value: document.title });
   }
   if (firstPath !== undefined) {
-    facts.push({ name: "section.path", value: [...firstPath] });
+    facts.push({
+      name: "section.path",
+      value: firstPath.map((headingId) =>
+        requiredSectionLabel(blockById, headingId),
+      ),
+    });
   }
   if (unit.kind !== "document" && unit.title !== undefined) {
     facts.push({ name: "section.label", value: unit.title });
   }
   facts.sort((left, right) => compareText(left.name, right.name));
+  assertFactLimits(facts);
   const published: Omit<PublishedKnowledgeUnit, "contentDigest"> = {
     id: unit.id,
     kind: unit.kind,
@@ -203,6 +249,78 @@ export function samePublishedKnowledgeUnit(
   return canonicalJson(left) === canonicalJson(right);
 }
 
+function sameInheritanceProjection(
+  previous: PublishedKnowledgeUnit,
+  current: PublishedKnowledgeUnit,
+): boolean {
+  return (
+    canonicalJson(inheritanceProjection(previous)) ===
+    canonicalJson(inheritanceProjection(current))
+  );
+}
+
+function inheritanceProjection(unit: PublishedKnowledgeUnit): unknown {
+  return {
+    id: unit.id,
+    kind: unit.kind,
+    sourceCoordinate: unit.sourceCoordinate,
+    facts: unit.facts,
+    producer: unit.provenance.producer,
+    policyVersions: unit.provenance.policyVersions,
+  };
+}
+
+function requiredSectionLabel(
+  blockById: ReadonlyMap<string, NormalizedDocument["blocks"][number]>,
+  headingId: string,
+): string {
+  const heading = blockById.get(headingId);
+  if (
+    heading === undefined ||
+    heading.kind !== "heading" ||
+    heading.text.trim() === ""
+  ) {
+    throw new TypeError("published section path is invalid");
+  }
+  return heading.text;
+}
+
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function assertFactLimits(facts: readonly PublishedFact[]): void {
+  if (
+    facts.length > MAX_PUBLICATION_FACTS ||
+    canonicalContractByteLength(facts) > MAX_PUBLICATION_FACT_BYTES
+  ) {
+    throw new MarkdownPublicationBuildError(
+      "publication_fact_limit_exceeded",
+    );
+  }
+}
+
+function parsePublicationCandidate(input: unknown): IngestionPublication {
+  if (canonicalContractByteLength(input) > MAX_PUBLICATION_BYTES) {
+    throw new MarkdownPublicationBuildError(
+      "publication_envelope_limit_exceeded",
+    );
+  }
+  return parseIngestionPublication(input);
+}
+
+function mapPublicationBuildErrors<T>(operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (error instanceof MarkdownPublicationBuildError) {
+      throw error;
+    }
+    if (error instanceof ContractValidationError || error instanceof TypeError) {
+      throw new MarkdownPublicationBuildError(
+        "publication_projection_invalid",
+      );
+    }
+    throw error;
+  }
 }

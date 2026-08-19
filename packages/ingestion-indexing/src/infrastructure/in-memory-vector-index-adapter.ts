@@ -34,13 +34,18 @@ interface MemoryCollection {
 }
 
 const LEGACY_STATE_NAMESPACE_ID = "legacy-v1";
+const LEGACY_OPERATION_SIGNAL = new AbortController().signal;
 
 export class InMemoryVectorIndexAdapter implements VectorIndexPort {
   readonly #collections = new Map<string, MemoryCollection>();
 
-  async prepare(
-    compatibility: VectorIndexCompatibility,
-  ): Promise<PreparedVectorIndex> {
+  async prepare(input: VectorIndexCompatibility | {
+    readonly compatibility: VectorIndexCompatibility;
+    readonly signal: AbortSignal;
+  }): Promise<PreparedVectorIndex> {
+    const compatibility = "compatibility" in input ? input.compatibility : input;
+    const signal = "compatibility" in input ? input.signal : neverAbortedSignal();
+    signal.throwIfAborted();
     assertInput(() => assertCompatibility(compatibility));
     const accessHandle = compatibilityHandle(compatibility);
     if (!this.#collections.has(accessHandle)) {
@@ -56,7 +61,9 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
   async rehydrate(input: {
     readonly accessHandle: string;
     readonly compatibility: VectorIndexCompatibility;
+    readonly signal?: AbortSignal;
   }): Promise<{ readonly capabilities: { readonly metadataPreFilter: true } }> {
+    operationSignal(input.signal).throwIfAborted();
     assertInput(() => assertCompatibility(input.compatibility));
     const collection = this.#requiredCollection(input.accessHandle);
     assertInput(() => {
@@ -85,7 +92,10 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
     readonly accessHandle: string;
     readonly embeddingProfile: EmbeddingProfile;
     readonly records: readonly VectorIndexRecord[];
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = this.#requiredCollection(input.accessHandle);
     assertInput(() => {
       assertSameProfile(collection.compatibility.embeddingProfile, input.embeddingProfile);
@@ -103,6 +113,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
       }
     });
     for (const record of input.records) {
+      signal.throwIfAborted();
       collection.records.set(record.recordId, structuredClone(record));
     }
   }
@@ -112,7 +123,9 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
     readonly scope: VectorIndexScope;
     readonly queryVector: readonly number[];
     readonly limit: number;
+    readonly signal?: AbortSignal;
   }): Promise<readonly VectorIndexSearchHit[]> {
+    operationSignal(input.signal).throwIfAborted();
     const collection = this.#requiredCollection(input.accessHandle);
     assertSearch(input, collection.compatibility.embeddingProfile);
     return [...collection.records.values()]
@@ -135,7 +148,9 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
     readonly accessHandle: string;
     readonly documentIndexId: string;
     readonly indexVersion: string;
+    readonly signal?: AbortSignal;
   }): Promise<readonly VectorIndexStoredRecord[]> {
+    operationSignal(input.signal).throwIfAborted();
     assertInput(() => assertValidVectorVersion(input));
     return [...this.#requiredCollection(input.accessHandle).records.values()]
       .filter(
@@ -156,7 +171,9 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
     readonly documentIndexId: string;
     readonly indexVersion: string;
     readonly chunkRevisionIds: readonly string[];
+    readonly signal?: AbortSignal;
   }): Promise<readonly VectorIndexStoredVector[]> {
+    operationSignal(input.signal).throwIfAborted();
     assertInput(() =>
       assertValidVectorVectorRead(input, MAX_VECTOR_VECTOR_READ),
     );
@@ -180,7 +197,9 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
   async retainVersion(input: {
     readonly accessHandle: string;
     readonly lease: VectorIndexRetentionLease;
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    operationSignal(input.signal).throwIfAborted();
     assertInput(() => assertValidRetentionLease(input.lease));
     this.#requiredCollection(input.accessHandle).leases.set(
       input.lease.leaseId,
@@ -191,7 +210,9 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
   async releaseRetentionLease(input: {
     readonly accessHandle: string;
     readonly leaseId: string;
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    operationSignal(input.signal).throwIfAborted();
     assertInput(() => assertValidLeaseId(input.leaseId));
     this.#requiredCollection(input.accessHandle).leases.delete(input.leaseId);
   }
@@ -201,11 +222,15 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
     readonly documentIndexId: string;
     readonly indexVersion: string;
     readonly now: string;
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    const signal = operationSignal(input.signal);
+    signal.throwIfAborted();
     const collection = this.#requiredCollection(input.accessHandle);
     assertInput(() => assertValidVectorDeletion(input));
     const now = Date.parse(input.now);
     for (const lease of collection.leases.values()) {
+      signal.throwIfAborted();
       if (
         lease.documentIndexId === input.documentIndexId &&
         lease.indexVersion === input.indexVersion &&
@@ -215,6 +240,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
       }
     }
     for (const [recordId, record] of collection.records) {
+      signal.throwIfAborted();
       if (
         record.metadata.documentIndexId === input.documentIndexId &&
         record.metadata.indexVersion === input.indexVersion
@@ -329,4 +355,12 @@ function similarity(
   const leftNorm = Math.sqrt(left.reduce((sum, value) => sum + value * value, 0));
   const rightNorm = Math.sqrt(right.reduce((sum, value) => sum + value * value, 0));
   return leftNorm === 0 || rightNorm === 0 ? 0 : dot / (leftNorm * rightNorm);
+}
+
+function neverAbortedSignal(): AbortSignal {
+  return LEGACY_OPERATION_SIGNAL;
+}
+
+function operationSignal(signal: AbortSignal | undefined): AbortSignal {
+  return signal ?? neverAbortedSignal();
 }

@@ -107,6 +107,8 @@ export {
   PublicationProvenanceSchema as PublicationProvenanceV2Schema,
   PublicationFactNameSchema as PublicationFactNameV2Schema,
   PublicationPolicyNameSchema as PublicationPolicyNameV2Schema,
+  MAX_PUBLICATION_FACT_BYTES,
+  MAX_PUBLICATION_FACTS,
   computePublishedKnowledgeUnitDigest as computePublishedKnowledgeUnitV2Digest,
   PublishedFactSchema as PublishedFactV2Schema,
   PublishedKnowledgeUnitSchema as PublishedKnowledgeUnitV2Schema,

@@ -18,6 +18,7 @@ import {
 } from "./model-validation.js";
 import {
   canonicalDigest,
+  canonicalJson,
   revisionIdentity,
   stableIdentity,
 } from "./revision-identity.js";
@@ -28,6 +29,7 @@ import {
  * vector store's physical collection layout.
  */
 export interface IndexManifest {
+  readonly manifestSchemaVersion: 2;
   readonly stateNamespaceId: string;
   readonly securityDomain: string;
   readonly documentIndexId: string;
@@ -46,11 +48,20 @@ export interface IndexManifest {
   readonly payloadSchemaVersion: 2;
   readonly semanticUnitRevisions: Readonly<Record<string, string>>;
   readonly chunkRevisions: Readonly<Record<string, string>>;
+  readonly chunkBindings: Readonly<Record<string, IndexChunkBinding>>;
   readonly recordCount: number;
   readonly recordSetDigest: string;
   readonly scopeRevisions: readonly ScopeRevision[];
   readonly fallbackCounts: Readonly<Record<string, number>>;
   readonly publishedAt: string;
+}
+
+/** Immutable ownership proof for one Chunk in a published Index version. */
+export interface IndexChunkBinding {
+  readonly chunkRevisionId: string;
+  readonly semanticUnitId: string;
+  readonly semanticUnitRevisionId: string;
+  readonly contentDigest: string;
 }
 
 export interface ScopeRevision {
@@ -110,6 +121,10 @@ export function createDocumentIndexId(
 
 /** Immutable build identity for one complete searchable document snapshot. */
 export function createIndexVersion(input: IndexVersionInput): string {
+  const chunkBindings = createIndexChunkBindings(
+    input.semanticUnits,
+    input.chunks,
+  );
   return revisionIdentity("idxv", {
     sourceId: input.document.sourceId,
     observationId: input.document.observationId,
@@ -130,23 +145,52 @@ export function createIndexVersion(input: IndexVersionInput): string {
     chunkRevisions: revisionEntries(
       input.chunks.map((chunk) => [chunk.id, chunk.revisionId]),
     ),
+    chunkBindings: chunkBindingEntries(chunkBindings),
   });
 }
 
 /** Canonical checksum required by the Index Manifest design contract. */
 export function computeRecordSetDigest(
-  records: readonly Pick<VectorIndexRecord, "chunkRevisionId" | "metadata">[],
+  chunkBindings: Readonly<Record<string, IndexChunkBinding>>,
+  payloadSchemaVersion: 2 = 2,
 ): string {
   return canonicalDigest(
-    records
-      .map((record) => [
-        record.metadata.chunkId,
-        record.chunkRevisionId,
-        record.metadata.contentDigest,
-        String(record.metadata.payloadSchemaVersion),
-      ])
-      .sort(compareRecordTuples),
+    chunkBindingEntries(chunkBindings).map(([chunkId, binding]) => [
+      chunkId,
+      binding.chunkRevisionId,
+      binding.semanticUnitId,
+      binding.semanticUnitRevisionId,
+      binding.contentDigest,
+      String(payloadSchemaVersion),
+    ]),
   );
+}
+
+/** Builds the canonical Chunk-to-Unit ownership map for one snapshot. */
+export function createIndexChunkBindings(
+  semanticUnits: readonly DocumentSemanticUnit[],
+  chunks: readonly ManagedChunk[],
+): Readonly<Record<string, IndexChunkBinding>> {
+  const unitRevisionById = new Map(
+    semanticUnits.map((unit) => [unit.id, unit.revisionId]),
+  );
+  const bindings: Record<string, IndexChunkBinding> = {};
+  for (const chunk of chunks) {
+    const semanticUnitRevisionId = unitRevisionById.get(chunk.semanticUnitId);
+    if (
+      semanticUnitRevisionId === undefined ||
+      Object.hasOwn(bindings, chunk.id)
+    ) {
+      throw new TypeError("managed Chunk ownership is invalid");
+    }
+    bindings[chunk.id] = {
+      chunkRevisionId: chunk.revisionId,
+      semanticUnitId: chunk.semanticUnitId,
+      semanticUnitRevisionId,
+      contentDigest: chunk.contentDigest,
+    };
+  }
+  return Object.fromEntries(chunkBindingEntries(bindings));
 }
 
 /**
@@ -159,6 +203,15 @@ export function validateIndexManifest(
   const { document, semanticUnits, chunks, manifest } = input;
   const issues: ModelValidationIssue[] = [];
 
+  if (manifest.manifestSchemaVersion !== 2) {
+    issues.push(
+      issue(
+        "invalid_value",
+        "manifestSchemaVersion",
+        "document index requires manifest schema version 2",
+      ),
+    );
+  }
   validateId(manifest.documentIndexId, "didx", "documentIndexId", issues);
   validateNonEmpty(manifest.stateNamespaceId, "stateNamespaceId", issues);
   validateNonEmpty(manifest.securityDomain, "securityDomain", issues);
@@ -212,15 +265,27 @@ export function validateIndexManifest(
     );
   }
 
-  const expectedRecordSetDigest = canonicalDigest(
-    chunks
-      .map((chunk) => [
-        chunk.id,
-        chunk.revisionId,
-        chunk.contentDigest,
-        String(manifest.payloadSchemaVersion),
-      ])
-      .sort(compareRecordTuples),
+  let expectedChunkBindings: Readonly<Record<string, IndexChunkBinding>> = {};
+  try {
+    expectedChunkBindings = createIndexChunkBindings(semanticUnits, chunks);
+  } catch {
+    issues.push(
+      issue(
+        "relationship_mismatch",
+        "chunkBindings",
+        "managed Chunk ownership must resolve to one Semantic Unit revision",
+      ),
+    );
+  }
+  validateChunkBindings(
+    manifest.chunkBindings,
+    expectedChunkBindings,
+    manifest.semanticUnitRevisions,
+    issues,
+  );
+  const expectedRecordSetDigest = computeRecordSetDigest(
+    expectedChunkBindings,
+    manifest.payloadSchemaVersion,
   );
   if (manifest.recordSetDigest !== expectedRecordSetDigest) {
     issues.push(
@@ -413,7 +478,12 @@ export function validateVectorIndexRecords(
       ),
     );
   }
-  if (computeRecordSetDigest(records) !== manifest.recordSetDigest) {
+  if (
+    computeRecordSetDigest(
+      manifest.chunkBindings,
+      manifest.payloadSchemaVersion,
+    ) !== manifest.recordSetDigest
+  ) {
     issues.push(
       issue(
         "relationship_mismatch",
@@ -475,6 +545,7 @@ export function validateVectorIndexRecords(
     }
 
     const metadata = record.metadata;
+    const binding = manifest.chunkBindings[metadata.chunkId];
     const matches =
       metadata.payloadSchemaVersion === manifest.payloadSchemaVersion &&
       metadata.stateNamespaceId === manifest.stateNamespaceId &&
@@ -488,6 +559,12 @@ export function validateVectorIndexRecords(
       metadata.chunkId === chunk.id &&
       metadata.chunkRevisionId === chunk.revisionId &&
       metadata.contentDigest === chunk.contentDigest &&
+      binding !== undefined &&
+      binding.chunkRevisionId === metadata.chunkRevisionId &&
+      binding.semanticUnitId === metadata.semanticUnitId &&
+      binding.semanticUnitRevisionId ===
+        manifest.semanticUnitRevisions[metadata.semanticUnitId] &&
+      binding.contentDigest === metadata.contentDigest &&
       record.retrievalText === chunk.text &&
       record.chunkRevisionId === metadata.chunkRevisionId;
     if (!matches) {
@@ -522,14 +599,11 @@ function revisionEntries(
   return [...entries].sort(([left], [right]) => left.localeCompare(right));
 }
 
-function compareRecordTuples(
-  left: readonly string[],
-  right: readonly string[],
-): number {
-  return (
-    (left[0] ?? "").localeCompare(right[0] ?? "") ||
-    (left[1] ?? "").localeCompare(right[1] ?? "") ||
-    (left[2] ?? "").localeCompare(right[2] ?? "")
+function chunkBindingEntries(
+  bindings: Readonly<Record<string, IndexChunkBinding>>,
+): readonly (readonly [string, IndexChunkBinding])[] {
+  return Object.entries(bindings).sort(([left], [right]) =>
+    left.localeCompare(right),
   );
 }
 
@@ -572,6 +646,59 @@ function validateRevisionMap(
           "relationship_mismatch",
           `${path}.${id}`,
           "revision must match the validated model",
+        ),
+      );
+    }
+  }
+}
+
+function validateChunkBindings(
+  actual: Readonly<Record<string, IndexChunkBinding>>,
+  expected: Readonly<Record<string, IndexChunkBinding>>,
+  semanticUnitRevisions: Readonly<Record<string, string>>,
+  issues: ModelValidationIssue[],
+): void {
+  if (Object.keys(actual).length !== Object.keys(expected).length) {
+    issues.push(
+      issue(
+        "count_mismatch",
+        "chunkBindings",
+        "Chunk bindings must contain exactly the validated managed Chunks",
+      ),
+    );
+  }
+  for (const [chunkId, binding] of Object.entries(actual)) {
+    const path = `chunkBindings.${chunkId}`;
+    validateId(chunkId, "chk", path, issues);
+    validateRevision(
+      binding.chunkRevisionId,
+      "crv",
+      `${path}.chunkRevisionId`,
+      issues,
+    );
+    validateId(
+      binding.semanticUnitId,
+      "unit",
+      `${path}.semanticUnitId`,
+      issues,
+    );
+    validateRevision(
+      binding.semanticUnitRevisionId,
+      "urv",
+      `${path}.semanticUnitRevisionId`,
+      issues,
+    );
+    validateDigest(binding.contentDigest, `${path}.contentDigest`, issues);
+    if (
+      canonicalJson(binding) !== canonicalJson(expected[chunkId]) ||
+      semanticUnitRevisions[binding.semanticUnitId] !==
+        binding.semanticUnitRevisionId
+    ) {
+      issues.push(
+        issue(
+          "relationship_mismatch",
+          path,
+          "Chunk binding must match its immutable Chunk and Semantic Unit revisions",
         ),
       );
     }

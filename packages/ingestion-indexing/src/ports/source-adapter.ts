@@ -59,11 +59,15 @@ export interface SourceAdapter {
   probeCapabilities(
     context: SourceAdapterContext,
   ): Promise<readonly ProbedObservationCapability[]>;
-  detectChange(
+  /**
+   * Captures one authoritative snapshot and compares its token with the
+   * previous observation. Implementations must not split change detection and
+   * capture across independently mutable reads.
+   */
+  observe(
     context: SourceAdapterContext,
     previousToken?: string,
-  ): Promise<SourceChangeSignal>;
-  observe(context: SourceAdapterContext): Promise<SourceObservationAttempt>;
+  ): Promise<SourceObservationAttempt>;
 }
 
 export interface SourceAdapterResolver {
@@ -75,6 +79,7 @@ export type SourceAdapterFaultCode =
   | "invalid_configuration"
   | "invalid_format"
   | "permission_denied"
+  | "source_unstable"
   | "target_not_found";
 
 export class SourceAdapterFault extends Error {

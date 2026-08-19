@@ -65,16 +65,7 @@ describe("DocumentIndexPublisher", () => {
 
     expect(result.manifest.recordCount).toBe(2);
     expect(result.manifest.recordSetDigest).toBe(
-      computeRecordSetDigest(
-        (await vectorIndex.listVersionRecords({
-          accessHandle: result.binding.accessHandle,
-          documentIndexId: result.manifest.documentIndexId,
-          indexVersion: result.manifest.indexVersion,
-        })).map((record) => ({
-          chunkRevisionId: record.metadata.chunkRevisionId,
-          metadata: record.metadata,
-        })),
-      ),
+      computeRecordSetDigest(result.manifest.chunkBindings),
     );
     expect(result.manifest.scopeRevisions).toEqual(
       result.scopes.map(({ scopeId, scopeVersion }) => ({
@@ -336,6 +327,66 @@ describe("DocumentIndexPublisher", () => {
     ).toBeUndefined();
   });
 
+  it("does not create staging or Catalog state when cancelled before the commit intent", async () => {
+    const publications = new InMemoryIndexPublicationStore();
+    const stagingAttempts = new InMemoryIndexStagingAttemptStore();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      createPublisher({
+        vectorIndex: new InMemoryVectorIndexAdapter(),
+        publications,
+        stagingAttempts,
+      }).publish({ ...createCommand(1), signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(await stagingAttempts.countTracked()).toBe(0);
+    expect(
+      await publications.current(versionIdentity(createCommand(1)).documentIndexId),
+    ).toBeUndefined();
+  });
+
+  it("leaves an interrupted upsert as recoverable staging without moving current", async () => {
+    const delegate = new InMemoryVectorIndexAdapter();
+    const vectorIndex = new RecordingVectorIndex(delegate);
+    const publications = new InMemoryIndexPublicationStore();
+    const stagingAttempts = new InMemoryIndexStagingAttemptStore();
+    const controller = new AbortController();
+    vectorIndex.abortAfterUpsert = controller;
+    const command = createCommand(2);
+
+    await expect(
+      createPublisher({
+        vectorIndex,
+        publications,
+        stagingAttempts,
+        batchSize: 1,
+      }).publish({ ...command, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(await stagingAttempts.countTracked()).toBe(1);
+    expect(
+      await publications.current(versionIdentity(command).documentIndexId),
+    ).toBeUndefined();
+  });
+
+  it("finishes the immutable Catalog commit when cancellation arrives after its commit point", async () => {
+    const controller = new AbortController();
+    const publications = new AbortOnCommitPublicationStore(controller);
+    const command = createCommand(1);
+
+    const committed = await createPublisher({
+      vectorIndex: new InMemoryVectorIndexAdapter(),
+      publications,
+    }).publish({ ...command, signal: controller.signal });
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(await publications.current(committed.manifest.documentIndexId)).toEqual(
+      committed,
+    );
+  });
+
   it("fails closed before upsert when the same version contains conflicting metadata", async () => {
     const delegate = new InMemoryVectorIndexAdapter();
     const vectorIndex = new RecordingVectorIndex(delegate);
@@ -400,6 +451,7 @@ class RecordingVectorIndex implements VectorIndexPort {
   failUpsertCall: number | undefined;
   omitRecordAfterUpsert = false;
   reportedBeforeUpsert: readonly VectorIndexStoredRecord[] | undefined;
+  abortAfterUpsert: AbortController | undefined;
 
   constructor(private readonly delegate: VectorIndexPort) {}
 
@@ -412,7 +464,9 @@ class RecordingVectorIndex implements VectorIndexPort {
     if (this.upsertCalls === this.failUpsertCall) {
       throw new Error("simulated batch interruption");
     }
-    return this.delegate.upsertRecords(input);
+    const result = await this.delegate.upsertRecords(input);
+    this.abortAfterUpsert?.abort();
+    return result;
   }
 
   async listVersionRecords(
@@ -436,6 +490,19 @@ class RecordingVectorIndex implements VectorIndexPort {
     this.delegate.releaseRetentionLease(input);
   deleteVersion: VectorIndexPort["deleteVersion"] = (input) =>
     this.delegate.deleteVersion(input);
+}
+
+class AbortOnCommitPublicationStore extends InMemoryIndexPublicationStore {
+  constructor(private readonly controller: AbortController) {
+    super();
+  }
+
+  override async commitCurrent(
+    ...input: Parameters<InMemoryIndexPublicationStore["commitCurrent"]>
+  ): ReturnType<InMemoryIndexPublicationStore["commitCurrent"]> {
+    this.controller.abort();
+    return super.commitCurrent(...input);
+  }
 }
 
 function createCommand(chunkCount: number): PublishDocumentIndexCommand {

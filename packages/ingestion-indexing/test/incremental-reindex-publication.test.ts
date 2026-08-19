@@ -66,6 +66,8 @@ const MODIFIED = INITIAL.replace(
   "Retry failed payments after ten minutes.",
 );
 
+const TITLE_CHANGED = INITIAL.replace("# Payments", "# Operations");
+
 
 const SECTION_REMOVED = [
   "# Payments",
@@ -128,6 +130,7 @@ describe("incremental reindex publication", () => {
       accessHandle: result.publication.binding.accessHandle,
       documentIndexId: result.publication.manifest.documentIndexId,
       indexVersion: result.publication.manifest.indexVersion,
+      signal: new AbortController().signal,
     });
     expect(stored.map((record) => record.metadata.chunkRevisionId).sort()).toEqual(
       [...publishedRevisions].sort(),
@@ -257,6 +260,103 @@ describe("incremental reindex publication", () => {
         );
       }
     }
+  });
+
+  it("does not inherit stale public facts when the document title changes", async () => {
+    const previous = createSnapshot(INITIAL, "previous");
+    const current = createSnapshot(TITLE_CHANGED, "current", previous);
+    const first = await harness.reindex({ current: previous });
+    const initialPublication = buildMarkdownPublication({
+      document: previous.document,
+      semanticUnits: previous.semanticUnits,
+      manifest: first.publication.manifest,
+      scopes: first.publication.scopes,
+    });
+
+    const second = await harness.reindex({ previous, current });
+    const publication = buildMarkdownPublication({
+      document: current.document,
+      semanticUnits: current.semanticUnits,
+      manifest: second.publication.manifest,
+      scopes: second.publication.scopes,
+      previous: initialPublication,
+      previousSemanticUnits: previous.semanticUnits,
+      inheritableUnitIds: second.inheritableUnitIds,
+    });
+
+    expect(second.inheritableUnitIds.length).toBeGreaterThan(0);
+    const changedIds = new Set(
+      publication.changes.map((change) => change.knowledgeUnitId),
+    );
+    for (const unitId of second.inheritableUnitIds) {
+      const unit = publication.knowledgeUnits.find(
+        (candidate) => candidate.id === unitId,
+      );
+      expect(unit?.facts).toContainEqual({
+        name: "document.title",
+        value: "Operations",
+      });
+      expect(changedIds.has(unitId)).toBe(true);
+      expect(unit?.publishedScopes).not.toEqual(
+        initialPublication.knowledgeUnits.find(
+          (candidate) => candidate.id === unitId,
+        )?.publishedScopes,
+      );
+    }
+    for (const unit of publication.knowledgeUnits) {
+      const sectionPath = unit.facts.find(
+        (fact) => fact.name === "section.path",
+      );
+      if (sectionPath !== undefined) {
+        expect(sectionPath.value).not.toContainEqual(
+          expect.stringMatching(/^blk_/),
+        );
+      }
+    }
+  });
+
+  it("classifies an oversized canonical fact set without exposing its values", async () => {
+    const snapshot = createSnapshot(INITIAL, "fact-limit");
+    const indexed = await harness.reindex({ current: snapshot });
+    const unit = snapshot.semanticUnits.find(
+      (candidate) => candidate.blockIds.length > 0,
+    )!;
+    const blockId = unit.blockIds[0]!;
+    const heading = snapshot.document.blocks.find(
+      (block) => block.kind === "heading",
+    )!;
+    const headingIds = Array.from(
+      { length: 9 },
+      (_unused, index) => `blk_factlimit${String(index)}`,
+    );
+    const document = {
+      ...snapshot.document,
+      blocks: [
+        ...snapshot.document.blocks.map((block) =>
+          block.id === blockId ? { ...block, sectionPath: headingIds } : block,
+        ),
+        ...headingIds.map((id, index) => ({
+          ...heading,
+          id,
+          revisionId: `brv_factlimit${String(index)}`,
+          text: "한".repeat(2_048),
+        })),
+      ],
+    };
+
+    const error = await Promise.resolve()
+      .then(() =>
+        buildMarkdownPublication({
+          document,
+          semanticUnits: snapshot.semanticUnits,
+          manifest: indexed.publication.manifest,
+          scopes: indexed.publication.scopes,
+        }),
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code: "publication_fact_limit_exceeded" });
+    expect(String(error)).not.toContain("한");
   });
 
   it("rebuilds fully and reuses nothing when the Embedding Profile changes", async () => {

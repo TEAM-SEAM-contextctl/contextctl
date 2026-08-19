@@ -46,7 +46,6 @@ import type {
   MarkdownPublicationStageEvent,
   MarkdownPublicationStageStatus,
   PublicationRecoveryIntent,
-  PublicationReadyNotifier,
 } from "../ports/markdown-publication.js";
 import type { SourceObservationStore } from "../ports/source-observation.js";
 
@@ -59,7 +58,6 @@ const DOWNSTREAM_STAGES: readonly MarkdownPublicationStage[] = [
   "chunking",
   "index_update",
   "ingestion_publication",
-  "ready_notification",
 ];
 
 export interface PublishMarkdownSourceCommand {
@@ -109,7 +107,6 @@ export interface MarkdownPublicationWorkflowDependencies {
   ) => NormalizedDocument;
   readonly documentReindexer: IncrementalDocumentReindexer;
   readonly publications: IngestionPublicationStore;
-  readonly readyNotifier: PublicationReadyNotifier;
   readonly events: MarkdownPublicationEventSink;
   readonly embeddingProfile: EmbeddingProfile;
   /** Stable identity of the durable daemon state this workflow belongs to. */
@@ -188,8 +185,6 @@ export class MarkdownPublicationWorkflow {
       this.#dependencies.events,
       this.#clock,
     );
-    await this.#flushPendingReady(operation);
-
     const registration = await operation.run("registration", async () => {
       const candidate = await this.#dependencies.sourceManagement.register(
         command.source,
@@ -496,7 +491,6 @@ export class MarkdownPublicationWorkflow {
             : { expectedObservationId: checkpoint.observationId }),
         });
       });
-      await this.#flushPendingReady(operation);
       const existingIndexVersion = managedIndexVersion(previousPublication);
       return {
         status: "already_published",
@@ -609,7 +603,6 @@ export class MarkdownPublicationWorkflow {
       });
       return result;
     });
-    await this.#flushPendingReady(operation);
     return {
       status: committed.status,
       sourceId: checkpoint.source.id,
@@ -620,26 +613,6 @@ export class MarkdownPublicationWorkflow {
       publication: committed.publication,
       diagnostics: operation.diagnostics,
     };
-  }
-
-  async #flushPendingReady(operation: OperationContext): Promise<void> {
-    let pending;
-    try {
-      pending = await this.#dependencies.publications.pendingReady();
-    } catch (error) {
-      throw operation.failure(
-        "ready_notification",
-        safeDiagnosticCode(error),
-      );
-    }
-    for (const notification of pending) {
-      await operation.run("ready_notification", async () => {
-        await this.#dependencies.readyNotifier.notify(notification);
-        await this.#dependencies.publications.markReadyNotified(
-          notification.publicationId,
-        );
-      });
-    }
   }
 
   async #ensureComparisonBaseline(

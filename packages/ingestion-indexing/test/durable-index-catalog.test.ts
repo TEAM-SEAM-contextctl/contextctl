@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DeterministicEmbeddingAdapter,
+  INGESTION_DATABASE_APPLICATION_ID,
   INGESTION_DATABASE_SCHEMA_VERSION,
   InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
   InMemoryPublicationReadyNotifier,
@@ -93,6 +94,15 @@ describe("durable Index control plane", () => {
     expect(
       healthy.prepare("PRAGMA user_version").get(),
     ).toEqual({ user_version: INGESTION_DATABASE_SCHEMA_VERSION });
+    expect(healthy.prepare("PRAGMA application_id").get()).toEqual({
+      application_id: INGESTION_DATABASE_APPLICATION_ID,
+    });
+    expect(healthy.prepare("PRAGMA journal_mode").get()).toEqual({
+      journal_mode: "wal",
+    });
+    expect(healthy.prepare("PRAGMA synchronous").get()).toEqual({
+      synchronous: 2,
+    });
     healthy.close();
     expect(() =>
       openIngestionDatabase({
@@ -167,6 +177,35 @@ describe("durable Index control plane", () => {
         code: "schema_invalid",
       }),
     );
+
+    const unownedPath = join(directory, "unowned.sqlite");
+    const unowned = new DatabaseSync(unownedPath);
+    unowned.exec(`
+      CREATE TABLE foreign_data (secret TEXT NOT NULL);
+      INSERT INTO foreign_data VALUES ('preserve-me');
+    `);
+    unowned.close();
+    expect(() => openTestDatabase(unownedPath)).toThrowError(
+      expect.objectContaining<Partial<IngestionDatabaseSchemaError>>({
+        code: "schema_invalid",
+      }),
+    );
+    const unchanged = new DatabaseSync(unownedPath);
+    expect(unchanged.prepare("SELECT secret FROM foreign_data").get()).toEqual({
+      secret: "preserve-me",
+    });
+    expect(unchanged.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: 0,
+    });
+    expect(
+      unchanged
+        .prepare(
+          `SELECT name FROM sqlite_schema
+           WHERE type = 'table' AND name = 'ingestion_metadata'`,
+        )
+        .get(),
+    ).toBeUndefined();
+    unchanged.close();
   });
 
   it("migrates schema v2 and preserves failed staging ownership across restart", async () => {
@@ -177,6 +216,7 @@ describe("durable Index control plane", () => {
     initialized.close();
 
     const v2 = new DatabaseSync(databasePath);
+    downgradeReadyOutboxToV5(v2);
     v2.exec(`
       DROP INDEX index_staging_attempts_by_eligibility;
       DROP TABLE index_staging_attempts;
@@ -248,6 +288,7 @@ describe("durable Index control plane", () => {
     initialized.close();
 
     const v3 = new DatabaseSync(databasePath);
+    downgradeReadyOutboxToV5(v3);
     v3.exec(`
       DROP TABLE source_observation_retention_leases;
       DROP TABLE comparison_source_observations;
@@ -286,6 +327,7 @@ describe("durable Index control plane", () => {
     temporaryDirectories.push(directory);
     const databasePath = join(directory, "schema.sqlite");
     const current = openTestDatabase(databasePath);
+    downgradeReadyOutboxToV5(current);
     current.exec(`
       DROP TABLE publication_recovery_intents;
       PRAGMA user_version = 4;
@@ -633,16 +675,22 @@ describe("durable Index control plane", () => {
       new InMemoryVectorIndexAdapter(),
     );
     const tenantA = await vectorIndex.prepare({
-      stateNamespaceId: STATE_NAMESPACE_ID,
-      securityDomain: "tenant-a",
-      embeddingProfile: profile,
-      payloadSchemaVersion: 2,
+      compatibility: {
+        stateNamespaceId: STATE_NAMESPACE_ID,
+        securityDomain: "tenant-a",
+        embeddingProfile: profile,
+        payloadSchemaVersion: 2,
+      },
+      signal: new AbortController().signal,
     });
     const tenantB = await vectorIndex.prepare({
-      stateNamespaceId: STATE_NAMESPACE_ID,
-      securityDomain: "tenant-b",
-      embeddingProfile: profile,
-      payloadSchemaVersion: 2,
+      compatibility: {
+        stateNamespaceId: STATE_NAMESPACE_ID,
+        securityDomain: "tenant-b",
+        embeddingProfile: profile,
+        payloadSchemaVersion: 2,
+      },
+      signal: new AbortController().signal,
     });
     const publicationA = domainPublishedVersion(
       "alpha",
@@ -893,12 +941,15 @@ describe("durable Index control plane", () => {
       new AlwaysFailNotifier(),
     );
 
-    await expect(first.workflow.publish(command())).rejects.toMatchObject({
-      stage: "ready_notification",
-      diagnosticCode: "notification_unavailable",
-    });
-    const pending = await first.publications.pendingReady();
-    expect(pending).toHaveLength(1);
+    const published = await first.workflow.publish(command());
+    const publicationId = published.publication!.publicationId;
+    await expect(first.readyReconciler.reconcile()).resolves.toEqual([
+      {
+        publicationId,
+        status: "failed",
+        diagnosticCode: "notification_unavailable",
+      },
+    ]);
     firstDatabase.close();
 
     const secondDatabase = openTestDatabase(fixture.databasePath);
@@ -910,11 +961,15 @@ describe("durable Index control plane", () => {
     }).reconcile();
 
     expect(reconciled).toEqual([
-      { publicationId: pending[0]!.publicationId, status: "delivered" },
+      { publicationId, status: "delivered" },
     ]);
-    expect(notifier.notifications).toEqual(pending);
-    expect(await publications.pendingReady()).toEqual([]);
-    expect(await publications.find(pending[0]!.publicationId)).toBeDefined();
+    expect(notifier.notifications).toEqual([
+      { schemaVersion: 1, publicationId },
+    ]);
+    await expect(
+      new PublicationReadyReconciler({ publications, notifier }).reconcile(),
+    ).resolves.toEqual([]);
+    expect(await publications.find(publicationId)).toBeDefined();
     secondDatabase.close();
   });
 
@@ -1184,6 +1239,47 @@ function openTestDatabase(location: string): DatabaseSync {
   });
 }
 
+function downgradeReadyOutboxToV5(database: DatabaseSync): void {
+  database.exec(`
+    ALTER TABLE latest_ingestion_publications
+      RENAME TO latest_ingestion_publications_v6;
+    ALTER TABLE ingestion_publications
+      RENAME TO ingestion_publications_v6;
+    DROP INDEX ingestion_publications_by_source;
+    DROP INDEX publication_ready_by_eligibility;
+
+    CREATE TABLE ingestion_publications (
+      publication_id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      previous_publication_id TEXT,
+      publication_json TEXT NOT NULL,
+      produced_at TEXT NOT NULL,
+      ready_notified INTEGER NOT NULL DEFAULT 0 CHECK (ready_notified IN (0, 1))
+    );
+    CREATE INDEX ingestion_publications_by_source
+      ON ingestion_publications (source_id, produced_at, publication_id);
+    INSERT INTO ingestion_publications (
+      publication_id, source_id, previous_publication_id,
+      publication_json, produced_at, ready_notified
+    )
+    SELECT publication_id, source_id, previous_publication_id,
+           publication_json, produced_at,
+           CASE ready_state WHEN 'delivered' THEN 1 ELSE 0 END
+      FROM ingestion_publications_v6;
+
+    CREATE TABLE latest_ingestion_publications (
+      source_id TEXT PRIMARY KEY,
+      publication_id TEXT NOT NULL REFERENCES ingestion_publications (publication_id)
+    );
+    INSERT INTO latest_ingestion_publications (source_id, publication_id)
+      SELECT source_id, publication_id
+        FROM latest_ingestion_publications_v6;
+
+    DROP TABLE latest_ingestion_publications_v6;
+    DROP TABLE ingestion_publications_v6;
+  `);
+}
+
 function downgradeToV1(
   publication: Record<string, unknown>,
 ): PublishedDocumentScope {
@@ -1314,11 +1410,12 @@ class FailOncePublicationCommitStore implements IngestionPublicationStore {
     this.delegate.find(publicationId);
   latestForSource: IngestionPublicationStore["latestForSource"] = (sourceId) =>
     this.delegate.latestForSource(sourceId);
-  pendingReady: IngestionPublicationStore["pendingReady"] = () =>
-    this.delegate.pendingReady();
-  markReadyNotified: IngestionPublicationStore["markReadyNotified"] = (
-    publicationId,
-  ) => this.delegate.markReadyNotified(publicationId);
+  claimReadyBatch: IngestionPublicationStore["claimReadyBatch"] = (input) =>
+    this.delegate.claimReadyBatch(input);
+  completeReadyDelivery: IngestionPublicationStore["completeReadyDelivery"] =
+    (input) => this.delegate.completeReadyDelivery(input);
+  rescheduleReadyDelivery: IngestionPublicationStore["rescheduleReadyDelivery"] =
+    (input) => this.delegate.rescheduleReadyDelivery(input);
 }
 
 class SimulatedPublicationStoreUnavailable extends Error {

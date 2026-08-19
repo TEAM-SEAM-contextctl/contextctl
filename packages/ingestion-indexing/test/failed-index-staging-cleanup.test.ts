@@ -261,10 +261,10 @@ describe("FailedIndexStagingCleanup", () => {
       records: [currentRecord],
     });
     await publications.commitCurrent(
-      publicationFor("aaaa", accessHandle, predecessorRecord),
+      publicationFor("aaaa", accessHandle),
     );
     await publications.commitCurrent(
-      publicationFor("bbbb", accessHandle, currentRecord),
+      publicationFor("bbbb", accessHandle),
     );
     await seedPendingAttempt(
       attempts,
@@ -364,10 +364,13 @@ function command(): PublishDocumentIndexCommand {
 
 async function prepareVectorIndex(vectorIndex: VectorIndexPort) {
   return vectorIndex.prepare({
-    stateNamespaceId: "state_test",
-    securityDomain: "test-tenant",
-    embeddingProfile: PROFILE,
-    payloadSchemaVersion: 2,
+    compatibility: {
+      stateNamespaceId: "state_test",
+      securityDomain: "test-tenant",
+      embeddingProfile: PROFILE,
+      payloadSchemaVersion: 2,
+    },
+    signal: new AbortController().signal,
   });
 }
 
@@ -417,12 +420,13 @@ function recordFor(revision: "aaaa" | "bbbb"): VectorIndexRecord {
 function publicationFor(
   revision: "aaaa" | "bbbb",
   accessHandle: string,
-  record: VectorIndexRecord,
 ): PublishedIndexVersionV2 {
   const manifest = {
     ...createIndexManifestFixture(),
     indexVersion: `idxv_${revision}`,
-    recordSetDigest: computeRecordSetDigest([record]),
+    recordSetDigest: computeRecordSetDigest(
+      createIndexManifestFixture().chunkBindings,
+    ),
     scopeRevisions: [
       { scopeId: "scope_payment_failures", scopeVersion: `scpv_${revision}` },
     ],
@@ -465,7 +469,11 @@ function versionRecords(
   accessHandle: string,
   key: { readonly documentIndexId: string; readonly indexVersion: string },
 ) {
-  return vectorIndex.listVersionRecords({ accessHandle, ...key });
+  return vectorIndex.listVersionRecords({
+    accessHandle,
+    ...key,
+    signal: new AbortController().signal,
+  });
 }
 
 function requiredValue<T>(value: T | undefined): T {

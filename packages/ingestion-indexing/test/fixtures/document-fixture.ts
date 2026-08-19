@@ -143,7 +143,16 @@ export function createManagedChunkFixture(): readonly ManagedChunk[] {
 }
 
 export function createIndexManifestFixture(): IndexManifest {
+  const chunkBindings = {
+    chk_payment_failures: {
+      chunkRevisionId: "crv_aaaa",
+      semanticUnitId: "unit_payment_failures",
+      semanticUnitRevisionId: "urv_bbbb",
+      contentDigest: sha256Digest(chunkText),
+    },
+  } as const;
   return {
+    manifestSchemaVersion: 2,
     stateNamespaceId: "state_test",
     securityDomain: "test-tenant",
     documentIndexId: "didx_payments",
@@ -175,8 +184,9 @@ export function createIndexManifestFixture(): IndexManifest {
     chunkRevisions: {
       chk_payment_failures: "crv_aaaa",
     },
+    chunkBindings,
     recordCount: 1,
-    recordSetDigest: computeRecordSetDigest(createVectorRecordFixture()),
+    recordSetDigest: computeRecordSetDigest(chunkBindings),
     scopeRevisions: [
       { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
     ],

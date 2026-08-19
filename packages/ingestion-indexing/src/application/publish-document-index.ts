@@ -23,6 +23,7 @@ import {
   assertValidVectorIndexRecords,
   computeRecordSetDigest,
   createDocumentIndexId,
+  createIndexChunkBindings,
   createIndexVersion,
   type IndexManifest,
   type VectorIndexRecord,
@@ -42,6 +43,8 @@ import type {
   VectorIndexStoredRecord,
 } from "../ports/vector-index.js";
 
+const LEGACY_PUBLICATION_SIGNAL = new AbortController().signal;
+
 export interface PublishDocumentIndexCommand {
   readonly stateNamespaceId: string;
   readonly document: NormalizedDocument;
@@ -58,6 +61,7 @@ export interface PublishDocumentIndexCommand {
   readonly beforeCatalogCommit?: (
     publication: PublishedIndexVersion,
   ) => Promise<void>;
+  readonly signal?: AbortSignal;
 }
 
 export interface DocumentIndexPublisherDependencies {
@@ -125,6 +129,8 @@ export class DocumentIndexPublisher {
   async publish(
     command: PublishDocumentIndexCommand,
   ): Promise<PublishedIndexVersion> {
+    const signal = command.signal ?? LEGACY_PUBLICATION_SIGNAL;
+    signal.throwIfAborted();
     const prepared = preparePublication(command);
     const existing = await this.#publications.findVersion({
       documentIndexId: prepared.documentIndexId,
@@ -144,7 +150,10 @@ export class DocumentIndexPublisher {
       embeddingProfile: command.embeddingProfile,
       payloadSchemaVersion: 2,
     };
-    const vectorTarget = await this.#vectorIndex.prepare(compatibility);
+    const vectorTarget = await this.#vectorIndex.prepare({
+      compatibility,
+      signal,
+    });
     const scopes = createPublishedDocumentScopes({
       manifest: prepared.manifestDraft,
       ...(command.semanticScopes === undefined
@@ -153,7 +162,9 @@ export class DocumentIndexPublisher {
     });
     const manifest: IndexManifest = {
       ...prepared.manifestDraft,
-      recordSetDigest: computeRecordSetDigest(prepared.records),
+      recordSetDigest: computeRecordSetDigest(
+        prepared.manifestDraft.chunkBindings,
+      ),
       scopeRevisions: scopeRevisions(scopes),
       publishedAt: command.publishedAt ?? this.#clock(),
     };
@@ -169,6 +180,7 @@ export class DocumentIndexPublisher {
 
     const attemptedAt = this.#clock();
     const leaseId = this.#leaseIds();
+    signal.throwIfAborted();
     const acquired = await this.#stagingAttempts.acquirePublication({
       documentIndexId: manifest.documentIndexId,
       indexVersion: manifest.indexVersion,
@@ -194,12 +206,14 @@ export class DocumentIndexPublisher {
           indexVersion: manifest.indexVersion,
           expiresAt: acquired.attempt.ownerExpiresAt!,
         },
+        signal,
       });
 
       const stagedBefore = await this.#vectorIndex.listVersionRecords({
         accessHandle: vectorTarget.accessHandle,
         documentIndexId: manifest.documentIndexId,
         indexVersion: manifest.indexVersion,
+        signal,
       });
       const missing = assertCompatibleStaging(stagedBefore, prepared.records);
       for (let offset = 0; offset < missing.length; offset += this.#batchSize) {
@@ -209,11 +223,13 @@ export class DocumentIndexPublisher {
             manifest,
             vectorTarget.accessHandle,
             leaseId,
+            signal,
           );
           await this.#vectorIndex.upsertRecords({
             accessHandle: vectorTarget.accessHandle,
             embeddingProfile: command.embeddingProfile,
             records: batch,
+            signal,
           });
         }
       }
@@ -222,6 +238,7 @@ export class DocumentIndexPublisher {
         accessHandle: vectorTarget.accessHandle,
         documentIndexId: manifest.documentIndexId,
         indexVersion: manifest.indexVersion,
+        signal,
       });
       assertCompleteStaging(
         manifest,
@@ -234,6 +251,7 @@ export class DocumentIndexPublisher {
         manifest,
         vectorTarget.accessHandle,
         leaseId,
+        signal,
       );
 
       const publication: PublishedIndexVersion = {
@@ -249,7 +267,9 @@ export class DocumentIndexPublisher {
           securityDomain: command.securityDomain,
         },
       };
+      signal.throwIfAborted();
       await command.beforeCatalogCommit?.(structuredClone(publication));
+      signal.throwIfAborted();
       const committed = (
         await this.#publications.commitCurrent(publication)
       ).publication;
@@ -266,6 +286,7 @@ export class DocumentIndexPublisher {
         await this.#vectorIndex.releaseRetentionLease({
           accessHandle: vectorTarget.accessHandle,
           leaseId,
+          signal: LEGACY_PUBLICATION_SIGNAL,
         });
       } catch {
         // A bounded lease expires without weakening the durable Catalog guard.
@@ -288,6 +309,7 @@ export class DocumentIndexPublisher {
     input: { readonly documentIndexId: string; readonly indexVersion: string },
     accessHandle: string,
     leaseId: string,
+    signal: AbortSignal,
   ): Promise<void> {
     const renewedAt = this.#clock();
     const renewedUntil = expirationAfter(
@@ -311,6 +333,7 @@ export class DocumentIndexPublisher {
         indexVersion: input.indexVersion,
         expiresAt: renewedUntil,
       },
+      signal,
     });
   }
 
@@ -423,7 +446,12 @@ function preparePublication(
   if (new Set(records.map((record) => record.chunkRevisionId)).size !== records.length) {
     throw new DocumentIndexPublicationError("invalid_input");
   }
+  const chunkBindings = createIndexChunkBindings(
+    command.semanticUnits,
+    command.chunks,
+  );
   const manifestDraft = {
+    manifestSchemaVersion: 2 as const,
     stateNamespaceId: command.stateNamespaceId,
     securityDomain: command.securityDomain,
     documentIndexId,
@@ -446,8 +474,9 @@ function preparePublication(
     chunkRevisions: sortedRevisionMap(
       command.chunks.map((chunk) => [chunk.id, chunk.revisionId]),
     ),
+    chunkBindings,
     recordCount: records.length,
-    recordSetDigest: computeRecordSetDigest(records),
+    recordSetDigest: computeRecordSetDigest(chunkBindings),
     scopeRevisions: [] as const,
     fallbackCounts: fallbackCounts(command),
     publishedAt: "1970-01-01T00:00:00.000Z",

@@ -104,10 +104,13 @@ async function publishWholeDocument(runtime: DaemonRuntime): Promise<void> {
   // without it mints a handle for the legacy namespace that then fails to
   // rehydrate as `index_binding_invalid`.
   const prepared = await runtime.vectorIndex.prepare({
-    stateNamespaceId: runtime.stateNamespaceId,
-    securityDomain: runtime.securityDomain,
-    embeddingProfile: runtime.embeddingProfile,
-    payloadSchemaVersion: 2,
+    compatibility: {
+      stateNamespaceId: runtime.stateNamespaceId,
+      securityDomain: runtime.securityDomain,
+      embeddingProfile: runtime.embeddingProfile,
+      payloadSchemaVersion: 2,
+    },
+    signal: new AbortController().signal,
   });
   // The catalog record's own Scope shape carries no physical binding: v2 keeps
   // `connectorId` and `accessHandle` in `binding` alone, which is now the only
@@ -139,6 +142,7 @@ async function publishWholeDocument(runtime: DaemonRuntime): Promise<void> {
       accessHandle: prepared.accessHandle,
     },
     manifest: {
+      manifestSchemaVersion: 2,
       stateNamespaceId: runtime.stateNamespaceId,
       securityDomain: runtime.securityDomain,
       documentIndexId: localDocumentIndex.documentIndexId,
@@ -158,6 +162,14 @@ async function publishWholeDocument(runtime: DaemonRuntime): Promise<void> {
       payloadSchemaVersion: 2,
       semanticUnitRevisions: { unit_local: "urv_aaaa" },
       chunkRevisions: { chk_aaaa: "crv_aaaa" },
+      chunkBindings: {
+        chk_aaaa: {
+          chunkRevisionId: "crv_aaaa",
+          semanticUnitId: "unit_local",
+          semanticUnitRevisionId: "urv_aaaa",
+          contentDigest: `sha256:${"a".repeat(64)}`,
+        },
+      },
       recordCount: 1,
       recordSetDigest: `sha256:${"a".repeat(64)}`,
       scopeRevisions: [{ scopeId: "scope_local", scopeVersion: "scpv_aaaa" }],

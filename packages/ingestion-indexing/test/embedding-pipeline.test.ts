@@ -6,6 +6,7 @@ import {
   type EmbeddingPort,
   type EmbeddingProfile,
   type EmbeddingProviderRequest,
+  type DocumentRetrievalEmbeddingProfile,
   type ManagedChunk,
   type ReusableChunkEmbedding,
 } from "../src/index.js";
@@ -260,6 +261,36 @@ describe("Embedding pipeline", () => {
     ).rejects.toMatchObject({ code: "invalid_reusable_embedding" });
   });
 
+  it("enforces declared L2 semantics for generated and reusable vectors", async () => {
+    const chunk = requiredChunk(createChunks(1), 0);
+    const unnormalized: EmbeddingPort = {
+      embed: async (request) => [
+        { key: request.inputs[0]!.key, vector: [1, 1, 1] },
+      ],
+    };
+    await expect(
+      new EmbeddingPipeline({ provider: unnormalized }).embed({
+        chunks: [chunk],
+        profile: productionProfile,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_provider_response" });
+
+    await expect(
+      new EmbeddingPipeline({ provider: unnormalized }).embed({
+        chunks: [chunk],
+        profile: productionProfile,
+        reusable: [
+          {
+            chunkRevisionId: chunk.revisionId,
+            contentDigest: chunk.contentDigest,
+            profile: productionProfile,
+            vector: [0, 0, 0],
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "invalid_reusable_embedding" });
+  });
+
   it("rejects multiple revisions of one logical Chunk in a single build", async () => {
     const chunk = requiredChunk(createChunks(1), 0);
 
@@ -325,3 +356,23 @@ function requiredChunk(
   }
   return chunk;
 }
+
+const productionProfile: DocumentRetrievalEmbeddingProfile = {
+  ...profile,
+  modelRevision: "revision-1",
+  execution: {
+    kind: "remote",
+    adapter: "openai-compatible",
+    adapterVersion: "1.0.0",
+    model: profile.model,
+  },
+  pooling: "provider_defined",
+  normalization: "l2",
+  documentInputTransformVersion: "identity-v1",
+  queryInputTransformVersion: "identity-v1",
+  modelMaxTokens: 512,
+  admissionLimit: {
+    textMeasureProfileVersion: profile.textMeasureProfileVersion,
+    maxUnits: profile.maxInputTokens,
+  },
+};

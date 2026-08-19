@@ -9,7 +9,9 @@ import {
   DirectoryLocalEmbeddingAssetSource,
   EmbeddingProviderFault,
   installLocalEmbeddingAssets,
+  LOCAL_EMBEDDING_ACTIVE_POINTER_FILE,
   LOCAL_EMBEDDING_ASSET_MANIFEST_FILE,
+  resolveActiveLocalEmbeddingAssets,
   serializeLocalEmbeddingAssetManifest,
   verifyLocalEmbeddingAssets,
   type DocumentRetrievalEmbeddingProfile,
@@ -43,15 +45,21 @@ describe("local embedding asset installation", () => {
       fixture.manifest.files.reduce((sum, file) => sum + file.bytes, 0),
     );
     await expect(
-      verifyLocalEmbeddingAssets(fixture.target, fixture.profile),
+      verifyLocalEmbeddingAssets(result.directory, fixture.profile),
     ).resolves.toMatchObject({ revision: fixture.manifest.revision });
-    expect((await readdir(fixture.target)).sort()).toEqual(
+    expect((await readdir(result.directory)).sort()).toEqual(
       [
         LOCAL_EMBEDDING_ASSET_MANIFEST_FILE,
         "config.json",
         "onnx",
       ].sort(),
     );
+    expect((await readdir(fixture.target)).sort()).toEqual(
+      [LOCAL_EMBEDDING_ACTIVE_POINTER_FILE, "revisions"].sort(),
+    );
+    await expect(
+      resolveActiveLocalEmbeddingAssets(fixture.target, fixture.profile),
+    ).resolves.toMatchObject({ directory: result.directory });
   });
 
   it("re-runs idempotently without touching installed bytes", async () => {
@@ -72,6 +80,7 @@ describe("local embedding asset installation", () => {
     });
 
     expect(again.status).toBe("already_installed");
+    expect(again.directory).toContain("/revisions/");
     expect(fixture.source.reads).toBe(0);
   });
 
@@ -88,33 +97,36 @@ describe("local embedding asset installation", () => {
       }),
     ).rejects.toMatchObject({ code: "embedding_artifact_unavailable" });
 
-    expect(await readdir(fixture.root)).toEqual([]);
+    await expect(
+      resolveActiveLocalEmbeddingAssets(fixture.target, fixture.profile),
+    ).resolves.toBeUndefined();
+    expect(await readdir(join(fixture.target, "revisions"))).toEqual([]);
   });
 
   it("keeps the installed revision serving when a later install fails", async () => {
     const fixture = await createFixture();
-    await installLocalEmbeddingAssets({
+    const installed = await installLocalEmbeddingAssets({
       profile: fixture.profile,
       manifest: fixture.manifest,
       targetDirectory: fixture.target,
       source: fixture.source,
     });
-    fixture.source.corrupt("onnx/model_quantized.onnx");
-    // Force the installer past its already-installed short circuit.
-    await rm(join(fixture.target, LOCAL_EMBEDDING_ASSET_MANIFEST_FILE));
+    const replacement = createReplacement(fixture);
+    replacement.source.corrupt("onnx/model_quantized.onnx");
 
     await expect(
       installLocalEmbeddingAssets({
-        profile: fixture.profile,
-        manifest: fixture.manifest,
+        profile: replacement.profile,
+        manifest: replacement.manifest,
         targetDirectory: fixture.target,
-        source: fixture.source,
+        source: replacement.source,
       }),
     ).rejects.toBeInstanceOf(EmbeddingProviderFault);
 
-    expect(await readFile(join(fixture.target, "config.json"), "utf8")).toBe(
-      "{}\n",
-    );
+    expect(await readFile(join(installed.directory, "config.json"), "utf8")).toBe("{}\n");
+    await expect(
+      resolveActiveLocalEmbeddingAssets(fixture.target, fixture.profile),
+    ).resolves.toMatchObject({ directory: installed.directory });
     expect(await readdir(fixture.root)).toEqual(["assets"]);
   });
 
@@ -157,7 +169,7 @@ describe("local embedding asset installation", () => {
 
     expect(result.status).toBe("installed");
     await expect(
-      verifyLocalEmbeddingAssets(fixture.target, fixture.profile),
+      verifyLocalEmbeddingAssets(result.directory, fixture.profile),
     ).resolves.toBeDefined();
   });
 
@@ -262,6 +274,46 @@ async function createFixture(): Promise<Fixture> {
     bytes,
     source: new RecordingAssetSource(bytes),
   };
+}
+
+function createReplacement(fixture: Fixture): Pick<
+  Fixture,
+  "profile" | "manifest" | "source"
+> {
+  const configBytes = Buffer.from("{\"revision\":2}\n", "utf8");
+  const modelBytes = Buffer.from("verified-local-model-v2", "utf8");
+  const bytes = new Map([
+    ["config.json", configBytes],
+    ["onnx/model_quantized.onnx", modelBytes],
+  ]);
+  const manifest: LocalEmbeddingAssetManifest = {
+    ...fixture.manifest,
+    revision: "fixture-revision-2",
+    files: [
+      {
+        path: "config.json",
+        bytes: configBytes.length,
+        sha256: sha256(configBytes),
+      },
+      {
+        path: "onnx/model_quantized.onnx",
+        bytes: modelBytes.length,
+        sha256: sha256(modelBytes),
+      },
+    ],
+  };
+  const serialized = serializeLocalEmbeddingAssetManifest(manifest);
+  const profile: DocumentRetrievalEmbeddingProfile = {
+    ...fixture.profile,
+    version: "2",
+    execution: {
+      ...fixture.profile.execution,
+      artifactRevision: manifest.revision,
+      artifactSha256: sha256(modelBytes),
+      assetManifestSha256: sha256(Buffer.from(serialized.trim(), "utf8")),
+    } as DocumentRetrievalEmbeddingProfile["execution"],
+  };
+  return { profile, manifest, source: new RecordingAssetSource(bytes) };
 }
 
 function sha256(value: Buffer): string {
