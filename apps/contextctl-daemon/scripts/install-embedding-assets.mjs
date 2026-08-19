@@ -1,13 +1,17 @@
 /**
- * Installs the pinned local embedding assets the daemon needs to boot with a
- * production embedding profile.
+ * Installs the pinned local embedding assets from a repository checkout.
  *
- * The revision, the file list, the byte counts and the sha256 digests all come
- * from `DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST` — this script never restates
- * them, so it cannot drift from the manifest the runtime verifies against.
- * Every byte is checked by `installLocalEmbeddingAssets` before it is placed,
- * and the placement is atomic: a rejected install leaves the previously
- * installed revision serving.
+ * This is a launcher and nothing else. Every rule the install obeys — the
+ * origin, the retry ladder, the exact-sized buffer, the consent text, the
+ * progress reporting — lives in `src/cli/asset-installation.ts`, because the
+ * same install is reachable as `contextctl install-assets` for anyone who
+ * installed from npm rather than cloning. Two copies of a download that verifies
+ * 396 MiB against pinned digests would drift, and the copy that drifted would be
+ * the one nobody ran in CI.
+ *
+ * ★ It imports from `dist`, so it works only after `npm run build` at the
+ * repository root. That is the same trade `bin/contextctl.mjs` makes, for the
+ * same reason: a compiled launcher would be absent exactly when it is needed.
  *
  * Usage:
  *   node apps/contextctl-daemon/scripts/install-embedding-assets.mjs [options]
@@ -22,137 +26,13 @@
  *
  * Exit codes: 0 installed or already installed, 1 anything else.
  */
-import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
-  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
-  DirectoryLocalEmbeddingAssetSource,
-  installLocalEmbeddingAssets,
-} from "@contextctl/ingestion-indexing";
-
-/** Where the assets go when nothing says otherwise. */
-const DEFAULT_TARGET_DIRECTORY = resolve(
-  homedir(),
-  ".contextctl",
-  "embedding-assets",
+const MODULE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../dist/cli/asset-installation.js",
 );
-
-const HUGGING_FACE_ORIGIN = "https://huggingface.co";
-/** A 372MB body over a home connection: generous, but not unbounded. */
-const REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
-const DOWNLOAD_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 2_000;
-
-/**
- * Fetches a manifest's files from the repository revision it pins.
- *
- * The response is written into a buffer sized from the manifest, so a body
- * that runs long or short is rejected here rather than after 372MB have been
- * accumulated twice over.
- */
-class HuggingFaceLocalEmbeddingAssetSource {
-  #manifest;
-  #log;
-
-  constructor(manifest, log) {
-    this.#manifest = manifest;
-    this.#log = log;
-  }
-
-  async read(path, signal) {
-    const file = this.#manifest.files.find((entry) => entry.path === path);
-    if (file === undefined) {
-      throw new Error(`asset is not in the manifest: ${path}`);
-    }
-    const url = `${HUGGING_FACE_ORIGIN}/${this.#manifest.repository}/resolve/${this.#manifest.revision}/${path}`;
-
-    let lastError;
-    for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
-      signal?.throwIfAborted();
-      try {
-        return await this.#readOnce(url, file, attempt, signal);
-      } catch (error) {
-        if (signal?.aborted === true) throw error;
-        lastError = error;
-        this.#log(
-          `  attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed: ${describe(error)}`,
-        );
-        if (attempt < DOWNLOAD_ATTEMPTS) {
-          await delay(RETRY_DELAY_MS * attempt);
-        }
-      }
-    }
-    throw lastError;
-  }
-
-  async #readOnce(url, file, attempt, signal) {
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-    const composed =
-      signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
-
-    this.#log(
-      `  GET ${url}${attempt > 1 ? ` (attempt ${attempt})` : ""}`,
-    );
-    const response = await fetch(url, {
-      signal: composed,
-      redirect: "follow",
-      headers: { accept: "application/octet-stream" },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
-    if (response.body === null) {
-      throw new Error("response had no body");
-    }
-
-    // An early size check, and only that. content-length describes the *encoded*
-    // body while fetch hands back the decoded one, so the header is comparable
-    // only when nothing re-encoded the response — the small JSON files come back
-    // brotli-compressed with no content-length at all. The real gate is the
-    // exact-sized buffer below plus the installer's sha256.
-    const declaredLength = response.headers.get("content-length");
-    const encoding = response.headers.get("content-encoding");
-    if (
-      declaredLength !== null &&
-      (encoding === null || encoding === "identity")
-    ) {
-      const declared = Number(declaredLength);
-      if (!Number.isSafeInteger(declared) || declared !== file.bytes) {
-        throw new Error(
-          `content-length ${declaredLength} does not match the manifest's ${file.bytes}`,
-        );
-      }
-    }
-
-    // Exact-sized: the manifest already says how many bytes this file has.
-    const bytes = new Uint8Array(file.bytes);
-    let written = 0;
-    let reported = 0;
-    for await (const chunk of response.body) {
-      if (written + chunk.byteLength > file.bytes) {
-        throw new Error(
-          `body is longer than the manifest's ${file.bytes} bytes`,
-        );
-      }
-      bytes.set(chunk, written);
-      written += chunk.byteLength;
-      if (file.bytes >= 8 * 1024 * 1024 && written - reported >= 32 * 1024 * 1024) {
-        reported = written;
-        this.#log(
-          `    ${formatBytes(written)} / ${formatBytes(file.bytes)} (${Math.floor((written / file.bytes) * 100)}%)`,
-        );
-      }
-    }
-    if (written !== file.bytes) {
-      throw new Error(
-        `body was ${written} bytes, the manifest says ${file.bytes}`,
-      );
-    }
-    return bytes;
-  }
-}
 
 async function main(argv) {
   const options = parseArguments(argv);
@@ -161,50 +41,62 @@ async function main(argv) {
     return 0;
   }
 
-  const manifest = DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST;
-  const profile = DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
-  const targetDirectory = resolveTargetDirectory(options.target);
-  const totalBytes = manifest.files.reduce((sum, file) => sum + file.bytes, 0);
+  const {
+    describeAssetInstallationPlan,
+    planAssetInstallation,
+    resolveAssetInstallationTarget,
+    runAssetInstallation,
+  } = await loadModule();
 
-  log(`repository      ${manifest.repository}`);
-  log(`revision        ${manifest.revision}`);
-  log(`license         ${manifest.license}`);
-  log(`profile         ${profile.id} (v${profile.version})`);
-  log(`target          ${targetDirectory}`);
-  log(
-    `source          ${options.sourceDirectory === undefined ? "huggingface.co" : resolveDirectory(options.sourceDirectory)}`,
-  );
-  log(`files           ${manifest.files.length} (${formatBytes(totalBytes)})`);
-  log("");
-
-  const source =
-    options.sourceDirectory === undefined
-      ? new HuggingFaceLocalEmbeddingAssetSource(manifest, log)
-      : new DirectoryLocalEmbeddingAssetSource(
-          resolveDirectory(options.sourceDirectory),
-        );
-
-  const startedAt = Date.now();
-  const result = await installLocalEmbeddingAssets({
-    profile,
-    manifest,
-    targetDirectory,
-    source,
+  const targetDirectory = resolveAssetInstallationTarget({
+    environment: process.env,
+    ...(options.target === undefined ? {} : { override: options.target }),
   });
-  const elapsedMs = Date.now() - startedAt;
+  const planInput = {
+    targetDirectory,
+    ...(options.sourceDirectory === undefined
+      ? {}
+      : { sourceDirectory: resolve(options.sourceDirectory) }),
+  };
+
+  log(describeAssetInstallationPlan(planAssetInstallation(planInput)));
+  log("");
+
+  // No prompt: a script run from a checkout is already an explicit request for
+  // this exact install, and there is no terminal to assume. The prompt belongs
+  // to `contextctl install-assets`, which is the entry point a user who did not
+  // clone the repository actually reaches.
+  const outcome = await runAssetInstallation({ ...planInput, progress: log });
 
   log("");
-  log(`status          ${result.status}`);
-  log(`directory       ${result.directory}`);
-  log(
-    `installed bytes ${result.installedBytes} (${formatBytes(result.installedBytes)})`,
-  );
-  log(`elapsed         ${(elapsedMs / 1000).toFixed(1)}s`);
-  log("");
-  log("Every file's sha256 and byte count were verified against the manifest.");
-  log("Point the daemon at it with:");
-  log(`  export CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY=${result.directory}`);
+  log(`status          ${outcome.status}`);
+  if (outcome.directory !== undefined) {
+    log(`directory       ${outcome.directory}`);
+    log(`installed bytes ${outcome.installedBytes}`);
+    log(`elapsed         ${((outcome.elapsedMs ?? 0) / 1000).toFixed(1)}s`);
+    log("");
+    log("Every file's sha256 and byte count were verified against the manifest.");
+    log("Point the daemon at it with:");
+    log(`  export CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY=${targetDirectory}`);
+  }
   return 0;
+}
+
+/** The build step is the one failure this launcher can name better than the loader. */
+async function loadModule() {
+  try {
+    return await import(pathToFileURL(MODULE_PATH).href);
+  } catch (error) {
+    if (
+      error?.code === "ERR_MODULE_NOT_FOUND" &&
+      error.message.includes("dist")
+    ) {
+      throw new Error(
+        "contextctl is not built yet. Run `npm run build` in the repository root, then run this script again.",
+      );
+    }
+    throw error;
+  }
 }
 
 function parseArguments(argv) {
@@ -245,44 +137,18 @@ function requireValue(argv, index, name) {
   return value;
 }
 
-/** --target beats the daemon's own variable, which beats the default. */
-function resolveTargetDirectory(target) {
-  const configured =
-    target ?? process.env.CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY;
-  if (configured === undefined || configured.trim() === "") {
-    return DEFAULT_TARGET_DIRECTORY;
-  }
-  return resolveDirectory(configured);
-}
-
-function resolveDirectory(directory) {
-  const expanded = directory.startsWith("~/")
-    ? resolve(homedir(), directory.slice(2))
-    : directory;
-  return isAbsolute(expanded) ? resolve(expanded) : resolve(process.cwd(), expanded);
-}
-
 function usage() {
   return [
     "Usage: node apps/contextctl-daemon/scripts/install-embedding-assets.mjs [options]",
     "",
+    "  Requires `npm run build` to have been run at the repository root.",
+    "",
     "  --target <dir>            Install directory.",
-    `                            Default: $CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY, else ${DEFAULT_TARGET_DIRECTORY}`,
+    "                            Default: $CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY,",
+    "                            else ~/.contextctl/embedding-assets",
     "  --source-directory <dir>  Read bytes from a staged directory instead of downloading.",
     "  --help                    Print this text.",
   ].join("\n");
-}
-
-function formatBytes(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${units[unit]}`;
 }
 
 function describe(error) {
@@ -292,10 +158,6 @@ function describe(error) {
       : error.message;
   }
   return String(error);
-}
-
-function delay(milliseconds) {
-  return new Promise((settle) => setTimeout(settle, milliseconds));
 }
 
 /** Diagnostics go to stderr so stdout stays free for machine-readable output. */

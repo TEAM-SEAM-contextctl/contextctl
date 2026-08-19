@@ -1,6 +1,6 @@
 {
   "name": "contextctl",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@contextctl/daemon": "*"
+    "@contextctl/daemon": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

@@ -8,8 +8,13 @@ context lifecycle, and retrieval scope selection.
 
 ## Requirements
 
-- Node.js `24.18.0`
-- npm `11.16.0`
+**Running contextctl:** Node.js `>=24.0.0`. The floor is Node 24 rather than a
+preference: every store this daemon opens is built on `node:sqlite`, which no
+earlier release provides.
+
+**Developing contextctl:** Node.js `24.18.0` and npm `11.16.0` exactly, as
+`.nvmrc` and CI pin them. The published packages declare only the floor; the
+exact pin is for reproducing a build, not for using one.
 
 ## Quick start
 
@@ -19,16 +24,22 @@ for you.
 
 ### Prerequisites
 
-**1. Embedding assets — about 390MB.** The daemon pins one artifact revision and
-never downloads at runtime, so the install is an explicit step:
+**1. Embedding assets — about 415MB across five files.** The daemon pins one
+artifact revision and never downloads at runtime, so the install is an explicit
+step:
 
 ```bash
-node apps/contextctl-daemon/scripts/install-embedding-assets.mjs
+contextctl install-assets
 ```
 
-They land in `~/.contextctl/embedding-assets` unless
-`CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY` says otherwise. Without them the daemon
-refuses to assemble rather than silently producing vectors of another kind.
+It shows the repository, the pinned revision, the licence and the total size,
+then asks before downloading anything. They land in
+`~/.contextctl/embedding-assets` unless `CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY`
+says otherwise. Without them the daemon refuses to assemble rather than silently
+producing vectors of another kind.
+
+Run `contextctl doctor` afterwards to see what is configured and what is still
+missing.
 
 **2. A vector index that outlives one process.** Each CLI command is its own
 process, so the default in-memory index is empty again by the time you query.

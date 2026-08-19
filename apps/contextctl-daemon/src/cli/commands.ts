@@ -9,6 +9,13 @@ import {
 
 import type { CliCommand } from "./arguments.js";
 import {
+  describeAssetInstallationPlan,
+  planAssetInstallation,
+  resolveAssetInstallationTarget,
+  runAssetInstallation,
+} from "./asset-installation.js";
+import { runDiagnosis, type DiagnosisReport } from "./doctor.js";
+import {
   renderCardListings,
   renderResolution,
   renderSourceListing,
@@ -346,4 +353,136 @@ export async function runQuery(
   });
 
   return ok(stdout, diagnosis === undefined ? [] : [diagnosis]);
+}
+
+
+/* --------------------------------------------------------- install-assets */
+
+/**
+ * Installs the pinned embedding model, asking first.
+ *
+ * `progress` is written as the download runs rather than returned with the
+ * outcome, which is why this command takes a writer while every other one does
+ * not. 415MB moving in silence reads as a hang, and a `CommandOutcome` is only
+ * printed once the work it describes has finished.
+ *
+ * Consent is the caller's to obtain. Whether a prompt is even possible depends
+ * on the terminal, and `--yes` is a statement the operator already made; this
+ * function is handed the answer rather than working it out from `process`.
+ */
+export async function runInstallAssets(input: {
+  readonly command: Extract<CliCommand, { kind: "install_assets" }>;
+  readonly environment: Readonly<Partial<Record<string, string>>>;
+  readonly workingDirectory?: string;
+  readonly progress: (message: string) => void;
+  readonly confirm?: () => Promise<boolean>;
+}): Promise<CommandOutcome> {
+  const targetDirectory = resolveAssetInstallationTarget({
+    environment: input.environment,
+    ...(input.command.target === undefined ? {} : { override: input.command.target }),
+    ...(input.workingDirectory === undefined
+      ? {}
+      : { workingDirectory: input.workingDirectory }),
+  });
+  const plan = planAssetInstallation({
+    targetDirectory,
+    ...(input.command.sourceDirectory === undefined
+      ? {}
+      : { sourceDirectory: input.command.sourceDirectory }),
+  });
+  // The plan is shown before anything is asked, so the operator is agreeing to
+  // a stated size, origin and licence rather than to the word "yes".
+  input.progress(describeAssetInstallationPlan(plan));
+
+  const outcome = await runAssetInstallation({
+    targetDirectory,
+    ...(input.command.sourceDirectory === undefined
+      ? {}
+      : { sourceDirectory: input.command.sourceDirectory }),
+    progress: input.progress,
+    ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
+  });
+
+  switch (outcome.status) {
+    case "declined":
+      // Not a failure. The operator was asked and said no, and reporting that
+      // as an error would make a deliberate choice look like a broken install.
+      return ok("설치를 취소했습니다.");
+    case "already_installed":
+      return ok(
+        [
+          `이미 설치돼 있습니다: ${outcome.directory ?? targetDirectory}`,
+          "",
+          "다음: contextctl doctor",
+        ].join("\n"),
+      );
+    default:
+      return ok(
+        [
+          `설치를 마쳤습니다: ${outcome.directory ?? targetDirectory}`,
+          "",
+          "다음: contextctl doctor",
+        ].join("\n"),
+      );
+  }
+}
+
+/* ------------------------------------------------------------------ doctor */
+
+export async function runDoctor(input: {
+  readonly command: Extract<CliCommand, { kind: "doctor" }>;
+  readonly environment: Readonly<Partial<Record<string, string>>>;
+  readonly workingDirectory?: string;
+}): Promise<CommandOutcome> {
+  const report = await runDiagnosis({
+    environment: input.environment,
+    deep: input.command.deep,
+    ...(input.workingDirectory === undefined
+      ? {}
+      : { workingDirectory: input.workingDirectory }),
+  });
+
+  // Non-zero on any failure, so a script can gate on the diagnosis instead of
+  // parsing it. A `warn` keeps zero: it names something worth knowing, not
+  // something that stops the next command from working.
+  return {
+    stdout: renderDiagnosis(report),
+    stderr: [],
+    exitCode: report.healthy ? 0 : 1,
+  };
+}
+
+const DIAGNOSIS_MARKS: Readonly<Record<DiagnosisReport["steps"][number]["status"], string>> = {
+  ok: "[ok  ]",
+  warn: "[warn]",
+  fail: "[FAIL]",
+};
+
+/**
+ * The report as an operator reads it.
+ *
+ * A fixed-width mark rather than colour, for the reason `render.ts` gives about
+ * ANSI: the output is piped into files and pasted into issues, and escape
+ * sequences survive both as noise.
+ */
+function renderDiagnosis(report: DiagnosisReport): string {
+  const lines: string[] = [];
+  for (const step of report.steps) {
+    lines.push(`${DIAGNOSIS_MARKS[step.status]} ${step.name}`);
+    lines.push(`       ${step.detail}`);
+    if (step.remedy !== undefined) {
+      lines.push(`       → ${step.remedy}`);
+    }
+  }
+  lines.push("");
+  const failed = report.steps.filter((step) => step.status === "fail").length;
+  const warned = report.steps.filter((step) => step.status === "warn").length;
+  lines.push(
+    report.healthy
+      ? warned === 0
+        ? "점검을 모두 통과했습니다."
+        : `치명적인 문제는 없습니다. 확인할 항목 ${String(warned)}건.`
+      : `해결해야 할 문제 ${String(failed)}건. 위의 → 를 따르십시오.`,
+  );
+  return lines.join("\n");
 }
