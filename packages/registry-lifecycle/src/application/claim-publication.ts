@@ -5,7 +5,11 @@ import type {
 } from "@contextctl/contracts";
 
 import type { CardVersion } from "../domain/card-version.js";
-import { locateInChain, type ChainPosition } from "../domain/publication-chain.js";
+import {
+  locateInChain,
+  type ChainCursor,
+  type ChainPosition,
+} from "../domain/publication-chain.js";
 import {
   groundCardVersion,
   type GroundingFinding,
@@ -37,6 +41,18 @@ export type ClaimPublicationResult =
   | {
       readonly status: "claimed";
       readonly publicationId: PublicationId;
+      /**
+       * Where the Source's cursor belongs once these versions are stored.
+       *
+       * Returned rather than written here. The design commits Card changes and
+       * the cursor advance together; this function does not store Cards, so
+       * writing the cursor now would move it before the Cards exist. A crash in
+       * between would then leave the Publication consumed with no Card and no
+       * way back: redelivery answers `already_claimed`, and the Cards are gone
+       * for good. Handing the cursor to the caller that does the storing keeps
+       * the failure on the recoverable side — a retry re-produces the versions.
+       */
+      readonly cursor: ChainCursor;
       readonly cardVersions: readonly ClaimedCardVersion[];
     }
   /**
@@ -68,6 +84,12 @@ export type ClaimPublicationResult =
  * effect. Then the Publication has to follow this Source's cursor: notifications
  * arrive in whatever order the transport managed, and consuming a later one
  * first would build a Card on top of a change that was never read.
+ *
+ * Consumption is not recorded here. This function produces Card Versions and
+ * does not store them, so the caller that stores them is the one that may then
+ * mark the Publication consumed, passing back the `cursor` this result carries.
+ * Marking first would risk a Publication counted as consumed with no Card to
+ * show for it.
  *
  * Neither `producedAt` nor arrival order takes part in that decision — only
  * `previousPublicationId`. A retry can be produced after the Publication that
@@ -103,12 +125,12 @@ export async function claimPublication(
     );
   }
 
-  await ports.checkpoints.markProcessed({
-    sourceId: publication.sourceId,
+  return {
+    status: "claimed",
     publicationId,
-  });
-
-  return { status: "claimed", publicationId, cardVersions };
+    cursor: { sourceId: publication.sourceId, publicationId },
+    cardVersions,
+  };
 }
 
 /** The result for a position that must not be consumed, or nothing. */

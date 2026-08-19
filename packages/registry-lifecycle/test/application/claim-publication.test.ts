@@ -73,6 +73,7 @@ describe("claimPublication", () => {
     expect(result).toEqual({
       status: "claimed",
       publicationId: "pub_initial",
+      cursor: { sourceId: "src_payments", publicationId: "pub_initial" },
       cardVersions: [
         {
           version: {
@@ -111,7 +112,6 @@ describe("claimPublication", () => {
         },
       ],
     });
-    expect(ports.processedCalls).toEqual(["pub_initial"]);
   });
 
   it("keeps every published scope instead of silently dropping extras", async () => {
@@ -170,8 +170,10 @@ describe("claimPublication", () => {
       "meaning.description",
       "meaning.representativeQuestions",
     ]);
-    // A rejected version is still recorded, so the claim stays idempotent.
-    expect(ports.processedCalls).toEqual(["pub_initial"]);
+    // A rejected version is still returned for storing, and the cursor comes
+    // with it: grounding failure is a Card that must not be promoted, not a
+    // Publication to consume again.
+    expect(result.status).toBe("claimed");
   });
 
   it("is idempotent: redelivering the same publication id is a no-op", async () => {
@@ -179,9 +181,14 @@ describe("claimPublication", () => {
     const ports = createFakePorts([publication]);
 
     const first = await claimPublication(ports, publication.publicationId);
+    if (first.status !== "claimed") {
+      throw new Error("expected the publication to be claimed");
+    }
+    // The caller records consumption, so redelivery only becomes a no-op after
+    // the Cards it produced were stored.
+    await ports.checkpoints.markProcessed(first.cursor);
     const second = await claimPublication(ports, publication.publicationId);
 
-    expect(first.status).toBe("claimed");
     expect(second).toEqual({
       status: "already_claimed",
       publicationId: "pub_initial",
@@ -200,6 +207,21 @@ describe("claimPublication", () => {
 });
 
 describe("claimPublication chain order", () => {
+  /**
+   * Claims and then records consumption, the way the caller that stores Cards
+   * does. The two steps are separate on purpose — see the describe block below.
+   */
+  async function consume(
+    ports: ReturnType<typeof createFakePorts>,
+    publicationId: string,
+  ) {
+    const result = await claimPublication(ports, publicationId);
+    if (result.status === "claimed") {
+      await ports.checkpoints.markProcessed(result.cursor);
+    }
+    return result;
+  }
+
   /** The same Source's chain: second follows first. */
   function chain() {
     const first = createIngestionPublicationFixture("pub_first");
@@ -214,7 +236,7 @@ describe("claimPublication chain order", () => {
     const { first } = chain();
     const ports = createFakePorts([first]);
 
-    const result = await claimPublication(ports, "pub_first");
+    const result = await consume(ports, "pub_first");
 
     expect(result.status).toBe("claimed");
   });
@@ -223,8 +245,8 @@ describe("claimPublication chain order", () => {
     const { first, second } = chain();
     const ports = createFakePorts([first, second]);
 
-    await claimPublication(ports, "pub_first");
-    const result = await claimPublication(ports, "pub_second");
+    await consume(ports, "pub_first");
+    const result = await consume(ports, "pub_second");
 
     expect(result.status).toBe("claimed");
     expect(ports.processedCalls).toEqual(["pub_first", "pub_second"]);
@@ -236,7 +258,7 @@ describe("claimPublication chain order", () => {
     const { first, second } = chain();
     const ports = createFakePorts([first, second]);
 
-    const result = await claimPublication(ports, "pub_second");
+    const result = await consume(ports, "pub_second");
 
     expect(result).toEqual({
       status: "deferred",
@@ -252,9 +274,9 @@ describe("claimPublication chain order", () => {
     const { first, second } = chain();
     const ports = createFakePorts([first, second]);
 
-    await claimPublication(ports, "pub_second");
-    await claimPublication(ports, "pub_first");
-    const retried = await claimPublication(ports, "pub_second");
+    await consume(ports, "pub_second");
+    await consume(ports, "pub_first");
+    const retried = await consume(ports, "pub_second");
 
     expect(retried.status).toBe("claimed");
     expect(ports.processedCalls).toEqual(["pub_first", "pub_second"]);
@@ -271,8 +293,8 @@ describe("claimPublication chain order", () => {
     };
     const ports = createFakePorts([first, laterButUnchained]);
 
-    await claimPublication(ports, "pub_first");
-    const result = await claimPublication(ports, "pub_unchained");
+    await consume(ports, "pub_first");
+    const result = await consume(ports, "pub_unchained");
 
     expect(result.status).toBe("deferred");
   });
@@ -284,8 +306,8 @@ describe("claimPublication chain order", () => {
     const rival = createIngestionPublicationFixture("pub_rival");
     const ports = createFakePorts([first, rival]);
 
-    await claimPublication(ports, "pub_first");
-    const result = await claimPublication(ports, "pub_rival");
+    await consume(ports, "pub_first");
+    const result = await consume(ports, "pub_rival");
 
     expect(result.status).toBe("forked");
     expect(ports.processedCalls).toEqual(["pub_first"]);
@@ -295,8 +317,8 @@ describe("claimPublication chain order", () => {
     const { first } = chain();
     const ports = createFakePorts([first]);
 
-    await claimPublication(ports, "pub_first");
-    const again = await claimPublication(ports, "pub_first");
+    await consume(ports, "pub_first");
+    const again = await consume(ports, "pub_first");
 
     expect(again.status).toBe("already_claimed");
     expect(ports.processedCalls).toEqual(["pub_first"]);
@@ -311,9 +333,59 @@ describe("claimPublication chain order", () => {
     };
     const ports = createFakePorts([first, otherSource]);
 
-    await claimPublication(ports, "pub_first");
-    const result = await claimPublication(ports, otherSource.publicationId);
+    await consume(ports, "pub_first");
+    const result = await consume(ports, otherSource.publicationId);
 
     expect(result.status).toBe("claimed");
+  });
+});
+
+describe("claimPublication does not record consumption itself", () => {
+  // It produces Card Versions and does not store them. Recording consumption
+  // here would count a Publication as consumed while its Cards did not exist,
+  // and a crash in between is unrecoverable: redelivery answers already_claimed
+  // and the Cards are gone. The caller that stores them marks it instead.
+  it("leaves the claim record untouched and hands back the cursor", async () => {
+    const publication = createIngestionPublicationFixture("pub_first");
+    const ports = createFakePorts([publication]);
+
+    const result = await claimPublication(ports, "pub_first");
+
+    if (result.status !== "claimed") {
+      throw new Error("expected the publication to be claimed");
+    }
+    expect(result.cursor).toEqual({
+      sourceId: publication.sourceId,
+      publicationId: "pub_first",
+    });
+    expect(ports.processedCalls).toEqual([]);
+  });
+
+  it("re-produces the versions when consumption was never recorded", async () => {
+    // The failure direction this ordering chooses: a retry makes duplicate
+    // drafts an operator can see, rather than knowledge that silently vanished.
+    const publication = createIngestionPublicationFixture("pub_first");
+    const ports = createFakePorts([publication]);
+
+    const first = await claimPublication(ports, "pub_first");
+    const retried = await claimPublication(ports, "pub_first");
+
+    expect(first.status).toBe("claimed");
+    expect(retried.status).toBe("claimed");
+  });
+
+  it("stops re-producing once the caller records consumption", async () => {
+    const publication = createIngestionPublicationFixture("pub_first");
+    const ports = createFakePorts([publication]);
+
+    const claimed = await claimPublication(ports, "pub_first");
+    if (claimed.status !== "claimed") {
+      throw new Error("expected the publication to be claimed");
+    }
+    await ports.checkpoints.markProcessed(claimed.cursor);
+
+    expect((await claimPublication(ports, "pub_first")).status).toBe(
+      "already_claimed",
+    );
   });
 });

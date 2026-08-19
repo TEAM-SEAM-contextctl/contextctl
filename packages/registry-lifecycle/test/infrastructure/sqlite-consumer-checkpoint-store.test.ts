@@ -74,10 +74,16 @@ describe("SqliteConsumerCheckpointStore", () => {
     });
 
     const first = openRegistryDatabase(location);
+    const firstCheckpoints = new SqliteConsumerCheckpointStore(first, now);
     const claimed = await claimPublication(
-      ports(new SqliteConsumerCheckpointStore(first, now)),
+      ports(firstCheckpoints),
       publication.publicationId,
     );
+    // The storing caller records consumption, so this test plays that part: the
+    // durable record is what has to survive the restart, not the claim call.
+    if (claimed.status === "claimed") {
+      await firstCheckpoints.markProcessed(claimed.cursor);
+    }
     first.close();
 
     // A fresh process opens the same file and receives the notification again.
