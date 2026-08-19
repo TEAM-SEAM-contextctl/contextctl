@@ -1,63 +1,25 @@
-name: CI
+name: Document Retrieval Hosted Evaluation
 
 on:
+  workflow_dispatch:
   pull_request:
-  push:
-    branches:
-      - main
+    paths:
+      - ".github/workflows/document-retrieval-evaluation.yml"
+      - "apps/contextctl-daemon/src/cli/asset-installation.ts"
+      - "apps/contextctl-daemon/src/cli/asset-directory.ts"
+      - "packages/ingestion-indexing/src/infrastructure/local-embedding-asset-installation.ts"
+      - "packages/ingestion-indexing/src/infrastructure/transformers-js-local-embedding-adapter.ts"
+      - "packages/ingestion-indexing/test/document-retrieval-eval.test.ts"
+      - "packages/ingestion-indexing/test/fixtures/document-retrieval-eval.ts"
+      - "packages/ingestion-indexing/test/fixtures/document-retrieval-eval-v1/**"
+      - "package-lock.json"
+      - "package.json"
 
 permissions:
   contents: read
 
 jobs:
-  quality:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: test "$(node --version)" = "v24.18.0"
-      - run: test "$(npm --version)" = "11.16.0"
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-
-  qdrant-integration:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    services:
-      qdrant:
-        image: qdrant/qdrant@sha256:0fb8897412abc81d1c0430a899b9a81eb8328aa634e7242d1bc804c1fe8fe863 # v1.15.5
-        ports:
-          - 6333:6333
-    env:
-      CONTEXTCTL_QDRANT_URL: http://127.0.0.1:6333
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: test "$(node --version)" = "v24.18.0"
-      - run: test "$(npm --version)" = "11.16.0"
-      - run: npm ci
-      - name: Wait for Qdrant readiness
-        run: |
-          for attempt in {1..30}; do
-            if curl --fail --silent --show-error "${CONTEXTCTL_QDRANT_URL}/readyz"; then
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Qdrant did not become ready within 30 seconds" >&2
-          exit 1
-      - run: npm run test:integration:qdrant
-
-  granite-integration:
+  document-retrieval-hosted-evaluation:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -91,7 +53,17 @@ jobs:
           ')"
           test -n "${directory}"
           echo "directory=${directory}" >> "${GITHUB_OUTPUT}"
-      - name: Run Granite adapter integration
+      - name: Run hosted document retrieval evaluation
         env:
           CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
-        run: npm run test:integration:granite
+          CONTEXTCTL_EVAL_RESOURCE_GATE_MODE: hosted_observation
+          CONTEXTCTL_EVAL_RESULT_PATH: ${{ runner.temp }}/document-retrieval-eval.json
+        run: npm run test:eval:document-retrieval
+      - name: Upload hosted document retrieval result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: document-retrieval-hosted-eval-${{ github.sha }}
+          path: ${{ runner.temp }}/document-retrieval-eval.json
+          if-no-files-found: error
+          retention-days: 30
