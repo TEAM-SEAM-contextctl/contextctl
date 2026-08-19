@@ -32,7 +32,10 @@ describe("SqliteConsumerCheckpointStore", () => {
     );
 
     expect(await store.hasProcessed("pub_initial")).toBe(false);
-    await store.markProcessed("pub_initial");
+    await store.markProcessed({
+      sourceId: "src_payments",
+      publicationId: "pub_initial",
+    });
     expect(await store.hasProcessed("pub_initial")).toBe(true);
   });
 
@@ -42,10 +45,14 @@ describe("SqliteConsumerCheckpointStore", () => {
       now,
     );
 
-    await store.markProcessed("pub_initial");
-    await store.markProcessed("pub_initial");
+    const cursor = { sourceId: "src_payments", publicationId: "pub_initial" };
+    await store.markProcessed(cursor);
+    await store.markProcessed(cursor);
 
     expect(await store.hasProcessed("pub_initial")).toBe(true);
+    // The cursor is a single row per Source, so a repeat leaves one position
+    // rather than two rows claiming different places in the same chain.
+    expect(await store.listCursors()).toEqual([cursor]);
   });
 
   it("keeps consumption idempotent across a restart", async () => {
@@ -67,10 +74,16 @@ describe("SqliteConsumerCheckpointStore", () => {
     });
 
     const first = openRegistryDatabase(location);
+    const firstCheckpoints = new SqliteConsumerCheckpointStore(first, now);
     const claimed = await claimPublication(
-      ports(new SqliteConsumerCheckpointStore(first, now)),
+      ports(firstCheckpoints),
       publication.publicationId,
     );
+    // The storing caller records consumption, so this test plays that part: the
+    // durable record is what has to survive the restart, not the claim call.
+    if (claimed.status === "claimed") {
+      await firstCheckpoints.markProcessed(claimed.cursor);
+    }
     first.close();
 
     // A fresh process opens the same file and receives the notification again.

@@ -15,6 +15,7 @@ import {
   type ReachabilityReport,
   type ScopeReachabilityState,
 } from "../../domain/scope-reachability.js";
+import type { ConsumerCheckpointStore } from "../../ports/consumer-checkpoint-store.js";
 import type { ScopeReachabilityStore } from "../../ports/scope-reachability-store.js";
 
 /**
@@ -46,6 +47,8 @@ export type OperatorCommandResult =
 
 export interface OperatorCommandPorts extends CardDecisionPorts {
   readonly scopes: ScopeReachabilityStore;
+  /** Read for the reachability report's per-Source checkpoints. */
+  readonly checkpoints: ConsumerCheckpointStore;
 }
 
 const USAGE = [
@@ -232,7 +235,13 @@ function formatScopeList(
     `${matching.length} scope version(s) are ${state}`,
     ...matching.map((scope) => {
       const reason = scope.reason === undefined ? "" : ` — ${scope.reason}`;
-      return `  ${scope.reference.scopeId}@${scope.reference.scopeVersion} (${scope.publicationId})${reason}`;
+      // Both ids: the first says when the Scope appeared, the second which
+       // Publication last carried it. One of them alone reads as the whole story.
+      const carried =
+        scope.lastSeenPublicationId === scope.introducedByPublicationId
+          ? scope.introducedByPublicationId
+          : `${scope.introducedByPublicationId} → ${scope.lastSeenPublicationId}`;
+      return `  ${scope.reference.scopeId}@${scope.reference.scopeVersion} (${carried})${reason}`;
     }),
   ].join("\n");
 }

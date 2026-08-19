@@ -78,6 +78,28 @@ export type RegistryIntakeResult =
       readonly status: "claimed";
       readonly publicationId: string;
       readonly cardVersions: readonly IntakenCardVersion[];
+    }
+  /**
+   * Registry refused the Publication for now: its predecessor in the Source's
+   * chain has not been consumed. Nothing was written, so the notification is
+   * still work — reconciliation retries it once the missing one lands.
+   */
+  | {
+      readonly status: "deferred";
+      readonly publicationId: string;
+      readonly cardVersions: readonly IntakenCardVersion[];
+      readonly awaiting: string;
+    }
+  /**
+   * The Source's chain is not linear and Registry consumed nothing. Reported
+   * rather than retried: no ordering exists to retry into, and choosing one
+   * successor would drop what the other published.
+   */
+  | {
+      readonly status: "forked";
+      readonly publicationId: string;
+      readonly cardVersions: readonly IntakenCardVersion[];
+      readonly reason: string;
     };
 
 /** The Publication shape this file reads, derived so no contract import appears. */
@@ -102,14 +124,37 @@ export class RegistryIntake {
   /**
    * Consumes one Publication and persists a Card Version per Knowledge Unit.
    *
-   * Idempotent by way of `claimPublication`'s checkpoint: a redelivered
-   * `PublicationReady` answers `already_claimed` and writes nothing, so the
-   * append-only history cannot gain the same version twice.
+   * Idempotent by way of the claim record: a redelivered `PublicationReady`
+   * answers `already_claimed` and writes nothing, so the append-only history
+   * cannot gain the same version twice. The record is written here rather than
+   * inside the use case, after the Cards are stored — see the comment at that
+   * call.
+   *
+   * Registry may also refuse on chain order — `deferred` when a predecessor is
+   * missing, `forked` when the chain is not linear. Both are passed through with
+   * no Card written, because in both cases Registry committed nothing and this
+   * file has nothing to persist.
    */
   async claim(publicationId: string): Promise<RegistryIntakeResult> {
     const claimed = await claimPublication(this.#ports, publicationId);
     if (claimed.status === "already_claimed") {
       return { status: "already_claimed", publicationId, cardVersions: [] };
+    }
+    if (claimed.status === "deferred") {
+      return {
+        status: "deferred",
+        publicationId,
+        cardVersions: [],
+        awaiting: claimed.awaiting,
+      };
+    }
+    if (claimed.status === "forked") {
+      return {
+        status: "forked",
+        publicationId,
+        cardVersions: [],
+        reason: claimed.reason,
+      };
     }
 
     // Read after the claim rather than before: `claimPublication` already
@@ -139,6 +184,15 @@ export class RegistryIntake {
         findings,
       });
     }
+
+    // Marked consumed only now, with the cursor `claimPublication` handed back.
+    // Doing it before this loop would count the Publication as consumed while
+    // its Cards did not exist yet, and a crash in between would be unrecoverable
+    // — redelivery answers `already_claimed`. This order fails the other way: a
+    // crash here leaves the Cards stored and the Publication unconsumed, so a
+    // retry re-produces the same Card Versions and an operator sees duplicate
+    // drafts rather than silently missing knowledge.
+    await this.#ports.checkpoints.markProcessed(claimed.cursor);
 
     return { status: "claimed", publicationId, cardVersions: intaken };
   }

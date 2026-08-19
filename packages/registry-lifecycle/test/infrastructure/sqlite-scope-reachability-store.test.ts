@@ -17,6 +17,7 @@ import {
 import type { LifecycleEvent } from "../../src/domain/lifecycle-event.js";
 import { openRegistryDatabase } from "../../src/infrastructure/sqlite/registry-database.js";
 import { SqliteCardStore } from "../../src/infrastructure/sqlite/sqlite-card-store.js";
+import { SqliteConsumerCheckpointStore } from "../../src/infrastructure/sqlite/sqlite-consumer-checkpoint-store.js";
 import { SqliteScopeReachabilityStore } from "../../src/infrastructure/sqlite/sqlite-scope-reachability-store.js";
 import type { Clock } from "../../src/ports/clock.js";
 import { createDocumentCardVersion } from "../fixtures/card-version.fixture.js";
@@ -59,17 +60,22 @@ describe("SqliteScopeReachabilityStore", () => {
   let database: DatabaseSync;
   let cards: SqliteCardStore;
   let scopes: SqliteScopeReachabilityStore;
+  let checkpoints: SqliteConsumerCheckpointStore;
 
   beforeEach(() => {
     database = openRegistryDatabase(":memory:");
     cards = new SqliteCardStore(database);
     scopes = new SqliteScopeReachabilityStore(database);
+    checkpoints = new SqliteConsumerCheckpointStore(
+      database,
+      () => "2026-08-19T00:00:00.000Z",
+    );
   });
 
   it("reports a served Scope as reachable", async () => {
     await cards.saveCard(servingCard(), []);
 
-    const report = await buildReachabilityReport({ scopes, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
 
     expect(report.counts.reachable).toBe(1);
     expect(report.scopes[0]?.reference).toEqual({
@@ -88,7 +94,7 @@ describe("SqliteScopeReachabilityStore", () => {
 
     expect((await cards.listApprovedCards()).cards).toHaveLength(0);
 
-    const report = await buildReachabilityReport({ scopes, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
 
     expect(report.scopes).toHaveLength(1);
     expect(report.counts.orphaned).toBe(1);
@@ -101,7 +107,7 @@ describe("SqliteScopeReachabilityStore", () => {
       withdrawalEvent("문서가 정책 핸드북으로 대체됨"),
     ]);
 
-    const report = await buildReachabilityReport({ scopes, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
 
     expect(report.counts.intentionally_unexposed).toBe(1);
     expect(report.scopes[0]?.reason).toBe("문서가 정책 핸드북으로 대체됨");
@@ -135,7 +141,7 @@ describe("SqliteScopeReachabilityStore", () => {
       [],
     );
 
-    const report = await buildReachabilityReport({ scopes, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
 
     expect(report.counts.reachable).toBe(1);
     expect(report.counts.pending_approval).toBe(1);
@@ -161,7 +167,7 @@ describe("SqliteScopeReachabilityStore", () => {
     };
     await cards.saveCard(servingCard(twoScopes), []);
 
-    const report = await buildReachabilityReport({ scopes, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
 
     expect(report.scopes.map((scope) => scope.reference.scopeId).sort()).toEqual(
       ["scope_payment_failures", "scope_payments_table"],

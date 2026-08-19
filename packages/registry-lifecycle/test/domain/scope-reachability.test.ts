@@ -53,7 +53,8 @@ function carrier(overrides: Partial<ScopeCarrier> = {}): ScopeCarrier {
 function observe(overrides: Partial<ScopeObservation> = {}): ScopeObservation {
   return {
     reference,
-    publicationId: "pub_initial",
+    introducedByPublicationId: "pub_initial",
+    lastSeenPublicationId: "pub_initial",
     processed: true,
     carriers: [],
     decisions: [],
@@ -229,7 +230,8 @@ describe("judgeScopeReachability", () => {
     const newer = judgeScopeReachability(
       observe({
         reference: { scopeId: reference.scopeId, scopeVersion: "scpv_bbbb" },
-        publicationId: "pub_second",
+        introducedByPublicationId: "pub_second",
+        lastSeenPublicationId: "pub_second",
         carriers: [],
       }),
     );
@@ -273,5 +275,50 @@ describe("judgeScopeReachability", () => {
         }),
       ),
     ).toThrow(ScopeReachabilityInvariantError);
+  });
+
+  describe("an immutable Scope carried into a later Publication", () => {
+    // The same Scope version reappears unchanged when an edit elsewhere in the
+    // document republishes it. Treating that as new work would reset the clock on
+    // a Scope nothing happened to, and an operator watching for a stale
+    // pending_approval would see it restart every time the document was touched.
+    it("keeps stateSince when only the last seen Publication moved", () => {
+      const first = judgeScopeReachability(
+        observe({ carriers: [carrier({ validationState: "draft" })] }),
+      );
+      const carriedForward = judgeScopeReachability(
+        observe({
+          lastSeenPublicationId: "pub_second",
+          carriers: [carrier({ validationState: "draft" })],
+        }),
+      );
+
+      expect(carriedForward.stateSince).toBe(first.stateSince);
+      expect(carriedForward.state).toBe(first.state);
+    });
+
+    it("does not return a processed Scope to pending_registry", () => {
+      const carriedForward = judgeScopeReachability(
+        observe({
+          lastSeenPublicationId: "pub_second",
+          carriers: [carrier({ isCurrent: true })],
+        }),
+      );
+
+      expect(carriedForward.state).toBe("reachable");
+    });
+
+    it("reports both ids so provenance is not collapsed", () => {
+      const verdict = judgeScopeReachability(
+        observe({
+          introducedByPublicationId: "pub_first",
+          lastSeenPublicationId: "pub_third",
+          carriers: [carrier({ isCurrent: true })],
+        }),
+      );
+
+      expect(verdict.introducedByPublicationId).toBe("pub_first");
+      expect(verdict.lastSeenPublicationId).toBe("pub_third");
+    });
   });
 });

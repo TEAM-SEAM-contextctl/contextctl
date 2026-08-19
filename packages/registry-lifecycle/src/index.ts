@@ -28,6 +28,12 @@ export {
   type CardCatalogEntry,
 } from "./domain/card-catalog.js";
 export {
+  locateInChain,
+  type ChainCursor,
+  type ChainLink,
+  type ChainPosition,
+} from "./domain/publication-chain.js";
+export {
   collectScopeObservations,
   judgeScopeReachability,
   reachabilityGateViolations,
@@ -41,6 +47,7 @@ export {
   type ScopeReachability,
   type ScopeReachabilityState,
   type ScopeSighting,
+  type SourceCheckpoint,
 } from "./domain/scope-reachability.js";
 export {
   CardVersionInvariantError,
