@@ -12,6 +12,13 @@ import type {
 } from "@contextctl/contracts";
 
 /** Version-pinned reference to the Scope revision a Card Version was built from. */
+/**
+ * One parameter an HTTP Scope accepts. Re-exported rather than kept private:
+ * `HttpSourceScope.parameters` is part of the public read model, so a consumer
+ * has to be able to name its element type.
+ */
+export type { HttpParameterRef };
+
 export interface RetrievalScopeReference {
   readonly scopeId: PublicationScopeId;
   readonly scopeVersion: PublicationScopeVersion;

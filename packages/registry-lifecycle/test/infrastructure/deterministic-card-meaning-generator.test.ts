@@ -5,7 +5,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import { claimPublication } from "../../src/application/claim-publication.js";
-import { groundCardVersion } from "../../src/domain/evidence-grounding.js";
+import { groundCardVersion } from "../../src/domain/fact-grounding.js";
 import type { RetrievalScope } from "../../src/domain/retrieval-scope.js";
 import { DeterministicCardMeaningGenerator } from "../../src/infrastructure/deterministic-card-meaning-generator.js";
 import {

@@ -57,6 +57,7 @@ export type { CardLineage } from "./domain/lineage.js";
 export {
   translatePublishedScope,
   type DocumentIndexRef,
+  type HttpParameterRef,
   type HttpSourceScope,
   type ManagedDocumentScope,
   type ManagedDocumentSelection,
@@ -68,7 +69,7 @@ export {
   groundCardVersion,
   type GroundingFinding,
   type GroundingResult,
-} from "./domain/evidence-grounding.js";
+} from "./domain/fact-grounding.js";
 export {
   analyzeCardImpact,
   type CardImpact,

@@ -14,7 +14,7 @@ import type {
   CardPolicy,
   ContextCard,
 } from "./context-card.js";
-import type { GroundingFinding } from "./evidence-grounding.js";
+import type { GroundingFinding } from "./fact-grounding.js";
 import type { RetrievalScope } from "./retrieval-scope.js";
 
 /**
