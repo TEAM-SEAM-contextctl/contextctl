@@ -15,13 +15,18 @@ import { createFixtureContextApplication } from "../fixtures/context-application
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
 
 /**
- * Our own retrieval coordinates, exactly as the two managed document Cards in
- * `createAllOutcomesCardSet()` declare them.
+ * Physical retrieval coordinates in the shape our own infrastructure would use
+ * for the two managed documents in `createAllOutcomesCardSet()`.
  *
- * Both are named here so every exclusion check below can be paired with a
- * positive assertion that the fixture carries the value at all. The `failed`
- * Card's binding is included on purpose: its guide is serialized like any
- * other, and nothing about failing exempts it from the field ban.
+ * They are literals, not values read off the fixture: the contract dropped the
+ * physical binding, so a Card has nowhere to declare a connector id or an
+ * access handle and there is no longer a fixture value to pair an exclusion
+ * with. The exclusions below therefore assert something broader than they used
+ * to — that no coordinate of this shape appears in a resolution from any
+ * source, including one an adapter or a projection reintroduced downstream of
+ * the catalog. The `failed` document's pair is kept for the same reason it was
+ * added: its guide is serialized like any other, and nothing about failing
+ * exempts it from the ban.
  */
 const FORBIDDEN_VALUES = {
   fulfilledConnectorId: "vector.local",
@@ -85,22 +90,27 @@ describe("ContextResolution serialization", () => {
     wire = JSON.stringify(resolution);
   });
 
-  it("starts from a card set that really carries the forbidden values", () => {
-    // The anti-void half of every exclusion below: without this, they would all
-    // pass against a fixture that never held these values at all.
-    const bindings = createAllOutcomesCardSet().flatMap((card) =>
+  it("starts from a card set that carries no physical binding to leak", () => {
+    // This was the anti-void half of every exclusion below, reading the two
+    // bindings off the fixture to prove there was something worth excluding.
+    // The fixture cannot carry them any more, so the guard inverts and covers
+    // more: every managed document entry in the catalog is exactly the four
+    // logical fields, checked as a whole set rather than field by field, so a
+    // physical field reintroduced on the read model fails here — at the source
+    // — instead of travelling to the serializer and depending on a projection
+    // to drop it. The exclusions further down then hold whatever the layers in
+    // between do, which is the property those checks were always after.
+    const documentIndexKeys = createAllOutcomesCardSet().flatMap((card) =>
       card.scopes.flatMap((scope) =>
         scope.kind === "managed_document"
-          ? [scope.documentIndex.connectorId, scope.documentIndex.accessHandle]
+          ? [Object.keys(scope.documentIndex).sort()]
           : [],
       ),
     );
 
-    expect(bindings).toEqual([
-      FORBIDDEN_VALUES.fulfilledConnectorId,
-      FORBIDDEN_VALUES.fulfilledAccessHandle,
-      FORBIDDEN_VALUES.failedConnectorId,
-      FORBIDDEN_VALUES.failedAccessHandle,
+    expect(documentIndexKeys).toEqual([
+      ["documentId", "documentIndexId", "indexVersion", "sourceId"],
+      ["documentId", "documentIndexId", "indexVersion", "sourceId"],
     ]);
   });
 

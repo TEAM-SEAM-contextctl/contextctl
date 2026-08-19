@@ -30,19 +30,31 @@ export interface ApprovedScopeReference {
 }
 
 /**
- * Locates a published document index.
+ * Locates a published document index, logically and only logically.
  *
- * `connectorId` and `accessHandle` are opaque here exactly as they are
- * upstream: this domain passes them to a retriever and never parses, resolves,
- * or interprets them.
+ * There is no `connectorId` and no `accessHandle`. They were here once, opaque
+ * and passed straight through to a retriever, and every layer below this one
+ * then had to remember not to project them — ADR 0006 records the four fields
+ * excluded from the public guide, and the exclusion was a rule someone had to
+ * keep applying. It is now a property of the type: a value this model never
+ * receives cannot be leaked by a later edit, serialized into a response, or
+ * embedded into a Card vector.
+ *
+ * Nothing downstream loses anything by it. A managed read is planned from a
+ * Scope reference alone (`selection-plan.ts`), and the executor resolves the
+ * physical binding from Indexing's own durable catalog under its own authority
+ * — which is where that decision belonged in the first place, since choosing
+ * which store is read and under whose isolation is not a judgement this domain
+ * is in any position to make.
+ *
+ * The four that remain are what makes a citation checkable against the
+ * registry, the same standard ADR 0001 holds SQL and HTTP coordinates to.
  */
 export interface ApprovedDocumentIndexRef {
   readonly documentIndexId: string;
   readonly sourceId: string;
   readonly documentId: string;
   readonly indexVersion: string;
-  readonly connectorId: string;
-  readonly accessHandle: string;
 }
 
 /** How much of an indexed document the Scope exposes. */

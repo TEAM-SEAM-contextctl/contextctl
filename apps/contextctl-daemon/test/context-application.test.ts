@@ -46,8 +46,6 @@ function documentCard(overrides: Partial<ApprovedCard> = {}): ApprovedCard {
           sourceId: "src_policy_docs",
           documentId: "doc_refund_policy",
           indexVersion: "idxv_0001",
-          connectorId: "vector.local",
-          accessHandle: "documents/policies/indexes/refund",
         },
         selection: { kind: "document" },
       },
@@ -224,6 +222,13 @@ describe("DaemonContextApplication", () => {
     // Translation is not the place to recover missing information: the search
     // resolves the binding itself under its own authority, and a command
     // carrying one would mean this side chose which store was read.
+    //
+    // The key names still matter even though `ApprovedDocumentIndexRef` no
+    // longer carries the physical pair — the type change closes one route to
+    // the wire, and this closes the rest, including anything the daemon could
+    // synthesize on its own. The two literal values are kept alongside them so
+    // that a fixture reintroducing the pair is caught here and not only by the
+    // type checker.
     const wire = JSON.stringify(search.commands[0]?.targets);
     for (const forbidden of [
       "connectorId",

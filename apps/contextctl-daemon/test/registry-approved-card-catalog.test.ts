@@ -191,6 +191,11 @@ describe("RegistryApprovedCardCatalog", () => {
 
     const approved = await catalog.listApprovedCards();
 
+    // `documentScope` above hands the adapter a `connectorId` and an
+    // `accessHandle`; the expectation below names neither. That contrast is the
+    // assertion: this file is the one place where both halves are visible at
+    // once, so it is where the drop is provable rather than assumed. `toEqual`
+    // is exact, so either field reappearing in the output fails here.
     expect(approved[0]?.scopes).toEqual([
       {
         kind: "managed_document",
@@ -203,8 +208,6 @@ describe("RegistryApprovedCardCatalog", () => {
           sourceId: "src_payments",
           documentId: "doc_payments",
           indexVersion: "idxv_aaaa",
-          connectorId: "vector.local",
-          accessHandle: "documents/payments/indexes/aaaa",
         },
         selection: {
           kind: "semantic_units",
@@ -278,6 +281,27 @@ describe("RegistryApprovedCardCatalog", () => {
     expect(approved[0]?.scopes).not.toBe(entry.scopes);
     expect(approved[0]?.scopes[0]).not.toBe(entry.scopes[0]);
     // The copies still have to be faithful, or independence would be worthless.
-    expect(approved[0]?.scopes).toEqual(entry.scopes);
+    // `entry.scopes` can no longer be the expectation wholesale: the managed
+    // document Scope is the one shape the adapter narrows, so it is compared
+    // against the narrowed form field for field instead of being skipped. The
+    // sql Scope round-trips untouched and is still compared to the input.
+    expect(approved[0]?.scopes[0]).toEqual({
+      kind: "managed_document",
+      reference: {
+        scopeId: "scope_payment_failures",
+        scopeVersion: "scpv_aaaa",
+      },
+      documentIndex: {
+        documentIndexId: "didx_payments",
+        sourceId: "src_payments",
+        documentId: "doc_payments",
+        indexVersion: "idxv_aaaa",
+      },
+      selection: {
+        kind: "semantic_units",
+        semanticUnitIds: ["unit_payment_failures"],
+      },
+    });
+    expect(approved[0]?.scopes[1]).toEqual(sqlScope);
   });
 });

@@ -19,11 +19,17 @@ import { createFixtureContextApplication } from "../fixtures/context-application
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
 
 /**
- * The physical binding the refund policy Card's Scope carries.
+ * A physical binding in the shape our infrastructure would use for the refund
+ * policy document.
  *
- * Named here so the leak tests can assert on the actual values rather than on
- * field names alone: a surface that renamed the field but still shipped the
- * value would pass a name-only check.
+ * No Scope carries these any more — `ApprovedDocumentIndexRef` has no field for
+ * them since the contract dropped the physical binding — so they are literals
+ * rather than values read off the fixture. The leak tests are the better for
+ * it: they no longer ask whether one particular string survived the pipeline
+ * but whether anything of this shape appears in a response at all, which is
+ * what a reintroduced connector handle would have to look like to be usable.
+ * Values are asserted alongside field names because a surface that renamed the
+ * field and shipped the binding anyway would pass a name-only check.
  */
 const DOCUMENT_CONNECTOR_ID = "vector.local";
 const DOCUMENT_ACCESS_HANDLE = "documents/policies/indexes/refund";
@@ -175,19 +181,27 @@ describe("createHttpQueryHandler", () => {
   /**
    * The premise the two leak tests below rest on.
    *
-   * Asserted separately and first: if the fixture ever stopped carrying a
-   * connector id and an access handle, "the response does not contain them"
-   * would still pass while proving nothing at all.
+   * It used to assert that the fixture really carried a connector id and an
+   * access handle, on the grounds that "the response does not contain them"
+   * proves nothing over a Card that never held them. The premise is now the
+   * reverse and holds more: the catalog entry the handler selects from carries
+   * no physical binding in the first place, at runtime and not merely in the
+   * type, so the exclusions below are guaranteed by the input rather than by
+   * every layer in between remembering to drop a field.
    */
-  it("selects over a Card that really carries a physical binding", () => {
+  it("selects over a Card that carries no physical binding at all", () => {
     const [scope] = createRefundPolicyCard().scopes;
 
     expect(scope?.kind).toBe("managed_document");
     if (scope?.kind !== "managed_document") {
       throw new Error("expected the refund policy Scope to be a document");
     }
-    expect(scope.documentIndex.connectorId).toBe(DOCUMENT_CONNECTOR_ID);
-    expect(scope.documentIndex.accessHandle).toBe(DOCUMENT_ACCESS_HANDLE);
+    expect(Object.keys(scope.documentIndex).sort()).toEqual([
+      "documentId",
+      "documentIndexId",
+      "indexVersion",
+      "sourceId",
+    ]);
   });
 
   it("publishes no physical retrieval coordinate on the one route it serves", async () => {

@@ -22,9 +22,16 @@ import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.j
 const CONTROL_PLANE_WORDS = ["approve", "reject", "rollback", "sync", "edit"];
 
 /**
- * Our own infrastructure coordinates on the refund Card's document index. They
- * are what `ManagedDocumentGuide` deliberately omits, so they are named here as
- * literals and asserted absent from the wire below.
+ * Infrastructure coordinates in the shape our own store would use for the
+ * refund document.
+ *
+ * No document index carries them any more: the contract dropped the physical
+ * binding, so `ApprovedDocumentIndexRef` has nowhere to put a connector id or
+ * an access handle and `ManagedDocumentGuide` omits what was never there. They
+ * stay named here as literals because the wire check they feed is worth more
+ * this way — it asks whether a coordinate of this shape appears in a response
+ * at all, rather than whether one specific fixture value survived, and any
+ * reintroduced binding would have to look like this to be usable.
  */
 const INDEX_CONNECTOR_ID = "vector.local";
 const INDEX_ACCESS_HANDLE = "documents/policies/indexes/refund";
@@ -249,17 +256,26 @@ describe("createMcpQueryServer", () => {
     expect(table.guide.kind).toBe("sql");
   });
 
-  it("carries our own index coordinates on the fixture Card it must never publish", () => {
+  it("holds no index coordinates on the fixture Card, not even to omit later", () => {
     const [scope] = createRefundPolicyCard().scopes;
 
-    // The anti-void half of the leak test below: without this, that test would
-    // still pass against a fixture that never held these values at all.
+    // This used to be the anti-void half of the leak test below, asserting the
+    // fixture really held the values that test says never cross the wire. The
+    // Card cannot hold them any more, so the premise inverts and strengthens:
+    // the document index a selection is planned from is exactly four logical
+    // fields, checked as a whole set rather than field by field so that a new
+    // physical field added later fails here instead of quietly riding along to
+    // the serializer and relying on a projection to drop it.
     expect(scope?.kind).toBe("managed_document");
     if (scope?.kind !== "managed_document") {
       throw new Error("the refund policy Card must declare a managed document Scope");
     }
-    expect(scope.documentIndex.connectorId).toBe(INDEX_CONNECTOR_ID);
-    expect(scope.documentIndex.accessHandle).toBe(INDEX_ACCESS_HANDLE);
+    expect(Object.keys(scope.documentIndex).sort()).toEqual([
+      "documentId",
+      "documentIndexId",
+      "indexVersion",
+      "sourceId",
+    ]);
   });
 
   it("never serializes our infrastructure coordinates, by name or by value", async () => {
