@@ -19,6 +19,7 @@ import {
   runCardsList,
   runDoctor,
   runInstallAssets,
+  runPaths,
   runIngest,
   runQuery,
   runSourceAdd,
@@ -122,6 +123,12 @@ export async function runCli(input: {
           ? { confirm: () => promptForConsent(input.stderr) }
           : {}),
       }),
+    );
+  }
+  if (command.kind === "paths") {
+    return emit(
+      input,
+      await runPaths({ environment: input.environment, workingDirectory }),
     );
   }
   if (command.kind === "doctor") {

@@ -15,6 +15,7 @@ import {
   runAssetInstallation,
 } from "./asset-installation.js";
 import { runDiagnosis, type DiagnosisReport } from "./doctor.js";
+import { buildPathsReport, renderPathsReport } from "./paths-report.js";
 import {
   renderCardListings,
   renderResolution,
@@ -262,11 +263,34 @@ export async function runCardsApprove(
   command: Extract<CliCommand, { kind: "cards_approve" }>,
 ): Promise<CommandOutcome> {
   const decidedBy = command.by ?? currentOperator();
-  const versionId = command.versionId ?? (await latestPendingVersionId(cli, command.cardId));
+  let versionId = command.versionId;
   if (versionId === undefined) {
-    return failed(
-      `Card ${command.cardId} 에 승인할 수 있는 버전이 없다. contextctl cards list 로 확인하라.`,
-    );
+    const target = await resolveApprovalTarget(cli, command.cardId);
+    switch (target.kind) {
+      case "version":
+        versionId = target.versionId;
+        break;
+      case "already_current":
+        // Reported as success, because it is one. The Card an operator asked to
+        // approve is the Card that is serving, and exiting non-zero here would
+        // make a re-run of a finished step look like a broken install.
+        return ok(
+          [
+            `Card ${command.cardId} 는 이미 승인되어 있습니다.`,
+            `  현재 승인 버전: ${target.currentVersionId}`,
+            "",
+            '다음: contextctl query "<질문>"',
+          ].join("\n"),
+        );
+      case "card_missing":
+        return failed(
+          `Card ${command.cardId} 를 찾을 수 없습니다. contextctl cards list 로 확인하세요.`,
+        );
+      default:
+        return failed(
+          `Card ${command.cardId} 에 버전이 하나도 없습니다. contextctl ingest 를 먼저 실행하세요.`,
+        );
+    }
   }
 
   const result = await runOperatorCommand(
@@ -293,16 +317,43 @@ export async function runCardsApprove(
   return failed(`${result.status}: ${result.output}`);
 }
 
-/** The newest version that is not already current, by append order. */
-async function latestPendingVersionId(
+/**
+ * Which version `approve` should promote, or why there is none.
+ *
+ * Four situations used to collapse into one `undefined` and one sentence about
+ * having nothing to approve, and the most common of them is not a failure at
+ * all: running `approve` twice on a Card that is already serving. The operator
+ * reads "no version can be approved" and concludes the Card is broken.
+ *
+ * The distinction is read off the Card rather than guessed. `currentVersionId`
+ * is the version being served, so a Card with no pending versions and a current
+ * one is approved, and a Card with no versions at all never had one.
+ */
+type ApprovalTarget =
+  | { readonly kind: "version"; readonly versionId: string }
+  | { readonly kind: "card_missing" }
+  | { readonly kind: "no_versions" }
+  | { readonly kind: "already_current"; readonly currentVersionId: string };
+
+async function resolveApprovalTarget(
   cli: CliRuntime,
   cardId: string,
-): Promise<string | undefined> {
+): Promise<ApprovalTarget> {
   const card = await cli.runtime.cards.findCard(cardId);
   if (card === undefined) {
-    return undefined;
+    return { kind: "card_missing" };
   }
-  return pendingVersionIdsOf(card).at(-1);
+  // Newest first by append order: the latest version is the one an operator
+  // means when they name no version at all.
+  const pending = pendingVersionIdsOf(card).at(-1);
+  if (pending !== undefined) {
+    return { kind: "version", versionId: pending };
+  }
+  const current = card.versions.currentVersionId;
+  if (current !== undefined) {
+    return { kind: "already_current", currentVersionId: current };
+  }
+  return { kind: "no_versions" };
 }
 
 /**
@@ -485,4 +536,26 @@ function renderDiagnosis(report: DiagnosisReport): string {
       : `해결해야 할 문제 ${String(failed)}건. 위의 → 를 따르십시오.`,
   );
   return lines.join("\n");
+}
+
+
+/* ------------------------------------------------------------------- paths */
+
+/**
+ * Reports where everything lives. Removes nothing.
+ *
+ * Runs without a runtime for the same reason `doctor` does: an operator asking
+ * where the files are is often asking because something will not start.
+ */
+export async function runPaths(input: {
+  readonly environment: Readonly<Partial<Record<string, string>>>;
+  readonly workingDirectory?: string;
+}): Promise<CommandOutcome> {
+  const report = await buildPathsReport({
+    environment: input.environment,
+    ...(input.workingDirectory === undefined
+      ? {}
+      : { workingDirectory: input.workingDirectory }),
+  });
+  return ok(renderPathsReport(report));
 }

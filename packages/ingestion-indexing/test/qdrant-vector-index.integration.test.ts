@@ -73,9 +73,29 @@ integration("QdrantVectorIndexAdapter integration", () => {
     ).toEqual([
       {
         recordId: payments.recordId,
+        // Required by payload schema v2, and required here for the reason the
+        // schema requires it: the stored text is what a reindex copies forward
+        // instead of embedding again, so a record that came back without it
+        // would silently lose the Chunk's text on the next publication.
+        retrievalText: payments.retrievalText,
         metadata: payments.metadata,
       },
     ]);
+    // Byte-for-byte, not merely present. The digest in the metadata is taken
+    // over exactly these bytes, so text that survived the round trip in a
+    // different encoding would still satisfy a looser check and would then fail
+    // verification somewhere with no reference to this store.
+    const [storedPayments] = await adapter.listVersionRecords({
+      accessHandle: prepared.accessHandle,
+      documentIndexId: "didx_payments",
+      indexVersion: "idxv_aaaa",
+    });
+    expect(Buffer.from(storedPayments?.retrievalText ?? "", "utf8")).toEqual(
+      Buffer.from(payments.retrievalText, "utf8"),
+    );
+    expect(storedPayments?.metadata.contentDigest).toBe(
+      sha256Digest(payments.retrievalText),
+    );
 
     await adapter.retainVersion({
       accessHandle: prepared.accessHandle,
