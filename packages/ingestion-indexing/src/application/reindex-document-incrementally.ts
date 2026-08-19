@@ -14,8 +14,8 @@ import type { ManagedChunk } from "../domain/document-model.js";
 import { embeddingProfilesMatch } from "../domain/embedding-profile.js";
 import { createDocumentIndexId } from "../domain/index-manifest.js";
 import type {
-  IndexPublicationStoreV2 as IndexPublicationStore,
-  PublishedIndexVersionV2 as PublishedIndexVersion,
+  IndexPublicationStore,
+  PublishedIndexVersion,
 } from "../ports/index-publication-store.js";
 import {
   MAX_VECTOR_VECTOR_READ,

@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { expirationAfter } from "../domain/index-staging-attempt.js";
-import type {
-  IndexPublicationStoreV2 as IndexPublicationStore,
-} from "../ports/index-publication-store.js";
+import type { IndexPublicationStore } from "../ports/index-publication-store.js";
 import type {
   IndexStagingAttempt,
   IndexStagingAttemptStore,

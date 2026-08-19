@@ -1,4 +1,4 @@
-import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@contextctl/contracts";
+import type { PublishedSourceCoordinate } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 import { groundCardVersion } from "../../src/domain/fact-grounding.js";

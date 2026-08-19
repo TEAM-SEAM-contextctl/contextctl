@@ -1,5 +1,5 @@
 import type {
-  IngestionPublicationV2 as IngestionPublication,
+  IngestionPublication,
   PublicationId,
 } from "@contextctl/contracts";
 

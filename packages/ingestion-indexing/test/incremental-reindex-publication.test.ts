@@ -12,7 +12,7 @@ import {
   EmbeddingProviderFault,
   generateManagedChunks,
   IncrementalDocumentReindexer,
-  InMemoryIndexPublicationStoreV2,
+  InMemoryIndexPublicationStore,
   InMemoryIndexStagingAttemptStore,
   InMemoryVectorIndexAdapter,
   MarkdownCapture,
@@ -396,7 +396,7 @@ describe("incremental reindex publication", () => {
 interface Harness {
   readonly provider: CountingEmbeddingProvider;
   readonly vectorIndex: FaultyVectorIndex;
-  readonly publications: InMemoryIndexPublicationStoreV2;
+  readonly publications: InMemoryIndexPublicationStore;
   reindex(
     input: Pick<ReindexDocumentCommand, "previous" | "current">,
   ): ReturnType<IncrementalDocumentReindexer["reindex"]>;
@@ -405,7 +405,7 @@ interface Harness {
 function createHarness(): Harness {
   const provider = new CountingEmbeddingProvider();
   const vectorIndex = new FaultyVectorIndex(new InMemoryVectorIndexAdapter());
-  const publications = new InMemoryIndexPublicationStoreV2();
+  const publications = new InMemoryIndexPublicationStore();
   const reindexer = new IncrementalDocumentReindexer({
     vectorIndex,
     publications,

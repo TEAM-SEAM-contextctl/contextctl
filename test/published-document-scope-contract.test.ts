@@ -2,10 +2,10 @@ import { readFile } from "node:fs/promises";
 
 import {
   groupPublishedSqlColumns,
-  PublishedDocumentScopeV2Schema as PublishedDocumentScopeSchema,
-  PublishedHttpScopeV2Schema,
-  PublishedSqlScopeV2Schema,
-  type PublishedDocumentScopeV2 as PublishedDocumentScope,
+  PublishedDocumentScopeSchema,
+  PublishedHttpScopeSchema,
+  PublishedSqlScopeSchema,
+  type PublishedDocumentScope,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -82,12 +82,12 @@ describe("Published document Scope contract fixture", () => {
       table: "orders",
       columns: ["id"],
     };
-    expect(PublishedSqlScopeV2Schema.parse(base).schema).toBe("billing");
+    expect(PublishedSqlScopeSchema.parse(base).schema).toBe("billing");
     expect(() =>
-      PublishedSqlScopeV2Schema.parse({ ...base, schema: undefined }),
+      PublishedSqlScopeSchema.parse({ ...base, schema: undefined }),
     ).toThrow();
     expect(() =>
-      PublishedSqlScopeV2Schema.parse({
+      PublishedSqlScopeSchema.parse({
         ...base,
         columns: Array.from(
           { length: 257 },
@@ -118,15 +118,15 @@ describe("Published document Scope contract fixture", () => {
         { location: "path" as const, name: "orderId", required: true },
       ],
     };
-    expect(PublishedHttpScopeV2Schema.parse(base).method).toBe("GET");
+    expect(PublishedHttpScopeSchema.parse(base).method).toBe("GET");
     expect(() =>
-      PublishedHttpScopeV2Schema.parse({ ...base, method: "POST" }),
+      PublishedHttpScopeSchema.parse({ ...base, method: "POST" }),
     ).toThrow();
     expect(() =>
-      PublishedHttpScopeV2Schema.parse({ ...base, parameters: [] }),
+      PublishedHttpScopeSchema.parse({ ...base, parameters: [] }),
     ).toThrow();
     expect(() =>
-      PublishedHttpScopeV2Schema.parse({
+      PublishedHttpScopeSchema.parse({
         ...base,
         requiredHeaders: ["authorization"],
       }),

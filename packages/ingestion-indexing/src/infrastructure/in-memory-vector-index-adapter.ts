@@ -18,7 +18,7 @@ import {
   MAX_VECTOR_VECTOR_READ,
   VectorIndexFault,
   type PreparedVectorIndex,
-  type VectorIndexCompatibilityInput as VectorIndexCompatibility,
+  type VectorIndexCompatibility,
   type VectorIndexPort,
   type VectorIndexRetentionLease,
   type VectorIndexScope,
@@ -33,8 +33,7 @@ interface MemoryCollection {
   readonly leases: Map<string, VectorIndexRetentionLease>;
 }
 
-const LEGACY_STATE_NAMESPACE_ID = "legacy-v1";
-const LEGACY_OPERATION_SIGNAL = new AbortController().signal;
+const DEFAULT_OPERATION_SIGNAL = new AbortController().signal;
 
 export class InMemoryVectorIndexAdapter implements VectorIndexPort {
   readonly #collections = new Map<string, MemoryCollection>();
@@ -75,8 +74,8 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
         input.compatibility.embeddingProfile,
       );
       if (
-        effectiveStateNamespace(collection.compatibility) !==
-          effectiveStateNamespace(input.compatibility) ||
+        collection.compatibility.stateNamespaceId !==
+          input.compatibility.stateNamespaceId ||
         collection.compatibility.securityDomain !==
           input.compatibility.securityDomain ||
         collection.compatibility.payloadSchemaVersion !==
@@ -104,7 +103,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
         input.records.some(
           (record) =>
             record.metadata.stateNamespaceId !==
-              effectiveStateNamespace(collection.compatibility) ||
+              collection.compatibility.stateNamespaceId ||
             record.metadata.securityDomain !==
               collection.compatibility.securityDomain,
         )
@@ -270,7 +269,7 @@ export class InMemoryVectorIndexAdapter implements VectorIndexPort {
 function compatibilityHandle(compatibility: VectorIndexCompatibility): string {
   const digest = createHash("sha256")
     .update(canonicalJson({
-      stateNamespaceId: effectiveStateNamespace(compatibility),
+      stateNamespaceId: compatibility.stateNamespaceId,
       securityDomain: compatibility.securityDomain,
       profile: compatibility.embeddingProfile,
       payloadSchemaVersion: compatibility.payloadSchemaVersion,
@@ -283,18 +282,12 @@ function compatibilityHandle(compatibility: VectorIndexCompatibility): string {
 function assertCompatibility(compatibility: VectorIndexCompatibility): void {
   assertValidEmbeddingProfile(compatibility.embeddingProfile);
   if (
-    effectiveStateNamespace(compatibility).trim() === "" ||
+    compatibility.stateNamespaceId.trim() === "" ||
     compatibility.securityDomain.trim() === "" ||
     compatibility.payloadSchemaVersion !== 2
   ) {
     throw new VectorIndexFault("invalid_request", false);
   }
-}
-
-function effectiveStateNamespace(
-  compatibility: VectorIndexCompatibility,
-): string {
-  return compatibility.stateNamespaceId ?? LEGACY_STATE_NAMESPACE_ID;
 }
 
 function assertSameProfile(left: EmbeddingProfile, right: EmbeddingProfile): void {
@@ -358,7 +351,7 @@ function similarity(
 }
 
 function neverAbortedSignal(): AbortSignal {
-  return LEGACY_OPERATION_SIGNAL;
+  return DEFAULT_OPERATION_SIGNAL;
 }
 
 function operationSignal(signal: AbortSignal | undefined): AbortSignal {

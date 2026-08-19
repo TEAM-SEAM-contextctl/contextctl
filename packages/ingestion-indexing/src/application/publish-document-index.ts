@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { PublishedDocumentScopeV2 as PublishedDocumentScope } from "@contextctl/contracts";
+import type { PublishedDocumentScope } from "@contextctl/contracts";
 
 import type { ChunkEmbedding } from "./embed-managed-chunks.js";
 import {
@@ -33,17 +33,17 @@ import { canonicalJson } from "../domain/revision-identity.js";
 import { createVectorRecordId } from "../domain/vector-index.js";
 import {
   IndexPublicationStoreConflict,
-  type IndexPublicationStoreV2 as IndexPublicationStore,
-  type PublishedIndexVersionV2 as PublishedIndexVersion,
+  type IndexPublicationStore,
+  type PublishedIndexVersion,
 } from "../ports/index-publication-store.js";
 import type { IndexStagingAttemptStore } from "../ports/index-staging-attempt.js";
 import type {
-  VectorIndexCompatibilityV2 as VectorIndexCompatibility,
+  VectorIndexCompatibility,
   VectorIndexPort,
   VectorIndexStoredRecord,
 } from "../ports/vector-index.js";
 
-const LEGACY_PUBLICATION_SIGNAL = new AbortController().signal;
+const DEFAULT_PUBLICATION_SIGNAL = new AbortController().signal;
 
 export interface PublishDocumentIndexCommand {
   readonly stateNamespaceId: string;
@@ -129,7 +129,7 @@ export class DocumentIndexPublisher {
   async publish(
     command: PublishDocumentIndexCommand,
   ): Promise<PublishedIndexVersion> {
-    const signal = command.signal ?? LEGACY_PUBLICATION_SIGNAL;
+    const signal = command.signal ?? DEFAULT_PUBLICATION_SIGNAL;
     signal.throwIfAborted();
     const prepared = preparePublication(command);
     const existing = await this.#publications.findVersion({
@@ -286,7 +286,7 @@ export class DocumentIndexPublisher {
         await this.#vectorIndex.releaseRetentionLease({
           accessHandle: vectorTarget.accessHandle,
           leaseId,
-          signal: LEGACY_PUBLICATION_SIGNAL,
+          signal: DEFAULT_PUBLICATION_SIGNAL,
         });
       } catch {
         // A bounded lease expires without weakening the durable Catalog guard.

@@ -3,16 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   DocumentIndexPublisher,
   FailedIndexStagingCleanup,
-  InMemoryIndexPublicationStoreV2,
+  InMemoryIndexPublicationStore,
   InMemoryIndexStagingAttemptStore,
   InMemoryVectorIndexAdapter,
   StaticVectorIndexConnectorRegistry,
   computeRecordSetDigest,
   createVectorRecordId,
   type EmbeddingProfile,
-  type IndexPublicationStoreV2,
+  type IndexPublicationStore,
   type IndexStagingAttemptStore,
-  type PublishedIndexVersionV2,
+  type PublishedIndexVersion,
   type PublishDocumentIndexCommand,
   type VectorIndexPort,
   type VectorIndexRecord,
@@ -34,7 +34,7 @@ describe("FailedIndexStagingCleanup", () => {
   it("reclaims a failed publication only after the retention grace period", async () => {
     const delegate = new InMemoryVectorIndexAdapter();
     const vectorIndex = new CapturingVectorIndex(delegate);
-    const publications = new InMemoryIndexPublicationStoreV2();
+    const publications = new InMemoryIndexPublicationStore();
     const attempts = new InMemoryIndexStagingAttemptStore();
     const publisher = new DocumentIndexPublisher({
       vectorIndex,
@@ -90,7 +90,7 @@ describe("FailedIndexStagingCleanup", () => {
 
   it("never claims a version with an active publication lease", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
-    const publications = new InMemoryIndexPublicationStoreV2();
+    const publications = new InMemoryIndexPublicationStore();
     const attempts = new InMemoryIndexStagingAttemptStore();
     const { accessHandle } = await prepareVectorIndex(vectorIndex);
     const record = recordFor("aaaa");
@@ -132,7 +132,7 @@ describe("FailedIndexStagingCleanup", () => {
 
   it("reports and preserves an orphan retained by the vector adapter", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
-    const publications = new InMemoryIndexPublicationStoreV2();
+    const publications = new InMemoryIndexPublicationStore();
     const attempts = new InMemoryIndexStagingAttemptStore();
     const { accessHandle } = await prepareVectorIndex(vectorIndex);
     const record = recordFor("aaaa");
@@ -183,7 +183,7 @@ describe("FailedIndexStagingCleanup", () => {
 
   it("isolates an unavailable connector and reports the orphan left behind", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
-    const publications = new InMemoryIndexPublicationStoreV2();
+    const publications = new InMemoryIndexPublicationStore();
     const attempts = new InMemoryIndexStagingAttemptStore();
     const { accessHandle } = await prepareVectorIndex(vectorIndex);
     const reclaimable = recordFor("aaaa");
@@ -245,7 +245,7 @@ describe("FailedIndexStagingCleanup", () => {
 
   it("reconciles published versions without changing current search", async () => {
     const vectorIndex = new InMemoryVectorIndexAdapter();
-    const publications = new InMemoryIndexPublicationStoreV2();
+    const publications = new InMemoryIndexPublicationStore();
     const attempts = new InMemoryIndexStagingAttemptStore();
     const { accessHandle } = await prepareVectorIndex(vectorIndex);
     const predecessorRecord = recordFor("aaaa");
@@ -322,7 +322,7 @@ describe("FailedIndexStagingCleanup", () => {
 
 function cleanup(input: {
   readonly attempts: IndexStagingAttemptStore;
-  readonly publications: IndexPublicationStoreV2;
+  readonly publications: IndexPublicationStore;
   readonly vectorIndex: VectorIndexPort;
   readonly now: string;
 }): FailedIndexStagingCleanup {
@@ -420,7 +420,7 @@ function recordFor(revision: "aaaa" | "bbbb"): VectorIndexRecord {
 function publicationFor(
   revision: "aaaa" | "bbbb",
   accessHandle: string,
-): PublishedIndexVersionV2 {
+): PublishedIndexVersion {
   const manifest = {
     ...createIndexManifestFixture(),
     indexVersion: `idxv_${revision}`,
@@ -512,14 +512,14 @@ class CapturingVectorIndex implements VectorIndexPort {
     this.delegate.deleteVersion(input);
 }
 
-class RejectCommitPublicationStore implements IndexPublicationStoreV2 {
-  constructor(private readonly delegate: IndexPublicationStoreV2) {}
+class RejectCommitPublicationStore implements IndexPublicationStore {
+  constructor(private readonly delegate: IndexPublicationStore) {}
 
-  findVersion: IndexPublicationStoreV2["findVersion"] = (input) =>
+  findVersion: IndexPublicationStore["findVersion"] = (input) =>
     this.delegate.findVersion(input);
-  current: IndexPublicationStoreV2["current"] = (documentIndexId) =>
+  current: IndexPublicationStore["current"] = (documentIndexId) =>
     this.delegate.current(documentIndexId);
-  findScope: IndexPublicationStoreV2["findScope"] = (scopeRef) =>
+  findScope: IndexPublicationStore["findScope"] = (scopeRef) =>
     this.delegate.findScope(scopeRef);
   async commitCurrent(): Promise<never> {
     throw new Error("simulated Catalog failure");

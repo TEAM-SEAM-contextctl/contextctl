@@ -9,7 +9,7 @@ import {
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   DeterministicEmbeddingAdapter,
   EmbeddingProviderFault,
-  InMemoryIndexPublicationStoreV2,
+  InMemoryIndexPublicationStore,
   InMemoryIndexStagingAttemptStore,
   InMemoryIngestionPublicationStore,
   InMemoryVectorIndexAdapter,
@@ -21,7 +21,7 @@ import {
   TransformersJsLocalEmbeddingAdapter,
   type EmbeddingPort,
   type EmbeddingProfile,
-  type IndexPublicationStoreV2,
+  type IndexPublicationStore,
   type IndexStagingAttemptStore,
   type IngestionPublicationStore,
   type LocalMarkdownPublicationRuntime,
@@ -193,7 +193,7 @@ export interface DaemonIngestionStores {
   /** Ingestion's Publication outbox, not the index catalog. */
   readonly publications: IngestionPublicationStore;
   /** The index catalog. Near-homonym of the field above; different thing. */
-  readonly indexPublications: IndexPublicationStoreV2;
+  readonly indexPublications: IndexPublicationStore;
   readonly stagingAttempts: IndexStagingAttemptStore;
 }
 
@@ -325,7 +325,7 @@ export interface DaemonRuntime {
   readonly mcpServer: McpQueryServer;
   readonly httpHandler: DeliveryHttpHandler;
   readonly search: ManagedDocumentSearch;
-  readonly publications: IndexPublicationStoreV2;
+  readonly publications: IndexPublicationStore;
   /**
    * Required alongside a supplied Index Catalog: the publisher stages a physical
    * index before it commits a catalog record, and the two have to agree on which
@@ -401,7 +401,7 @@ export function createDaemonRuntime(
   // individually would let a future edit default one of them and rebuild the
   // exact inconsistency `DaemonIngestionStores` exists to make unrepresentable.
   const stores = options.ingestionStores;
-  const publications = stores?.indexPublications ?? new InMemoryIndexPublicationStoreV2();
+  const publications = stores?.indexPublications ?? new InMemoryIndexPublicationStore();
   const stagingAttempts = stores?.stagingAttempts ?? new InMemoryIndexStagingAttemptStore();
   const ingestionPublications = stores?.publications ?? new InMemoryIngestionPublicationStore();
   const search = new ManagedDocumentSearch({

@@ -1,7 +1,7 @@
 import type {
-  IngestionPublicationV2 as IngestionPublication,
+  IngestionPublication,
   PublicationId,
-  PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
+  PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 
 import type { CardVersion } from "../domain/card-version.js";

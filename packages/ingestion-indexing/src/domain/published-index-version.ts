@@ -1,10 +1,8 @@
 import {
+  PublishedDocumentIndexRefSchema,
+  PublishedDocumentScopeSchema,
   type PublishedDocumentIndexRef,
   type PublishedDocumentScope,
-  PublishedDocumentIndexRefV2Schema as PublishedDocumentIndexRefSchema,
-  PublishedDocumentScopeV2Schema as PublishedDocumentScopeSchema,
-  type PublishedDocumentIndexRefV2,
-  type PublishedDocumentScopeV2,
 } from "@contextctl/contracts";
 
 import { validateEmbeddingProfile } from "./embedding-profile.js";
@@ -21,19 +19,11 @@ import {
 } from "./model-validation.js";
 import { canonicalDigest, canonicalJson } from "./revision-identity.js";
 
-/** @deprecated Pre-release v1 shape retained only for downstream migration. */
+/** Immutable catalog record made visible by one atomic current transition. */
 export interface PublishedIndexVersion {
-  readonly manifest: Omit<IndexManifest, "stateNamespaceId" | "securityDomain">;
-  readonly securityDomain: string;
+  readonly manifest: IndexManifest;
   readonly documentIndex: PublishedDocumentIndexRef;
   readonly scopes: readonly PublishedDocumentScope[];
-}
-
-/** Immutable v2 catalog record made visible by one atomic current transition. */
-export interface PublishedIndexVersionV2 {
-  readonly manifest: IndexManifest;
-  readonly documentIndex: PublishedDocumentIndexRefV2;
-  readonly scopes: readonly PublishedDocumentScopeV2[];
   /** Internal physical binding; never serialized into a Published Scope. */
   readonly binding: PublishedIndexBinding;
 }
@@ -61,7 +51,7 @@ export class PublishedIndexVersionValidationError extends Error {
 /** Validates untrusted durable catalog data before it reaches search. */
 export function parsePublishedIndexVersion(
   input: unknown,
-): PublishedIndexVersionV2 {
+): PublishedIndexVersion {
   if (!isRecord(input) || !hasExactKeys(input, PUBLICATION_KEYS)) {
     throw new PublishedIndexVersionValidationError("corrupt_record");
   }
@@ -83,7 +73,7 @@ export function parsePublishedIndexVersion(
   if (binding === undefined) {
     throw new PublishedIndexVersionValidationError("corrupt_record");
   }
-  const publication: PublishedIndexVersionV2 = {
+  const publication: PublishedIndexVersion = {
     manifest,
     documentIndex: documentIndex.data,
     scopes,
@@ -94,7 +84,7 @@ export function parsePublishedIndexVersion(
 }
 
 export function assertConsistentPublishedIndexVersion(
-  publication: PublishedIndexVersionV2,
+  publication: PublishedIndexVersion,
 ): void {
   const { manifest, documentIndex, scopes, binding } = publication;
   if (
@@ -124,7 +114,7 @@ export function assertConsistentPublishedIndexVersion(
 }
 
 export function publishedIndexVersionFingerprint(
-  publication: PublishedIndexVersionV2,
+  publication: PublishedIndexVersion,
 ): string {
   const { publishedAt: _publishedAt, ...manifest } = publication.manifest;
   return canonicalDigest({
