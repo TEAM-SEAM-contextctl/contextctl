@@ -10,6 +10,11 @@ import {
 } from "@contextctl/ingestion-indexing";
 
 import {
+  openRegistryDatabase,
+  SqliteCardStore,
+} from "@contextctl/registry-lifecycle";
+
+import {
   createDaemonRuntime,
   DEFAULT_SECURITY_DOMAIN,
   DEFAULT_STATE_NAMESPACE_ID,
@@ -48,6 +53,41 @@ export interface CliRuntime {
   readonly sourceReferences: readonly string[];
   /** Closes both databases. Every command path must call it. */
   close(): void;
+}
+
+/**
+ * Just Registry's database, for the commands that only decide about Cards.
+ *
+ * The operator decisions and the reachability report read and write Registry's
+ * SQLite and nothing else. Routing them through `buildCliRuntime` made them
+ * refuse to start without the 415MB embedding artifact installed, which is a
+ * dependency none of them has: an operator could not disable a Card that was
+ * serving bad content, or find out which Scopes are unreachable, until they had
+ * downloaded a model neither command calls.
+ *
+ * That is also why this returns a narrow shape instead of a partly built
+ * `CliRuntime`. A half-populated runtime would type-check at every call site and
+ * fail at whichever one first touched the half that was missing.
+ */
+export interface RegistryOnlyRuntime {
+  readonly database: DatabaseSync;
+  readonly cards: SqliteCardStore;
+  close(): void;
+}
+
+export function openRegistryOnlyRuntime(input: {
+  readonly environment: Readonly<Partial<Record<string, string>>>;
+  readonly workingDirectory?: string;
+}): RegistryOnlyRuntime {
+  const paths = resolveContextctlPaths(input.environment, input.workingDirectory);
+  const database = openRegistryDatabase(paths.registryDatabase);
+  return {
+    database,
+    cards: new SqliteCardStore(database),
+    close: () => {
+      database.close();
+    },
+  };
 }
 
 export interface BuildCliRuntimeInput {

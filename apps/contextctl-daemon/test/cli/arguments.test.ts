@@ -136,7 +136,11 @@ describe("cards", () => {
   it("approves without a version", () => {
     const command = commandOf(["cards", "approve", "card_1"]);
 
-    expect(command).toEqual({ kind: "cards_approve", cardId: "card_1" });
+    expect(command).toEqual({
+      kind: "cards_decision",
+      decision: "approve",
+      cardId: "card_1",
+    });
     expect("versionId" in command).toBe(false);
     expect("by" in command).toBe(false);
   });
@@ -145,7 +149,8 @@ describe("cards", () => {
     expect(
       commandOf(["cards", "approve", "card_1", "ver_1", "--by", "kim"]),
     ).toEqual({
-      kind: "cards_approve",
+      kind: "cards_decision",
+      decision: "approve",
       cardId: "card_1",
       versionId: "ver_1",
       by: "kim",
@@ -154,6 +159,67 @@ describe("cards", () => {
 
   it("rejects cards approve with no card", () => {
     expect(statusOf(["cards", "approve"])).toBe("usage_error");
+  });
+
+  it.each(["reject", "rollback"] as const)(
+    "parses %s with the version it names",
+    (decision) => {
+      expect(
+        commandOf(["cards", decision, "card_1", "ver_1", "--by", "kim", "--note", "n"]),
+      ).toEqual({
+        kind: "cards_decision",
+        decision,
+        cardId: "card_1",
+        versionId: "ver_1",
+        by: "kim",
+        note: "n",
+      });
+    },
+  );
+
+  it.each(["reject", "rollback"] as const)(
+    "refuses %s without a version",
+    (decision) => {
+      // Neither statement can be made about "whatever is latest": both are about
+      // one specific version, and guessing would record an audit entry naming a
+      // version the operator never chose.
+      expect(statusOf(["cards", decision, "card_1"])).toBe("usage_error");
+    },
+  );
+
+  it("parses disable with no version at all", () => {
+    // `disable` moves the current pointer off whatever is serving, so a version
+    // would have nothing to bind to.
+    expect(commandOf(["cards", "disable", "card_1", "--by", "kim"])).toEqual({
+      kind: "cards_decision",
+      decision: "disable",
+      cardId: "card_1",
+      by: "kim",
+    });
+  });
+
+  it("refuses a version handed to disable", () => {
+    expect(statusOf(["cards", "disable", "card_1", "ver_1"])).toBe("usage_error");
+  });
+});
+
+describe("reachability", () => {
+  it("parses the report with no narrowing", () => {
+    const command = commandOf(["reachability"]);
+
+    expect(command).toEqual({ kind: "reachability" });
+    expect("state" in command).toBe(false);
+  });
+
+  it("parses a narrowed report", () => {
+    expect(commandOf(["reachability", "--state", "orphaned"])).toEqual({
+      kind: "reachability",
+      state: "orphaned",
+    });
+  });
+
+  it("takes no positional argument", () => {
+    expect(statusOf(["reachability", "orphaned"])).toBe("usage_error");
   });
 });
 
