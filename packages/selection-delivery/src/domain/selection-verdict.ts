@@ -4,7 +4,7 @@ import {
 } from "./errors.js";
 
 /** Identifies the ranking rules a provenance record was produced under. */
-export const SELECTION_RANKING_POLICY_VERSION = "selection-ranking-v1";
+export const SELECTION_RANKING_POLICY_VERSION = "selection-ranking-v2" as const;
 
 /** Deterministic selection outcome for one scored candidate. Never LLM-decided. */
 export type SelectionVerdict = "admit" | "defer" | "reject";

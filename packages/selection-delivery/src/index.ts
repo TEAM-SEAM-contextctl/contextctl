@@ -11,38 +11,124 @@ export type {
   ApprovedSqlScope,
 } from "./domain/card-catalog.js";
 export {
-  buildRetrievalGuide,
-  type ContextResolution,
-  type HttpRetrievalGuide,
-  type ManagedDocumentGuide,
-  type ResolutionFaultCode,
-  type ResolutionItem,
-  type ResolutionPolicy,
-  type RetrievalGuide,
-  type RetrievedDocumentContext,
-  type SqlRetrievalGuide,
+  canonicalDigest,
+  canonicalJson,
+  CANONICAL_DIGEST_PREFIX,
+} from "./domain/canonical-digest.js";
+export {
+  CardCandidateIndex,
+  catalogSnapshotVersion,
+  cosineSimilarity,
+  type CardCandidateRecord,
+  type CardSimilarity,
+} from "./domain/card-candidate-index.js";
+export {
+  assertValidCardSelectionProfile,
+  cardSelectionProfilesMatch,
+  DEFAULT_CARD_ADMISSION_LIMITS,
+  isCardSelectionEmbeddingProfile,
+  type CardAdmissionLimits,
+  type CardEmbeddingExecution,
+  type CardSelectionEmbeddingProfile,
+  type CardSelectionProfile,
+  type LocalCardEmbeddingExecution,
+  type RemoteCardEmbeddingExecution,
+} from "./domain/card-selection-profile.js";
+export {
+  buildCardSelectionEntry,
+  buildCardSelectionText,
+  CARD_SELECTION_TEXT_SCHEMA,
+  cardSelectionTextDigest,
+  cardSelectionTextPayload,
+  normalizeSelectionText,
+  type CardSelectionEntry,
+  type CardSelectionScope,
+  type CardSelectionTextV1,
+} from "./domain/card-selection-text.js";
+export {
+  assertSelectionScoringPairing,
+  combineHybridScore,
+  HYBRID_AGREEMENT_BONUS,
+  HYBRID_SCORING_POLICY_VERSION,
+  rankHybridCandidates,
+  scoringPolicyVersionFor,
+  SEMANTIC_SIMILARITY_FLOOR,
+  semanticScoreFor,
+  type HybridCandidateScore,
+  type SelectionMode,
+  type SelectionScoringPolicyVersion,
+} from "./domain/hybrid-ranking.js";
+export {
+  measureTextUnits,
+  TEXT_MEASURE_PROFILE_VERSION,
+} from "./domain/text-measure.js";
+export type {
+  ContextResolution,
+  ContextResolutionItem,
+  DelegatedFulfillment,
+  ManagedFulfillment,
+  ResolutionPolicy,
+  RetrievedDocumentChunk,
+  RetrievedDocumentContext,
+  SelectionCounts,
+  SelectionSummary,
 } from "./domain/context-resolution.js";
 export {
-  EvidenceBudgetInvariantError,
+  buildRetrievalGuide,
+  retrievalGuideKey,
+  type HttpRetrievalGuide,
+  type ManagedDocumentGuide,
+  type RetrievalGuide,
+  type SqlRetrievalGuide,
+} from "./domain/retrieval-guide.js";
+export {
+  CanonicalDigestInvariantError,
+  CardCandidateIndexInvariantError,
+  CardSelectionInputLimitError,
+  CardSelectionProfileInvariantError,
+  ContextBudgetInvariantError,
+  ManagedResolutionInvariantError,
   SelectionCandidateInvariantError,
+  SelectionModeInvariantError,
   SelectionScopeInvariantError,
   SelectionThresholdsInvariantError,
 } from "./domain/errors.js";
-// `assembleDocumentEvidence` and its result are deliberately absent: assembly
-// is a step inside `resolveContext`, and exporting it would let a caller
-// reassemble evidence outside the one place that knows the budget the response
-// was built under. The vocabulary a resolution is read with does cross.
+// `assembleDocumentContext` and its result are deliberately absent: assembly is
+// a step inside `assembleContext`, and exporting it would let a caller
+// reassemble a response outside the one place that knows the budget it was
+// built under. `ContextChunk` and `ContextCandidate` are absent for the same
+// reason — both carry the internal `rank` and `score` a response never shows.
+// The vocabulary a resolution is read with does cross.
 export {
-  DEFAULT_EVIDENCE_BUDGET,
-  EVIDENCE_ASSEMBLY_POLICY_VERSION,
-  type EvidenceBudget,
-  type EvidenceChunk,
-  type EvidenceOmission,
-} from "./domain/evidence-assembly.js";
+  CONTEXT_ASSEMBLY_POLICY_VERSION,
+  CONTEXT_FUSION_POLICY_VERSION,
+  DEFAULT_CONTEXT_BUDGET,
+  RRF_RANK_CONSTANT,
+  type ContextBudget,
+  type ContextOmission,
+} from "./domain/context-assembly.js";
 export {
-  buildFulfillmentTarget,
-  type ManagedDocumentFulfillmentTarget,
-} from "./domain/fulfillment-target.js";
+  assertOpaqueFailure,
+  MANAGED_FAILURE_CODE_PATTERN,
+  type ManagedResolutionFailure,
+  type ManagedResolutionOutcome,
+  type ManagedResolutionStage,
+  type ResolvedDocumentChunk,
+} from "./domain/managed-resolution.js";
+export {
+  isManagedPlannedItem,
+  managedTargetKey,
+  planSelectedScopes,
+  SELECTION_PLANNING_POLICY_VERSION,
+  type ApprovedCardReference,
+  type ManagedDocumentResolutionTarget,
+  type PlannedDelegatedItem,
+  type PlannedManagedItem,
+  type PlannedResolutionItem,
+  type SelectedByList,
+  type SelectionPlan,
+  type SelectionPlanSummary,
+} from "./domain/selection-plan.js";
 export {
   QUERY_SCORING_POLICY_VERSION,
   scoreCardsAgainstQuery,
@@ -62,27 +148,61 @@ export {
   type SelectionThresholds,
   type SelectionVerdict,
 } from "./domain/selection-verdict.js";
-export { EmptyQueryError } from "./application/errors.js";
 export {
-  resolveContext,
-  type ResolveContextOptions,
-  type ResolveContextPorts,
-} from "./application/resolve-context.js";
+  CardEmbeddingUnavailableError,
+  EmptyQueryError,
+  InvalidContextBudgetError,
+  QueryInputLimitExceededError,
+  RESOLVE_CONTEXT_ERROR_TABLE,
+  resolveContextError,
+  resolveContextErrorStatus,
+  ResolveContextFailure,
+  toResolveContextErrorCode,
+  type ResolveContextError,
+  type ResolveContextErrorCode,
+} from "./application/errors.js";
+export {
+  DEFAULT_CHUNK_LIMIT_PER_SCOPE,
+  DEFAULT_LEXICAL_TOP_K,
+  DEFAULT_SEMANTIC_TOP_K,
+  selectContext,
+  type SelectContextOptions,
+  type SelectContextPorts,
+  type SemanticSelectionPolicy,
+  type SemanticSelectionPorts,
+} from "./application/select-context.js";
+export {
+  assembleContext,
+  type AssembleContextOptions,
+} from "./application/assemble-context.js";
+export {
+  narrowContextBudget,
+  type ResolveContextApplication,
+  type ResolveContextRequest,
+} from "./application/context-application.js";
 export type { ApprovedCardCatalog } from "./ports/approved-card-catalog.js";
 export {
-  DocumentRetrievalFault,
-  type DocumentChunkQuery,
-  type DocumentRetrievalFaultCode,
-  type ManagedDocumentRetriever,
-  type RetrievedChunk,
-} from "./ports/managed-document-retriever.js";
-export {
-  FixtureDocumentRetriever,
-  type FixtureChunk,
-} from "./infrastructure/fixture-document-retriever.js";
+  CardEmbeddingFault,
+  type CardEmbeddingFaultCode,
+  type CardEmbeddingInput,
+  type CardEmbeddingOutput,
+  type CardEmbeddingPort,
+  type CardEmbeddingProviderKind,
+  type CardEmbeddingRequest,
+} from "./ports/card-embedding.js";
+export type {
+  CardCandidateIndexRequest,
+  CardCandidateIndexStore,
+} from "./ports/card-candidate-index-store.js";
 export { InMemoryCardCatalog } from "./infrastructure/in-memory-card-catalog.js";
 export {
+  assertCardEmbeddingProviderKind,
+  DeterministicCardEmbeddingAdapter,
+} from "./infrastructure/deterministic-card-embedding-adapter.js";
+export { InMemoryCardCandidateIndexStore } from "./infrastructure/in-memory-card-candidate-index-store.js";
+export {
   createHttpQueryHandler,
+  RESOLVE_PATH,
   type DeliveryHttpHandler,
   type DeliveryHttpRequest,
   type DeliveryHttpResponse,

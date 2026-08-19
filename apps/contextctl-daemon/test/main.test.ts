@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
   EmbeddingProviderFault,
-  type PublishedIndexVersion,
+  type PublishedIndexVersionV2 as PublishedIndexVersion,
 } from "@contextctl/ingestion-indexing";
 import {
   appendCardVersion,
@@ -14,18 +14,22 @@ import {
   type RetrievalScope,
 } from "@contextctl/registry-lifecycle";
 import {
-  DocumentRetrievalFault,
+  DeterministicCardEmbeddingAdapter,
+  InMemoryCardCandidateIndexStore,
+  isCardSelectionEmbeddingProfile,
   type ApprovedDocumentIndexRef,
-  type DocumentChunkQuery,
 } from "@contextctl/selection-delivery";
 
-import { IngestionManagedDocumentRetriever } from "../src/adapters/ingestion-managed-document-retriever.js";
+import { LocalCardEmbeddingAdapter } from "../src/adapters/local-card-embedding-adapter.js";
 import { RegistryApprovedCardCatalog } from "../src/adapters/registry-approved-card-catalog.js";
+import { DaemonContextApplication } from "../src/context-application.js";
 import {
+  CARD_SELECTION_EMBEDDING_PROFILE,
   createDaemonRuntime,
   DEFAULT_CONNECTOR_ID,
   DEFAULT_EMBEDDING_PROFILE,
   DEFAULT_SECURITY_DOMAIN,
+  DETERMINISTIC_CARD_SELECTION_PROFILE,
   readDaemonRuntimeOptions,
   readHttpPort,
   type DaemonRuntime,
@@ -78,15 +82,6 @@ function documentIndexFor(
   };
 }
 
-function queryFor(documentIndex: ApprovedDocumentIndexRef): DocumentChunkQuery {
-  return {
-    queryText: "결제 실패 재시도",
-    documentIndex,
-    selection: { kind: "document" },
-    limit: 8,
-  };
-}
-
 /**
  * Publishes one whole-document Scope into the runtime's own publication store.
  *
@@ -97,27 +92,50 @@ function queryFor(documentIndex: ApprovedDocumentIndexRef): DocumentChunkQuery {
  */
 async function publishWholeDocument(
   runtime: DaemonRuntime,
-): Promise<PublishedIndexVersion> {
+): Promise<ApprovedDocumentIndexRef> {
+  // The state namespace is part of what the handle is derived from, and the
+  // search rebuilds the same compatibility out of the manifest: preparing
+  // without it mints a handle for the legacy namespace that then fails to
+  // rehydrate as `index_binding_invalid`.
   const prepared = await runtime.vectorIndex.prepare({
+    stateNamespaceId: runtime.stateNamespaceId,
     securityDomain: runtime.securityDomain,
     embeddingProfile: runtime.embeddingProfile,
     payloadSchemaVersion: 2,
   });
   const documentIndex = documentIndexFor(runtime, prepared.accessHandle);
+  // The catalog record's own Scope shape carries no physical binding — v2 keeps
+  // `connectorId` and `accessHandle` in `binding` — while the approved read
+  // model Selection hands the retriever still names both.
+  const catalogedIndex = {
+    documentIndexId: documentIndex.documentIndexId,
+    sourceId: documentIndex.sourceId,
+    documentId: documentIndex.documentId,
+    indexVersion: documentIndex.indexVersion,
+  };
   const scopes: PublishedIndexVersion["scopes"] = [
     {
       scopeId: "scope_local",
       scopeVersion: "scpv_aaaa",
       kind: "managed_document",
-      documentIndex,
+      documentIndex: catalogedIndex,
       selector: { kind: "document" },
     },
   ];
   const publication: PublishedIndexVersion = {
-    securityDomain: runtime.securityDomain,
-    documentIndex,
+    documentIndex: catalogedIndex,
     scopes,
+    binding: {
+      stateNamespaceId: runtime.stateNamespaceId,
+      securityDomain: runtime.securityDomain,
+      documentIndexId: documentIndex.documentIndexId,
+      indexVersion: documentIndex.indexVersion,
+      connectorId: documentIndex.connectorId,
+      accessHandle: documentIndex.accessHandle,
+    },
     manifest: {
+      stateNamespaceId: runtime.stateNamespaceId,
+      securityDomain: runtime.securityDomain,
       documentIndexId: documentIndex.documentIndexId,
       indexVersion: documentIndex.indexVersion,
       sourceId: documentIndex.sourceId,
@@ -144,7 +162,9 @@ async function publishWholeDocument(
   };
 
   await runtime.publications.commitCurrent(publication);
-  return publication;
+  // The approved read model, not the catalog record: it is what an approved
+  // Card hands the retriever, and it is the half that still names the binding.
+  return documentIndex;
 }
 
 /**
@@ -214,10 +234,12 @@ function sqlScope(): RetrievalScope {
 }
 
 /**
- * A Scope pointing at an index nothing published, so the retriever faults and
- * its item is failed. The unpublished coordinate is the point of the fixture,
- * not an oversight — it is the same one `refuses a retrieval while nothing is
- * published` uses.
+ * A Scope nothing ever published, so the search reports it and its item fails.
+ *
+ * The unpublished reference is the point of the fixture, not an oversight: the
+ * daemon translates a Scope reference field for field and never looks a similar
+ * Scope up to fill the gap, so an unpublished reference has to come back as
+ * exactly that.
  */
 function unpublishedDocumentScope(runtime: DaemonRuntime): RetrievalScope {
   return {
@@ -228,13 +250,48 @@ function unpublishedDocumentScope(runtime: DaemonRuntime): RetrievalScope {
   };
 }
 
-async function captureFailure(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-  } catch (cause: unknown) {
-    return cause;
-  }
-  throw new Error("expected the retrieval to fail");
+/** The Scope reference `publishWholeDocument` really commits to the catalog. */
+function publishedDocumentScope(runtime: DaemonRuntime): RetrievalScope {
+  return {
+    kind: "managed_document",
+    reference: { scopeId: "scope_local", scopeVersion: "scpv_aaaa" },
+    documentIndex: documentIndexFor(runtime, "memory:v1:unprepared"),
+    selection: { kind: "document" },
+  };
+}
+
+interface ResolvedItem {
+  readonly selectedBy: readonly { readonly cardId: string }[];
+  readonly guide: Readonly<Record<string, unknown>>;
+  readonly fulfillment: {
+    readonly status: string;
+    readonly executor: string;
+    readonly failure?: {
+      readonly stage: string;
+      readonly code: string;
+      readonly retriable: boolean;
+    };
+    readonly context?: { readonly chunks: readonly unknown[] };
+  };
+}
+
+/** The state one item reached, read off a payload nothing has typed yet. */
+function statusOf(item: Readonly<Record<string, unknown>>): unknown {
+  return (item["fulfillment"] as Readonly<Record<string, unknown>>)["status"];
+}
+
+/** One `resolve_context` call through the surface the daemon actually serves. */
+async function resolveItems(
+  runtime: DaemonRuntime,
+  query: string,
+): Promise<readonly ResolvedItem[]> {
+  const result = await callMcp(runtime, "tools/call", {
+    name: "resolve_context",
+    arguments: { query },
+  });
+
+  expect(result["isError"]).toBeUndefined();
+  return toolPayload(result)["items"] as readonly ResolvedItem[];
 }
 
 interface JsonRpcResponse {
@@ -280,15 +337,23 @@ function toolPayload(
 
 describe("createDaemonRuntime", () => {
   describe("port binding", () => {
-    it("binds selection's ports to the adapters this app owns", () => {
+    it("binds the catalog and the coordinator this app owns", () => {
       const runtime = buildRuntime();
 
-      expect(runtime.selectionPorts.catalog).toBeInstanceOf(
-        RegistryApprovedCardCatalog,
-      );
-      expect(runtime.selectionPorts.retriever).toBeInstanceOf(
-        IngestionManagedDocumentRetriever,
-      );
+      expect(runtime.catalog).toBeInstanceOf(RegistryApprovedCardCatalog);
+      expect(runtime.contextApplication).toBeInstanceOf(DaemonContextApplication);
+    });
+
+    it("hands the query surfaces the application and nothing else", () => {
+      const runtime = buildRuntime();
+
+      // Neither surface can reach a catalog or a search through what it was
+      // given, which is the property the split exists for. Asserted on the
+      // runtime rather than on the surfaces because the surfaces keep what they
+      // were built with privately — what is checkable is what was handed over.
+      expect(Object.keys(runtime.contextApplication).sort()).toEqual([]);
+      expect(runtime.contextApplication).not.toHaveProperty("catalog");
+      expect(runtime.contextApplication).not.toHaveProperty("search");
     });
 
     it("applies the security domain and connector it was configured with", () => {
@@ -330,6 +395,92 @@ describe("createDaemonRuntime", () => {
       );
     });
 
+    it("binds a Card vector family separate from the document one", () => {
+      const runtime = createDaemonRuntime({
+        embeddingArtifactDirectory: "/nonexistent/assets",
+      });
+      runtimes.push(runtime);
+
+      // Two ids, so the two families stay separately versionable and a Card
+      // vector is never comparable against a document index by accident.
+      expect(runtime.cardSelectionProfile.id).toBe(
+        "card-granite-97m-multilingual-r2-fp32-v1",
+      );
+      expect(runtime.cardSelectionProfile.id).not.toBe(
+        runtime.embeddingProfile.id,
+      );
+      // One artifact on disk, though: same repository, same revision, same
+      // file, same digest, same precision.
+      if (!isCardSelectionEmbeddingProfile(runtime.cardSelectionProfile)) {
+        throw new Error("the production composition needs a pinned artifact");
+      }
+      const execution = runtime.cardSelectionProfile.execution;
+      if (execution.kind !== "local") {
+        throw new Error("the production composition needs local execution");
+      }
+      expect(execution.artifactPath).toBe("onnx/model.onnx");
+      expect(execution.precision).toBe("fp32");
+      expect(execution.artifactSha256).toBe(
+        "68e592b160673d30250824c1116bc6ab33f70efb22b97c9e1d7ce1e69c1c9d70",
+      );
+      expect(runtime.cardSelectionProfile.dimensions).toBe(384);
+      expect(runtime.cardSelectionProfile.pooling).toBe("cls");
+    });
+
+    it("serves Card vectors from the session the document path loaded", () => {
+      const runtime = createDaemonRuntime({
+        embeddingArtifactDirectory: "/nonexistent/assets",
+      });
+      runtimes.push(runtime);
+
+      // A separate port and a separate index, over one loaded model file. A
+      // second local adapter would hold a second copy of identical weights.
+      expect(runtime.cardEmbeddingProvider).toBeInstanceOf(
+        LocalCardEmbeddingAdapter,
+      );
+      expect(runtime.cardEmbeddingProvider).not.toBe(runtime.embeddingProvider);
+      expect(runtime.cardCandidateIndex).toBeInstanceOf(
+        InMemoryCardCandidateIndexStore,
+      );
+    });
+
+    it("binds the deterministic Card provider under a network-free composition", () => {
+      const runtime = buildRuntime();
+
+      // A profile that pinned an artifact while a hash adapter produced the
+      // vectors would state a provenance that is simply false.
+      expect(runtime.cardSelectionProfile).toEqual(
+        DETERMINISTIC_CARD_SELECTION_PROFILE,
+      );
+      expect(isCardSelectionEmbeddingProfile(runtime.cardSelectionProfile)).toBe(
+        false,
+      );
+      expect(runtime.cardEmbeddingProvider).toBeInstanceOf(
+        DeterministicCardEmbeddingAdapter,
+      );
+    });
+
+    it("refuses the deterministic Card adapter under a production Card profile", () => {
+      expect(() =>
+        createDaemonRuntime({
+          embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
+          embeddingProvider: new DeterministicEmbeddingAdapter(),
+          cardSelectionProfile: CARD_SELECTION_EMBEDDING_PROFILE,
+          cardEmbeddingProvider: new DeterministicCardEmbeddingAdapter(),
+        }),
+      ).toThrow(TypeError);
+    });
+
+    it("keeps one candidate index store for the whole runtime", () => {
+      const runtime = buildRuntime();
+
+      // A store per request would re-embed the whole catalog on every query.
+      expect(runtime.cardCandidateIndex).toBe(runtime.cardCandidateIndex);
+      expect(buildRuntime().cardCandidateIndex).not.toBe(
+        runtime.cardCandidateIndex,
+      );
+    });
+
     it("falls back to the local defaults when nothing is configured", () => {
       const runtime = buildRuntime();
 
@@ -342,54 +493,63 @@ describe("createDaemonRuntime", () => {
 
   /**
    * The publication store is shared by reference, and reference identity is not
-   * what these assert: the retriever keeps its store in a private field, so a
-   * runtime that handed out one instance and wired a second would still satisfy
-   * `toBe`. What is asserted instead is that writing into `runtime.publications`
-   * changes what the assembled retriever answers.
+   * what these assert: the coordinator keeps its search in a private field, so
+   * a runtime that handed out one instance and wired a second would still
+   * satisfy `toBe`. What is asserted instead is that writing into
+   * `runtime.publications` changes what the assembled surface answers.
    */
   describe("shared publication store", () => {
-    it("refuses a retrieval while nothing is published", async () => {
+    it("reports a read of an unpublished Scope as failed", async () => {
       const runtime = buildRuntime();
-
-      const failure = await captureFailure(
-        runtime.selectionPorts.retriever.searchChunks(
-          queryFor(documentIndexFor(runtime, "memory:v1:unprepared")),
-        ),
+      await approveSingleScopeCard(
+        runtime,
+        "unit_payment_failures",
+        "cv_document",
+        publishedDocumentScope(runtime),
       );
 
-      expect(failure).toBeInstanceOf(DocumentRetrievalFault);
-      expect((failure as DocumentRetrievalFault).code).toBe(
-        "index_version_mismatch",
-      );
+      const [item] = await resolveItems(runtime, "결제 실패 재시도");
+
+      expect(item?.fulfillment?.status).toBe("failed");
+      expect(item?.fulfillment?.failure).toEqual({
+        stage: "managed_search",
+        code: "scope_not_published",
+        retriable: false,
+      });
     });
 
-    it("serves that retrieval once the runtime's own store has the publication", async () => {
+    it("serves that read once the runtime's own store has the publication", async () => {
       const runtime = buildRuntime();
-      const publication = await publishWholeDocument(runtime);
+      await publishWholeDocument(runtime);
+      await approveSingleScopeCard(
+        runtime,
+        "unit_payment_failures",
+        "cv_document",
+        publishedDocumentScope(runtime),
+      );
+
+      const [item] = await resolveItems(runtime, "결제 실패 재시도");
 
       // Empty because no vector records were written, not because anything
-      // failed: reaching an empty result means the retriever found the
-      // publication, matched the Scope, resolved the connector and the
-      // embedding provider, and searched the runtime's vector index.
-      await expect(
-        runtime.selectionPorts.retriever.searchChunks(
-          queryFor(publication.documentIndex),
-        ),
-      ).resolves.toEqual([]);
+      // failed: reaching a fulfilled item means the coordinator translated the
+      // target, the search found the publication, matched the Scope, resolved
+      // the connector and the embedding provider, and searched the runtime's
+      // vector index.
+      expect(item?.fulfillment?.status).toBe("fulfilled");
+      expect(item?.fulfillment?.context?.chunks).toEqual([]);
     });
   });
 
   describe("mcp surface", () => {
-    it("exposes exactly the two query tools", async () => {
+    it("exposes exactly one query tool", async () => {
       const runtime = buildRuntime();
 
       const result = await callMcp(runtime, "tools/list");
 
+      // The catalog listing tool is gone: an agent that can enumerate every
+      // approved Card can map the catalog without asking a question.
       const tools = result["tools"] as readonly { readonly name: string }[];
-      expect(tools.map((tool) => tool.name)).toEqual([
-        "list_context_cards",
-        "resolve_context",
-      ]);
+      expect(tools.map((tool) => tool.name)).toEqual(["resolve_context"]);
     });
 
     /**
@@ -413,7 +573,7 @@ describe("createDaemonRuntime", () => {
 
       expect(payload["query"]).toBe(query);
       const policy = payload["policy"] as Readonly<Record<string, unknown>>;
-      expect(policy["payloadSchemaVersion"]).toBe(2);
+      expect(policy["payloadSchemaVersion"]).toBe(3);
 
       // Emptiness is the fact to assert here. What an empty catalog answers is
       // "no items", not "every item is well formed" — a per-item loop over an
@@ -426,13 +586,23 @@ describe("createDaemonRuntime", () => {
       // Absence, not `undefined`: a payload that still carried these keys with
       // an undefined value would be the previous contract, and an equality
       // check against `undefined` could not tell the two apart.
-      for (const retired of ["evidence", "contracts", "retrievalFailures"]) {
+      for (const retired of [
+        "evidence",
+        "contracts",
+        "retrievalFailures",
+        "candidates",
+      ]) {
         expect(Object.hasOwn(payload, retired)).toBe(false);
       }
 
-      // An unconfigured runtime starts on an empty registry database, so an
-      // empty candidate list is the correct answer rather than a failure.
-      expect(payload["candidates"]).toEqual([]);
+      // An unconfigured runtime starts on an empty registry database, so a
+      // summary with nothing admitted, deferred or rejected is the correct
+      // answer rather than a failure.
+      expect(payload["selection"]).toEqual({
+        mode: "lexical_degraded",
+        selected: [],
+        counts: { admitted: 0, deferred: 0, rejected: 0 },
+      });
     });
 
     /**
@@ -487,33 +657,46 @@ describe("createDaemonRuntime", () => {
       // The set of states reached, not "each one is a legal state": this is
       // what shows both branches of `buildItem` ran rather than one of them
       // twice. Sorted because item order is by identity, not by fixture order.
-      expect(items.map((item) => item["fulfillment"]).sort()).toEqual([
+      expect(items.map((item) => statusOf(item)).sort()).toEqual([
         "delegated",
         "failed",
       ]);
 
       for (const item of items) {
-        expect(["fulfilled", "delegated", "failed"]).toContain(
-          item["fulfillment"],
-        );
+        expect(["fulfilled", "delegated", "failed"]).toContain(statusOf(item));
         const guide = item["guide"] as Readonly<Record<string, unknown>>;
         expect(typeof guide["kind"]).toBe("string");
       }
 
-      // Why it failed, not merely that it did. `runScopeSearch` catches
-      // everything and folds an undeclared throw into `retriever_error`, so a
-      // fixture that broke for some unrelated reason — a mis-shaped access
-      // handle, an adapter that never reached the store — would still land on
-      // `failed` and satisfy the state assertion above. Only the code says the
-      // item failed for the reason `unpublishedDocumentScope` was written to
-      // provoke: the coordinate names an index version nothing published.
-      // `retriever_error` would be the fixture rotting, not a passing case.
-      const failed = items.find((item) => item["fulfillment"] === "failed");
+      // Why it failed, not merely that it did. A fixture that broke for some
+      // unrelated reason — a mis-shaped access handle, a search that never
+      // reached the store — would still land on `failed` and satisfy the state
+      // assertion above. Only the code says the item failed for the reason
+      // `unpublishedDocumentScope` was written to provoke, and it is the
+      // search's own code rather than one this side invented: an
+      // `unexpected_failure` here would be the fixture rotting.
+      const failed = items.find((item) => statusOf(item) === "failed");
       expect(failed).toBeDefined();
-      expect(failed?.["cardId"]).toBe("unit_payment_failures");
-      expect(failed?.["code"]).toBe("index_version_mismatch");
+      expect(
+        (failed?.["selectedBy"] as readonly { readonly cardId: string }[]).map(
+          (card) => card.cardId,
+        ),
+      ).toEqual(["unit_payment_failures"]);
+      expect(
+        (failed?.["fulfillment"] as Readonly<Record<string, unknown>>)[
+          "failure"
+        ],
+      ).toEqual({
+        stage: "managed_search",
+        code: "scope_not_published",
+        retriable: false,
+      });
 
-      expect(payload["candidates"]).toHaveLength(2);
+      // Two Cards were approved and both answered, so the summary accounts for
+      // them without naming a Card that did not.
+      expect(payload["selection"]).toMatchObject({
+        counts: { admitted: 2, deferred: 0, rejected: 0 },
+      });
     });
   });
 });

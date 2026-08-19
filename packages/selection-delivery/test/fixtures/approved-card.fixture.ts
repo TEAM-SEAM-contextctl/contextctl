@@ -176,9 +176,9 @@ export const ALL_OUTCOMES_QUERY =
 /**
  * Managed document Card that resolves to `fulfilled`.
  *
- * It points at `docidx_refund_policy`, the one index
- * `createRefundPolicyChunkMap()` registers, so `FixtureDocumentRetriever`
- * answers with the refund policy chunks. Its physical binding is deliberately
+ * Its Scope is `scope_indexed_document`, one of the two
+ * `createRefundPolicyChunkMap()` registers, so the fixture executor answers it
+ * with the refund policy chunks. Its physical binding is deliberately
  * non-empty: the serialization tests assert these values never reach a
  * consumer, and an exclusion check over a Card that never carried them proves
  * nothing.
@@ -274,11 +274,10 @@ export function createLookupApiCard(): ApprovedCard {
 /**
  * Managed document Card that resolves to `failed`.
  *
- * Its `documentIndexId` is not registered in any chunk map, and
- * `FixtureDocumentRetriever` rejects an unknown index with
- * `DocumentRetrievalFault("index_unavailable")`. The failure therefore comes
- * from the adapter's own behaviour rather than from a stub written to fail,
- * which is what makes the resulting item honest.
+ * Its `scopeId` is registered in no chunk map, and `FixtureManagedExecutor`
+ * answers an unregistered Scope with a `scope_not_published` failure. The
+ * failure therefore comes from the executor's own behaviour rather than from a
+ * stub written to fail, which is what makes the resulting item honest.
  *
  * Its binding differs from the indexed Card's so the exclusion checks cover the
  * guide of a `failed` item too: that guide is serialized just like a fulfilled
