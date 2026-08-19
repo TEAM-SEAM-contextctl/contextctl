@@ -1,9 +1,9 @@
 import {
-  computePublishedKnowledgeUnitV2Digest,
+  computePublishedKnowledgeUnitDigest,
   ContractValidationError,
-  parseIngestionPublicationV2,
-  type IngestionPublicationV2 as IngestionPublication,
-  type PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
+  parseIngestionPublication,
+  type IngestionPublication,
+  type PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -50,7 +50,7 @@ function seal(
 ): PublishedKnowledgeUnit {
   return {
     ...content,
-    contentDigest: computePublishedKnowledgeUnitV2Digest(content),
+    contentDigest: computePublishedKnowledgeUnitDigest(content),
   };
 }
 
@@ -86,14 +86,14 @@ function sealInvalid(content: unknown): unknown {
   const shaped = content as Omit<PublishedKnowledgeUnit, "contentDigest">;
   return {
     ...shaped,
-    contentDigest: computePublishedKnowledgeUnitV2Digest(shaped),
+    contentDigest: computePublishedKnowledgeUnitDigest(shaped),
   };
 }
 
 /** Every objection the contract raised, as `path: message`. */
 function refusals(input: unknown): string[] {
   try {
-    parseIngestionPublicationV2(input);
+    parseIngestionPublication(input);
   } catch (error) {
     if (error instanceof ContractValidationError) {
       return error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`);
@@ -232,7 +232,7 @@ describe("what Registry can consume now that it could not before", () => {
     // carries lineage, not the unit's kind — so there is no field to compare.
     const content = unitContent(createIngestionPublicationFixture());
     const segment = seal({ ...content, kind: "segment" });
-    const publication = parseIngestionPublicationV2(
+    const publication = parseIngestionPublication(
       publicationWith(segment),
     ) as IngestionPublication;
 

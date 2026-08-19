@@ -25,7 +25,7 @@ import {
   MAX_VECTOR_VECTOR_READ,
   VectorIndexFault,
   type PreparedVectorIndex,
-  type VectorIndexCompatibilityInput as VectorIndexCompatibility,
+  type VectorIndexCompatibility,
   type VectorIndexPort,
   type VectorIndexRetentionLease,
   type VectorIndexScope,
@@ -51,7 +51,7 @@ const REQUIRED_PAYLOAD_INDEXES = {
   expiresAt: "datetime",
   payloadSchemaVersion: "integer",
 } as const;
-const LEGACY_OPERATION_SIGNAL = new AbortController().signal;
+const DEFAULT_OPERATION_SIGNAL = new AbortController().signal;
 
 interface QdrantClientApi {
   collectionExists(name: string, signal?: AbortSignal): Promise<{ exists: boolean }>;
@@ -185,7 +185,7 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     readonly signal: AbortSignal;
   }): Promise<PreparedVectorIndex> {
     const compatibility = "compatibility" in input ? input.compatibility : input;
-    const signal = "compatibility" in input ? input.signal : LEGACY_OPERATION_SIGNAL;
+    const signal = "compatibility" in input ? input.signal : DEFAULT_OPERATION_SIGNAL;
     signal.throwIfAborted();
     assertInput(() => assertCompatibility(compatibility));
     const collection = collectionName(compatibility);
@@ -592,7 +592,7 @@ async function rawQdrantResult(
 }
 
 function operationSignal(signal: AbortSignal | undefined): AbortSignal {
-  return signal ?? LEGACY_OPERATION_SIGNAL;
+  return signal ?? DEFAULT_OPERATION_SIGNAL;
 }
 
 function collectionName(compatibility: VectorIndexCompatibility): string {

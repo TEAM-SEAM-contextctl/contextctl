@@ -1,16 +1,16 @@
 import {
   canonicalContractByteLength,
-  computePublicationV2Changes as computePublicationChanges,
-  computePublishedKnowledgeUnitV2Digest as computePublishedKnowledgeUnitDigest,
+  computePublicationChanges,
+  computePublishedKnowledgeUnitDigest,
   ContractValidationError,
   MAX_PUBLICATION_BYTES,
   MAX_PUBLICATION_FACT_BYTES,
   MAX_PUBLICATION_FACTS,
-  parseIngestionPublicationV2 as parseIngestionPublication,
-  type IngestionPublicationV2 as IngestionPublication,
-  type PublishedDocumentScopeV2 as PublishedDocumentScope,
-  type PublishedFactV2 as PublishedFact,
-  type PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
+  parseIngestionPublication,
+  type IngestionPublication,
+  type PublishedDocumentScope,
+  type PublishedFact,
+  type PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 
 import type {

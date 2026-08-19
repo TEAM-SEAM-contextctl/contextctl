@@ -1,4 +1,4 @@
-import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@contextctl/contracts";
+import type { PublishedSourceCoordinate } from "@contextctl/contracts";
 import {
   DeterministicCardMeaningGenerator,
   FallbackCardMeaningGenerator,

@@ -1,4 +1,4 @@
-import type { IngestionPublicationV2 as IngestionPublication } from "@contextctl/contracts";
+import type { IngestionPublication } from "@contextctl/contracts";
 
 import {
   buildEmptyMarkdownPublication,

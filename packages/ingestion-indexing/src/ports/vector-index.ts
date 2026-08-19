@@ -13,19 +13,9 @@ interface VectorIndexCompatibilityBase {
   readonly payloadSchemaVersion: 2;
 }
 
-/** @deprecated Pre-release shape retained for the downstream daemon migration. */
 export interface VectorIndexCompatibility extends VectorIndexCompatibilityBase {
-  readonly stateNamespaceId?: never;
-}
-
-export interface VectorIndexCompatibilityV2
-  extends VectorIndexCompatibilityBase {
   readonly stateNamespaceId: string;
 }
-
-export type VectorIndexCompatibilityInput =
-  | VectorIndexCompatibility
-  | VectorIndexCompatibilityV2;
 
 export interface PreparedVectorIndex {
   readonly accessHandle: string;
@@ -81,7 +71,7 @@ export interface VectorIndexRetentionLease {
 /** Outbound storage contract owned by the Ingestion indexing workflow. */
 export interface VectorIndexPort {
   prepare(input: {
-    readonly compatibility: VectorIndexCompatibilityInput;
+    readonly compatibility: VectorIndexCompatibility;
     readonly signal: AbortSignal;
   }): Promise<PreparedVectorIndex>;
   /**
@@ -90,7 +80,7 @@ export interface VectorIndexPort {
    */
   rehydrate(input: {
     readonly accessHandle: string;
-    readonly compatibility: VectorIndexCompatibilityInput;
+    readonly compatibility: VectorIndexCompatibility;
     readonly signal: AbortSignal;
   }): Promise<RehydratedVectorIndex>;
   upsertRecords(input: {

@@ -1,7 +1,7 @@
 import type {
-  PublishedChangedFieldV2 as PublishedChangedField,
-  PublishedChangeV2 as PublishedChange,
-  PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
+  PublishedChangedField,
+  PublishedChange,
+  PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 

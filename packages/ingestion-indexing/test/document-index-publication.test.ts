@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DocumentIndexPublisher,
-  InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
+  InMemoryIndexPublicationStore,
   InMemoryIndexStagingAttemptStore,
   InMemoryVectorIndexAdapter,
   PublishedDocumentScopeError,

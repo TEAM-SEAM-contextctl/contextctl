@@ -1,8 +1,8 @@
 import {
-  computePublishedKnowledgeUnitV2Digest,
-  parseIngestionPublicationV2 as parseIngestionPublication,
-  type IngestionPublicationV2 as IngestionPublication,
-  type PublishedKnowledgeUnitV2 as PublishedKnowledgeUnit,
+  computePublishedKnowledgeUnitDigest,
+  parseIngestionPublication,
+  type IngestionPublication,
+  type PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 
 /**
@@ -17,7 +17,7 @@ import {
 function seal(
   unit: Omit<PublishedKnowledgeUnit, "contentDigest">,
 ): PublishedKnowledgeUnit {
-  return { ...unit, contentDigest: computePublishedKnowledgeUnitV2Digest(unit) };
+  return { ...unit, contentDigest: computePublishedKnowledgeUnitDigest(unit) };
 }
 
 /** Markdown-backed publication: the MVP shape Registry consumes end to end. */

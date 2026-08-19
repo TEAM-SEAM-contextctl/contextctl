@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
-  PublishedDocumentScopeV2Schema as PublishedDocumentScopeSchema,
-  type PublishedScopeRefV2 as PublishedScopeRef,
+  PublishedDocumentScopeSchema,
+  type PublishedScopeRef,
 } from "@contextctl/contracts";
 
 import {
@@ -13,9 +13,9 @@ import { canonicalJson } from "../domain/revision-identity.js";
 import {
   IndexCatalogFault,
   IndexPublicationStoreConflict,
-  type CommitIndexPublicationV2Result as CommitIndexPublicationResult,
-  type IndexPublicationStoreV2 as IndexPublicationStore,
-  type PublishedIndexVersionV2 as PublishedIndexVersion,
+  type CommitIndexPublicationResult,
+  type IndexPublicationStore,
+  type PublishedIndexVersion,
   type PublishedScopeCatalogEntry,
 } from "../ports/index-publication-store.js";
 import { inIngestionTransaction } from "./sqlite-ingestion-database.js";

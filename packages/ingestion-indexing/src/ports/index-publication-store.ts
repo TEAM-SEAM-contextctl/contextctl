@@ -1,15 +1,11 @@
+import type { PublishedIndexVersion } from "../domain/published-index-version.js";
 import type {
-  PublishedIndexVersion,
-  PublishedIndexVersionV2,
-} from "../domain/published-index-version.js";
-import type {
-  PublishedDocumentScopeV2 as PublishedDocumentScope,
-  PublishedScopeRefV2 as PublishedScopeRef,
+  PublishedDocumentScope,
+  PublishedScopeRef,
 } from "@contextctl/contracts";
 
 export type {
   PublishedIndexVersion,
-  PublishedIndexVersionV2,
 } from "../domain/published-index-version.js";
 
 export interface CommitIndexPublicationResult {
@@ -17,17 +13,12 @@ export interface CommitIndexPublicationResult {
   readonly publication: PublishedIndexVersion;
 }
 
-export interface CommitIndexPublicationV2Result {
-  readonly status: "already_published" | "published";
-  readonly publication: PublishedIndexVersionV2;
-}
-
 export interface PublishedScopeCatalogEntry {
-  readonly publication: PublishedIndexVersionV2;
+  readonly publication: PublishedIndexVersion;
   readonly scope: PublishedDocumentScope;
 }
 
-/** @deprecated Pre-release v1 boundary retained for downstream migration. */
+/** Durable logical Scope catalog owned and consumed inside Indexing. */
 export interface IndexPublicationStore {
   findVersion(input: {
     readonly documentIndexId: string;
@@ -37,21 +28,9 @@ export interface IndexPublicationStore {
   commitCurrent(
     publication: PublishedIndexVersion,
   ): Promise<CommitIndexPublicationResult>;
-}
-
-/** Final v2 catalog boundary owned and consumed inside Indexing. */
-export interface IndexPublicationStoreV2 {
-  findVersion(input: {
-    readonly documentIndexId: string;
-    readonly indexVersion: string;
-  }): Promise<PublishedIndexVersionV2 | undefined>;
-  current(documentIndexId: string): Promise<PublishedIndexVersionV2 | undefined>;
   findScope(
     scopeRef: PublishedScopeRef,
   ): Promise<PublishedScopeCatalogEntry | undefined>;
-  commitCurrent(
-    publication: PublishedIndexVersionV2,
-  ): Promise<CommitIndexPublicationV2Result>;
 }
 
 export class IndexPublicationStoreConflict extends Error {

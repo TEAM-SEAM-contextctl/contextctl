@@ -4,7 +4,7 @@ import {
   DeterministicEmbeddingAdapter,
   DocumentIndexPublisher,
   EmbeddingProviderFault,
-  InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
+  InMemoryIndexPublicationStore,
   InMemoryIndexStagingAttemptStore,
   InMemoryVectorIndexAdapter,
   ManagedDocumentSearch,
@@ -14,7 +14,7 @@ import {
   sha256Digest,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
-  type PublishedIndexVersionV2 as PublishedIndexVersion,
+  type PublishedIndexVersion,
   type VectorIndexPort,
   type VectorIndexRecord,
 } from "../src/index.js";

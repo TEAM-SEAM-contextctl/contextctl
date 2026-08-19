@@ -1,4 +1,4 @@
-import type { IngestionPublicationV2 as IngestionPublication, PublicationId } from "@contextctl/contracts";
+import type { IngestionPublication, PublicationId } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

@@ -1,8 +1,7 @@
 import {
-  PublishedScopeRefV2Schema as PublishedScopeRefSchema,
-  type PublishedDocumentScope as LegacyPublishedDocumentScope,
-  type PublishedDocumentScopeV2 as PublishedDocumentScope,
-  type PublishedScopeRefV2 as PublishedScopeRef,
+  PublishedScopeRefSchema,
+  type PublishedDocumentScope,
+  type PublishedScopeRef,
 } from "@contextctl/contracts";
 
 import { sha256Digest } from "../domain/document-capture.js";
@@ -19,10 +18,8 @@ import { createVectorRecordId } from "../domain/vector-index.js";
 import { EmbeddingProviderFault } from "../ports/embedding.js";
 import {
   IndexCatalogFault,
-  type IndexPublicationStore as LegacyIndexPublicationStore,
-  type IndexPublicationStoreV2 as IndexPublicationStore,
-  type PublishedIndexVersion as LegacyPublishedIndexVersion,
-  type PublishedIndexVersionV2 as PublishedIndexVersion,
+  type IndexPublicationStore,
+  type PublishedIndexVersion,
   type PublishedScopeCatalogEntry,
 } from "../ports/index-publication-store.js";
 import type {
@@ -33,7 +30,7 @@ import type {
 import {
   MAX_VECTOR_SEARCH_LIMIT,
   VectorIndexFault,
-  type VectorIndexCompatibilityV2 as VectorIndexCompatibility,
+  type VectorIndexCompatibility,
   type VectorIndexPort,
   type VectorIndexScope,
   type VectorIndexSearchHit,
@@ -44,16 +41,7 @@ export const MAX_MANAGED_SEARCH_BATCH_TARGETS = 64;
 export const DEFAULT_MANAGED_SEARCH_CONCURRENCY = 8;
 export const MAX_MANAGED_SEARCH_QUERY_CHARACTERS = 32_768;
 
-/** @deprecated Use ManagedDocumentSearchV2Command after daemon migration. */
 export interface ManagedDocumentSearchCommand {
-  readonly queryText: string;
-  readonly securityDomain: string;
-  readonly scope: LegacyPublishedDocumentScope;
-  readonly limit: number;
-  readonly signal?: AbortSignal;
-}
-
-export interface ManagedDocumentSearchV2Command {
   readonly queryText: string;
   readonly securityDomain: string;
   readonly scopeRef: PublishedScopeRef;
@@ -108,7 +96,7 @@ export type BatchManagedDocumentSearchItem =
 export interface ManagedDocumentSearchDependencies {
   readonly embeddingProviders: QueryEmbeddingProviderResolver;
   readonly vectorIndexes: VectorIndexConnectorResolver;
-  readonly publications: IndexPublicationStore | LegacyIndexPublicationStore;
+  readonly publications: IndexPublicationStore;
   readonly maxConcurrency?: number;
 }
 
@@ -146,7 +134,6 @@ interface SearchRequestContext {
   readonly signal: AbortSignal;
   readonly securityDomain: string;
   readonly catalog: Map<string, Promise<PublishedScopeCatalogEntry | undefined>>;
-  readonly legacyScopes: ReadonlyMap<string, LegacyPublishedDocumentScope>;
   readonly embeddings: Map<string, Promise<readonly number[]>>;
   readonly bindings: Map<string, Promise<VectorIndexPort>>;
 }
@@ -181,31 +168,19 @@ export class ManagedDocumentSearch {
 
   async search(
     command: ManagedDocumentSearchCommand,
-  ): Promise<readonly DocumentSearchHit[]>;
-  async search(
-    command: ManagedDocumentSearchV2Command,
-  ): Promise<readonly DocumentSearchHit[]>;
-  async search(
-    command: ManagedDocumentSearchCommand | ManagedDocumentSearchV2Command,
   ): Promise<readonly DocumentSearchHit[]> {
-    const scopeRef = "scopeRef" in command
-      ? command.scopeRef
-      : { scopeId: command.scope.scopeId, scopeVersion: command.scope.scopeVersion };
-    const legacyScopes = "scope" in command
-      ? new Map([[scopeKey(scopeRef), command.scope]])
-      : new Map<string, LegacyPublishedDocumentScope>();
     const items = await this.#searchBatch({
       queryText: command.queryText,
       securityDomain: command.securityDomain,
       targets: [
         {
           targetKey: "single-target",
-          scopeRef,
+          scopeRef: command.scopeRef,
           limit: command.limit,
         },
       ],
       ...(command.signal === undefined ? {} : { signal: command.signal }),
-    }, legacyScopes);
+    });
     const item = items[0];
     if (item === undefined) {
       throw new ManagedDocumentSearchError("unexpected_failure");
@@ -222,12 +197,11 @@ export class ManagedDocumentSearch {
   async searchBatch(
     command: BatchManagedDocumentSearchCommand,
   ): Promise<readonly BatchManagedDocumentSearchItem[]> {
-    return this.#searchBatch(command, new Map());
+    return this.#searchBatch(command);
   }
 
   async #searchBatch(
     command: BatchManagedDocumentSearchCommand,
-    legacyScopes: ReadonlyMap<string, LegacyPublishedDocumentScope>,
   ): Promise<readonly BatchManagedDocumentSearchItem[]> {
     validateBatchCommand(command);
     const context: SearchRequestContext = {
@@ -235,7 +209,6 @@ export class ManagedDocumentSearch {
       securityDomain: command.securityDomain,
       signal: command.signal ?? new AbortController().signal,
       catalog: new Map(),
-      legacyScopes,
       embeddings: new Map(),
       bindings: new Map(),
     };
@@ -413,9 +386,7 @@ export class ManagedDocumentSearch {
     const key = `${scopeRef.scopeId}\u0000${scopeRef.scopeVersion}`;
     let pending = context.catalog.get(key);
     if (pending === undefined) {
-      pending = isV2PublicationStore(this.#dependencies.publications)
-        ? this.#dependencies.publications.findScope(scopeRef)
-        : this.#legacyCatalogScope(scopeRef, context);
+      pending = this.#dependencies.publications.findScope(scopeRef);
       context.catalog.set(key, pending);
     }
     try {
@@ -423,20 +394,6 @@ export class ManagedDocumentSearch {
     } catch (error) {
       throw mapCatalogError(error);
     }
-  }
-
-  async #legacyCatalogScope(
-    scopeRef: PublishedScopeRef,
-    context: SearchRequestContext,
-  ): Promise<PublishedScopeCatalogEntry | undefined> {
-    const scope = context.legacyScopes.get(scopeKey(scopeRef));
-    if (scope === undefined) return undefined;
-    const publication = await this.#dependencies.publications.findVersion({
-      documentIndexId: scope.documentIndex.documentIndexId,
-      indexVersion: scope.documentIndex.indexVersion,
-    });
-    if (publication === undefined || "binding" in publication) return undefined;
-    return normalizeLegacyCatalogEntry(publication, scope);
   }
 
   async #rehydrateBinding(
@@ -603,68 +560,8 @@ function parseTarget(
   return parsedScope.data;
 }
 
-function scopeKey(scopeRef: PublishedScopeRef): string {
-  return `${scopeRef.scopeId}\u0000${scopeRef.scopeVersion}`;
-}
-
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function isV2PublicationStore(
-  store: IndexPublicationStore | LegacyIndexPublicationStore,
-): store is IndexPublicationStore {
-  return "findScope" in store && typeof store.findScope === "function";
-}
-
-function normalizeLegacyCatalogEntry(
-  publication: LegacyPublishedIndexVersion,
-  requestedScope: LegacyPublishedDocumentScope,
-): PublishedScopeCatalogEntry | undefined {
-  const documentIndex = {
-    documentIndexId: publication.documentIndex.documentIndexId,
-    sourceId: publication.documentIndex.sourceId,
-    documentId: publication.documentIndex.documentId,
-    indexVersion: publication.documentIndex.indexVersion,
-  };
-  const scopes: PublishedDocumentScope[] = publication.scopes.map((scope) => ({
-    scopeId: scope.scopeId,
-    scopeVersion: scope.scopeVersion,
-    kind: "managed_document",
-    documentIndex: {
-      documentIndexId: scope.documentIndex.documentIndexId,
-      sourceId: scope.documentIndex.sourceId,
-      documentId: scope.documentIndex.documentId,
-      indexVersion: scope.documentIndex.indexVersion,
-    },
-    selector: structuredClone(scope.selector),
-  }));
-  const scope = scopes.find(
-    (candidate) =>
-      candidate.scopeId === requestedScope.scopeId &&
-      candidate.scopeVersion === requestedScope.scopeVersion,
-  );
-  if (scope === undefined) return undefined;
-  return {
-    publication: {
-      manifest: {
-        ...publication.manifest,
-        stateNamespaceId: "legacy-v1",
-        securityDomain: publication.securityDomain,
-      },
-      documentIndex,
-      scopes,
-      binding: {
-        stateNamespaceId: "legacy-v1",
-        securityDomain: publication.securityDomain,
-        documentIndexId: publication.documentIndex.documentIndexId,
-        indexVersion: publication.documentIndex.indexVersion,
-        connectorId: publication.documentIndex.connectorId,
-        accessHandle: publication.documentIndex.accessHandle,
-      },
-    },
-    scope,
-  };
 }
 
 function mapCatalogError(error: unknown): ManagedDocumentSearchError {

@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   type PublicationReady,
-  parseIngestionPublicationV2 as parseIngestionPublication,
-  type IngestionPublicationV2 as IngestionPublication,
+  parseIngestionPublication,
+  type IngestionPublication,
 } from "@contextctl/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 

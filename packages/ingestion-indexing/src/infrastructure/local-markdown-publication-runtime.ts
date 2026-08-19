@@ -26,7 +26,7 @@ import type {
   IngestionPublicationStore,
   MarkdownPublicationCheckpointStore,
 } from "../ports/markdown-publication.js";
-import type { IndexPublicationStoreV2 as IndexPublicationStore } from "../ports/index-publication-store.js";
+import type { IndexPublicationStore } from "../ports/index-publication-store.js";
 import type { IndexStagingAttemptStore } from "../ports/index-staging-attempt.js";
 import type { SourceObservationStore } from "../ports/source-observation.js";
 import type {
@@ -35,7 +35,7 @@ import type {
   SourceIdGenerator,
 } from "../ports/source-adapter.js";
 import type { VectorIndexPort } from "../ports/vector-index.js";
-import { InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore } from "./in-memory-index-publication-store.js";
+import { InMemoryIndexPublicationStore } from "./in-memory-index-publication-store.js";
 import { InMemoryIndexStagingAttemptStore } from "./in-memory-index-staging-attempt-store.js";
 import { InMemoryIngestionPublicationStore } from "./in-memory-ingestion-publication-store.js";
 import { InMemoryMarkdownPublicationCheckpointStore } from "./in-memory-markdown-publication-checkpoint-store.js";
