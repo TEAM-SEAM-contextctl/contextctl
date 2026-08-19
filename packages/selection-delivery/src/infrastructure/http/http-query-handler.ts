@@ -1,12 +1,13 @@
+import type {
+  ResolveContextApplication,
+  ResolveContextRequest,
+} from "../../application/context-application.js";
 import {
-  resolveContext,
-  type ResolveContextOptions,
-  type ResolveContextPorts,
-} from "../../application/resolve-context.js";
-import { EmptyQueryError } from "../../application/errors.js";
-import type { ApprovedCard, ApprovedScope } from "../../domain/card-catalog.js";
-import { DEFAULT_EVIDENCE_BUDGET } from "../../domain/evidence-assembly.js";
-import { EvidenceBudgetInvariantError } from "../../domain/errors.js";
+  resolveContextError,
+  resolveContextErrorStatus,
+  toResolveContextErrorCode,
+  type ResolveContextErrorCode,
+} from "../../application/errors.js";
 
 /**
  * The read-only HTTP surface over this domain.
@@ -15,8 +16,16 @@ import { EvidenceBudgetInvariantError } from "../../domain/errors.js";
  * operator control plane that approves, rejects and rolls back. This file is
  * only the first half, and the `/v1/context/` namespace is what keeps the two
  * apart — a future control plane lands under its own prefix rather than beside
- * these routes, so "is this endpoint a mutation" stays answerable from the path
+ * this route, so "is this endpoint a mutation" stays answerable from the path
  * alone.
+ *
+ * One route, and that is the whole surface. A catalog listing route used to sit
+ * beside it and is gone: a caller that can enumerate the approved Cards can map
+ * the catalog without ever asking a question, and it answered nothing a
+ * resolution does not answer already. The resolution route was renamed after
+ * the selection in the same change, because what a caller receives is the
+ * resolved context and not the selection — the selection is one summary block
+ * inside it now.
  *
  * ADR 0005 rules out a framework, so the request is reduced to the three fields
  * a route actually decides on and the handler is an ordinary async function.
@@ -43,44 +52,32 @@ export type DeliveryHttpHandler = (
   request: DeliveryHttpRequest,
 ) => Promise<DeliveryHttpResponse>;
 
-const SELECTION_PATH = "/v1/context/selection";
-const CARDS_PATH = "/v1/context/cards";
+/** The one route this surface serves. */
+export const RESOLVE_PATH = "/v1/context/resolve";
 
 /**
- * Every failure this surface can report.
+ * The two failures that are about HTTP rather than about resolution.
  *
- * A closed set, and deliberately coarse: a code names what the caller has to do
- * differently, never what went wrong inside. `internal_error` in particular
- * carries no detail at all — see `runResolution`.
+ * `ResolveContextErrorCode` names what a caller has to do differently about the
+ * question it asked; neither of these is that. A wrong verb and an unknown path
+ * are answered before a request body is read at all, so folding them into the
+ * resolution vocabulary would hand a caller a code implying its query was
+ * rejected when no query was ever parsed.
  */
-type DeliveryErrorCode =
-  | "invalid_json"
-  | "invalid_query"
-  | "empty_query"
-  | "invalid_budget"
-  | "method_not_allowed"
-  | "not_found"
-  | "internal_error";
-
-/** What `GET /v1/context/cards` says about one approved Card. */
-interface ApprovedCardSummary {
-  readonly cardId: string;
-  readonly description: string;
-  readonly keywords: readonly string[];
-  readonly scopeKinds: readonly string[];
-}
+type RoutingErrorCode = "method_not_allowed" | "not_found";
 
 /**
  * Builds the handler for the query surface.
  *
- * `options` are the defaults every request runs under. A request may narrow the
- * evidence budget but never widen anything else: thresholds decide what a query
- * is allowed to reach, and letting a caller set them over HTTP would turn a
- * selection policy into a request parameter.
+ * It takes the application and nothing else. A budget default used to be handed
+ * in here as well, which meant the surface knew the configured ceiling and had
+ * to decide, on its own, what a caller's `maxContextCharacters` did to it — a
+ * decision the MCP surface then made a second time, from its own copy. The rule
+ * lives in `narrowContextBudget` now, where the configured budget actually is,
+ * and both surfaces do the same thing: forward the number a caller sent.
  */
 export function createHttpQueryHandler(
-  ports: ResolveContextPorts,
-  options?: ResolveContextOptions,
+  application: ResolveContextApplication,
 ): DeliveryHttpHandler {
   return async (request: DeliveryHttpRequest): Promise<DeliveryHttpResponse> => {
     const path = stripQueryString(request.path);
@@ -89,156 +86,100 @@ export function createHttpQueryHandler(
     // wrong verb answers 405 rather than 404: the two say different things to a
     // caller, and collapsing them would hide a typo'd method behind a missing
     // endpoint.
-    if (path === SELECTION_PATH) {
+    if (path === RESOLVE_PATH) {
       if (request.method !== "POST") {
-        return errorResponse(405, "method_not_allowed");
+        return routingError(405, "method_not_allowed");
       }
-      return runResolution(ports, options, request.body);
+      return runResolution(application, request.body);
     }
 
-    if (path === CARDS_PATH) {
-      if (request.method !== "GET") {
-        return errorResponse(405, "method_not_allowed");
-      }
-      return listCards(ports);
-    }
-
-    return errorResponse(404, "not_found");
+    return routingError(404, "not_found");
   };
 }
 
 /**
  * Decodes a resolution request, runs the use case, and reduces every failure to
- * a code.
+ * a `ResolveContextError`.
  *
- * The catch is total on purpose. `EmptyQueryError` and
- * `EvidenceBudgetInvariantError` are the two failures this surface can explain
- * to a caller, and anything else is a fault the caller cannot act on: it
- * becomes `internal_error` with no message attached, because an exception
- * raised deep in an adapter names hosts, paths and credentials, and a delivery
- * response is exactly the wrong place for them. `resolve-context.ts` keeps the
- * same rule for retrieval faults: a Scope that could not be read becomes a
- * `failed` item carrying a code, never a message.
+ * The catch is total on purpose, and every branch of it lands on a code from one
+ * closed vocabulary carrying the `retriable` that code always has. A caller
+ * reading `retriable` therefore never has to know which layer failed in order to
+ * decide whether sending the same request again could work.
+ *
+ * No exception message is ever forwarded. `unexpected_failure` in particular
+ * carries no detail at all, because an exception raised deep in an adapter names
+ * hosts, paths and credentials, and a delivery response is exactly the wrong
+ * place for them. Item-level failures keep the same rule one level down: a Scope
+ * that could not be read becomes a `failed` fulfillment carrying a code, never a
+ * message.
  */
 async function runResolution(
-  ports: ResolveContextPorts,
-  options: ResolveContextOptions | undefined,
+  application: ResolveContextApplication,
   body: string,
 ): Promise<DeliveryHttpResponse> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return errorResponse(400, "invalid_json");
+    return errorResponse("invalid_request");
   }
 
   // A body that is valid JSON but not an object — a bare string, a number, an
   // array — carries no `query`, which is the same defect as omitting it.
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return errorResponse(400, "invalid_query");
+    return errorResponse("invalid_request");
   }
 
   const payload = parsed as Record<string, unknown>;
   const query = payload["query"];
   if (typeof query !== "string") {
-    return errorResponse(400, "invalid_query");
+    return errorResponse("invalid_request");
   }
 
-  const requestedCharacters = payload["maxEvidenceCharacters"];
-  if (requestedCharacters !== undefined && typeof requestedCharacters !== "number") {
+  const requestedCharacters = payload["maxContextCharacters"];
+  if (
+    requestedCharacters !== undefined &&
+    typeof requestedCharacters !== "number"
+  ) {
     // Rejected here rather than forwarded, so a non-numeric ceiling is refused
     // by the same code as a numerically impossible one instead of reaching the
-    // domain invariant as a lie about its own type.
-    return errorResponse(400, "invalid_budget");
+    // budget rule as a lie about its own type.
+    return errorResponse("invalid_context_budget");
   }
 
-  const effectiveOptions = withBudgetOverride(options, requestedCharacters);
+  const request = withRequestedCeiling(query, requestedCharacters);
 
   try {
     // Serialized whole and unexamined. The `ContextResolution` type is what
     // decides what a consumer may see — `ManagedDocumentGuide` omits the
-    // connector id and access handle on purpose — so re-picking fields here
-    // would only create a second place for that decision to drift.
-    const resolution = await resolveContext(ports, query, effectiveOptions);
+    // connector id and access handle on purpose, and `RetrievedDocumentChunk`
+    // omits `rank` and `score` — so re-picking fields here would only create a
+    // second place for that decision to drift.
+    const resolution = await application.resolveContext(request);
     return { status: 200, body: JSON.stringify(resolution) };
   } catch (cause: unknown) {
-    if (cause instanceof EmptyQueryError) {
-      return errorResponse(400, "empty_query");
-    }
-    if (cause instanceof EvidenceBudgetInvariantError) {
-      return errorResponse(400, "invalid_budget");
-    }
-    return errorResponse(500, "internal_error");
+    return errorResponse(toResolveContextErrorCode(cause));
   }
 }
 
 /**
- * Applies a caller's character ceiling on top of the configured budget.
+ * Built by assignment rather than as one literal: `exactOptionalPropertyTypes`
+ * makes `{ maxContextCharacters: undefined }` different from an absent key, and
+ * an absent key is what selects the deployment's configured ceiling.
  *
- * Only `maxTotalCharacters` moves: the chunk ceiling exists to cap how many
- * separate citations an answer carries, which is an assembly decision rather
- * than a caller's, and the base budget is the configured one rather than a
- * fresh default so an override does not silently discard a `maxChunks` the
- * daemon set. Whether the resulting pair is usable at all is not re-decided
- * here — `assembleDocumentEvidence` owns that invariant, and restating it would
- * let the two drift apart.
+ * The value is forwarded rather than applied. `narrowContextBudget` owns the
+ * `min(configured, requested)` rule and the refusals around it, and it runs
+ * inside the application where the configured budget actually lives — restating
+ * either here would let the surface and the use case disagree about what a
+ * caller is allowed to ask for.
  */
-function withBudgetOverride(
-  options: ResolveContextOptions | undefined,
+function withRequestedCeiling(
+  query: string,
   requestedCharacters: number | undefined,
-): ResolveContextOptions {
-  if (requestedCharacters === undefined) {
-    return options ?? {};
-  }
-
-  return {
-    ...(options ?? {}),
-    budget: {
-      ...(options?.budget ?? DEFAULT_EVIDENCE_BUDGET),
-      maxTotalCharacters: requestedCharacters,
-    },
-  };
-}
-
-/**
- * Lists the approved Cards a query could select over.
- *
- * A summary rather than the Card itself: `documentIndex` carries a connector id
- * and an access handle, and a catalog listing is a discovery aid, not a reason
- * to publish retrieval coordinates to anyone who asks. Scope kinds are named
- * because they tell a caller what shape of answer a Card can produce.
- */
-async function listCards(
-  ports: ResolveContextPorts,
-): Promise<DeliveryHttpResponse> {
-  try {
-    const cards = await ports.catalog.listApprovedCards();
-    return {
-      status: 200,
-      body: JSON.stringify({ cards: cards.map(summarizeCard) }),
-    };
-  } catch {
-    return errorResponse(500, "internal_error");
-  }
-}
-
-function summarizeCard(card: ApprovedCard): ApprovedCardSummary {
-  return {
-    cardId: card.cardId,
-    description: card.meaning.description,
-    keywords: [...card.meaning.keywords],
-    scopeKinds: distinctScopeKinds(card.scopes),
-  };
-}
-
-/**
- * Each Scope kind once, in the order the Card declares it.
- *
- * `Set` iterates in insertion order, so the result is a function of the Card
- * alone and never of a locale or a sort.
- */
-function distinctScopeKinds(scopes: readonly ApprovedScope[]): readonly string[] {
-  return [...new Set(scopes.map((scope) => scope.kind))];
+): ResolveContextRequest {
+  return requestedCharacters === undefined
+    ? { query }
+    : { query, maxContextCharacters: requestedCharacters };
 }
 
 /**
@@ -253,9 +194,25 @@ function stripQueryString(path: string): string {
   return separator === -1 ? path : path.slice(0, separator);
 }
 
-function errorResponse(
+/** One resolution failure, with the status and `retriable` its code fixes. */
+function errorResponse(code: ResolveContextErrorCode): DeliveryHttpResponse {
+  return {
+    status: resolveContextErrorStatus(code),
+    body: JSON.stringify({ error: resolveContextError(code) }),
+  };
+}
+
+/**
+ * A routing failure, which states `retriable` for the same reason a resolution
+ * error does: a client branching on the field must not have to know which of the
+ * two vocabularies answered it.
+ */
+function routingError(
   status: number,
-  code: DeliveryErrorCode,
+  code: RoutingErrorCode,
 ): DeliveryHttpResponse {
-  return { status, body: JSON.stringify({ error: { code } }) };
+  return {
+    status,
+    body: JSON.stringify({ error: { code, retriable: false } }),
+  };
 }

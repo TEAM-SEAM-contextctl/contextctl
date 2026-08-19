@@ -3,23 +3,26 @@ import { describe, expect, it } from "vitest";
 import {
   createHttpQueryHandler,
   createMcpQueryServer,
-  DEFAULT_EVIDENCE_BUDGET,
-  FixtureDocumentRetriever,
-  InMemoryCardCatalog,
+  CONTEXT_ASSEMBLY_POLICY_VERSION,
+  CONTEXT_FUSION_POLICY_VERSION,
+  DEFAULT_CONTEXT_BUDGET,
   MCP_PROTOCOL_VERSION,
-  resolveContext,
+  QUERY_SCORING_POLICY_VERSION,
+  RESOLVE_PATH,
   SELECTION_MCP_TOOL_NAMES,
+  SELECTION_PLANNING_POLICY_VERSION,
+  SELECTION_RANKING_POLICY_VERSION,
   type ContextResolution,
+  type ContextResolutionItem,
   type DeliveryHttpHandler,
   type McpQueryServer,
-  type ResolutionItem,
-  type ResolveContextPorts,
-  type SelectionVerdict,
+  type ResolveContextApplication,
 } from "../src/index.js";
 import {
   createDemoCardSet,
   DEMO_QUERY,
 } from "./fixtures/approved-card.fixture.js";
+import { createFixtureContextApplication } from "./fixtures/context-application.fixture.js";
 import { createRefundPolicyChunkMap } from "./fixtures/document-chunk.fixture.js";
 
 /**
@@ -67,29 +70,39 @@ interface ToolCallResult {
   readonly isError?: boolean;
 }
 
-function createDemoPorts(): ResolveContextPorts {
-  return {
-    catalog: new InMemoryCardCatalog(createDemoCardSet()),
-    retriever: new FixtureDocumentRetriever(createRefundPolicyChunkMap()),
-  };
+/**
+ * The demo pipeline behind the one interface a surface may hold.
+ *
+ * `createFixtureContextApplication` imports from `../src/index.js` too, so the
+ * "only the published surface" rule this suite exists for survives the helper:
+ * a symbol missing from the entry point fails here exactly as before.
+ */
+function createDemoApplication(): ResolveContextApplication {
+  return createFixtureContextApplication({
+    cards: createDemoCardSet(),
+    chunks: createRefundPolicyChunkMap(),
+  });
 }
 
-function verdictOf(
-  resolution: ContextResolution,
-  cardId: string,
-): SelectionVerdict {
-  const outcome = resolution.selection.outcomes.find(
-    (candidate) => candidate.cardId === cardId,
-  );
+function resolveDirectly(): Promise<ContextResolution> {
+  return createDemoApplication().resolveContext({ query: DEMO_QUERY });
+}
 
-  expect(outcome, `no outcome for ${cardId}`).toBeDefined();
-  return (outcome as { readonly verdict: SelectionVerdict }).verdict;
+/**
+ * Whether the selection summary reports this Card as answering the query.
+ *
+ * `selected` lists admitted Cards only, so membership is the whole verdict a
+ * consumer receives. A deferred or rejected Card is not named anywhere in a
+ * response, which is why this cannot tell those two apart and does not try.
+ */
+function wasSelected(resolution: ContextResolution, cardId: string): boolean {
+  return resolution.selection.selected.some((card) => card.cardId === cardId);
 }
 
 function itemFor(
   resolution: ContextResolution,
   scopeId: string,
-): ResolutionItem {
+): ContextResolutionItem {
   const found = resolution.items.find(
     (item) => item.guide.scopeRef.scopeId === scopeId,
   );
@@ -100,10 +113,11 @@ function itemFor(
   return found;
 }
 
-/** `versionId/scopeId` for every item, in the order the response lists them. */
+/** `scopeId/scopeVersion` for every item, in the order the response lists them. */
 function coordinates(resolution: ContextResolution): readonly string[] {
   return resolution.items.map(
-    (item) => `${item.versionId}/${item.guide.scopeRef.scopeId}`,
+    (item) =>
+      `${item.guide.scopeRef.scopeId}/${item.guide.scopeRef.scopeVersion}`,
   );
 }
 
@@ -132,25 +146,34 @@ function expectDemoResolution(resolution: ContextResolution): void {
   // The selection itself: the demo query reaches all three Cards under the
   // thresholds the package ships, so no test here has to widen the band to see
   // a Scope kind.
-  expect(verdictOf(resolution, "card_refund_policy")).toBe("admit");
-  expect(verdictOf(resolution, "card_payments_table")).toBe("admit");
-  expect(verdictOf(resolution, "card_payment_api")).toBe("admit");
+  expect(wasSelected(resolution, "card_refund_policy")).toBe(true);
+  expect(wasSelected(resolution, "card_payments_table")).toBe(true);
+  expect(wasSelected(resolution, "card_payment_api")).toBe(true);
+  expect(resolution.selection.counts).toEqual({
+    admitted: 3,
+    deferred: 0,
+    rejected: 0,
+  });
 
   expect(coordinates(resolution)).toEqual([
-    "cardv_payment_api_v1/scope_payment_get",
-    "cardv_payments_table_v1/scope_payments_table",
-    "cardv_refund_policy_v1/scope_refund_policy_doc",
+    "scope_payment_get/scopev_0001",
+    "scope_payments_table/scopev_0001",
+    "scope_refund_policy_doc/scopev_0001",
   ]);
-  // And that list is the sorted one: ascending versionId, then ascending
-  // scopeId. Two responses to the same query are directly comparable only if
-  // the order is a function of identity rather than of the ranking.
+  // And that list is the sorted one: ascending scopeId, then ascending
+  // scopeVersion. Two responses to the same query are directly comparable only
+  // if the order is a function of identity rather than of the ranking. Card
+  // identity cannot carry it any more — an item can be selected by several
+  // Cards — so Scope identity does.
   expect(coordinates(resolution)).toEqual([...coordinates(resolution)].sort());
 
   // What the three items are, as sets rather than positions: one Scope we
   // answer ourselves and two we hand back as coordinates, one per Scope kind.
   // Stated as sorted sets so the check survives the ordering rule above
   // changing, which is a separate decision from which outcomes exist.
-  expect(resolution.items.map((item) => item.fulfillment).sort()).toEqual([
+  expect(
+    resolution.items.map((item) => item.fulfillment.status).sort(),
+  ).toEqual([
     "delegated",
     "delegated",
     "fulfilled",
@@ -163,23 +186,32 @@ function expectDemoResolution(resolution: ContextResolution): void {
 
   // The document Scope was fulfilled from our own index...
   const document = itemFor(resolution, "scope_refund_policy_doc");
-  expect(document.fulfillment).toBe("fulfilled");
-  if (document.fulfillment !== "fulfilled") {
+  expect(document.fulfillment.status).toBe("fulfilled");
+  if (document.fulfillment.status !== "fulfilled") {
     throw new Error("expected a fulfilled document item");
   }
-  expect(document.context.chunks.length).toBeGreaterThan(0);
-  // ...and every chunk is cited back to the one Scope that authorised it.
-  // Evidence that cannot name an approved source is worse than no evidence.
-  for (const chunk of document.context.chunks) {
-    expect(chunk.cardId).toBe(document.cardId);
-    expect(chunk.versionId).toBe(document.versionId);
-    expect(chunk.scopeRef).toEqual(document.guide.scopeRef);
-  }
+  expect(document.fulfillment.context.chunks.length).toBeGreaterThan(0);
+  // ...and the item it sits in names the one Scope that authorised it. Context
+  // that cannot name an approved source is worse than no context. The chunk no
+  // longer repeats the attribution: one statement cannot contradict itself.
+  expect(document.guide.scopeRef.scopeId).toBe("scope_refund_policy_doc");
+  expect(document.fulfillment.context.contentTrust).toBe("untrusted");
+  expect(
+    document.fulfillment.context.chunks.map((chunk) => chunk.contextRank),
+  ).toEqual([1, 2, 3]);
+  // And the item names the Card that selected it, which is what the merge would
+  // otherwise have lost.
+  expect(document.selectedBy).toEqual([
+    { cardId: "card_refund_policy", versionId: "cardv_refund_policy_v1" },
+  ]);
 
   // ...while the consumer's own table was answered with a coordinate rather
   // than with rows.
   const payments = itemFor(resolution, "scope_payments_table");
-  expect(payments.fulfillment).toBe("delegated");
+  expect(payments.fulfillment).toEqual({
+    status: "delegated",
+    executor: "consumer",
+  });
   if (payments.guide.kind !== "sql") {
     throw new Error("expected a sql guide");
   }
@@ -197,7 +229,10 @@ function expectDemoResolution(resolution: ContextResolution): void {
   // callable. Nothing checked this before: the demo query used to reject this
   // Card, so no round trip ever carried an HTTP guide at all.
   const api = itemFor(resolution, "scope_payment_get");
-  expect(api.fulfillment).toBe("delegated");
+  expect(api.fulfillment).toEqual({
+    status: "delegated",
+    executor: "consumer",
+  });
   if (api.guide.kind !== "http") {
     throw new Error("expected an http guide");
   }
@@ -207,20 +242,34 @@ function expectDemoResolution(resolution: ContextResolution): void {
 
   // Every comparability fact, in one block, on every surface.
   expect(resolution.policy).toEqual({
-    payloadSchemaVersion: 2,
-    scoring: "selection-scoring-v1",
-    ranking: "selection-ranking-v1",
-    evidence: "evidence-assembly-v1",
-    budget: DEFAULT_EVIDENCE_BUDGET,
+    payloadSchemaVersion: 3,
+    scoring: QUERY_SCORING_POLICY_VERSION,
+    ranking: SELECTION_RANKING_POLICY_VERSION,
+    planning: SELECTION_PLANNING_POLICY_VERSION,
+    fusion: CONTEXT_FUSION_POLICY_VERSION,
+    assembly: CONTEXT_ASSEMBLY_POLICY_VERSION,
+    budget: DEFAULT_CONTEXT_BUDGET,
   });
 
   // The split-channel payload is gone: evidence, contracts and failures used to
   // be three sibling lists a consumer had to re-join by coordinates, and a
-  // surface still emitting one of them would be shipping schema version 1
-  // under a version 2 label.
-  for (const field of ["evidence", "contracts", "retrievalFailures"]) {
+  // surface still emitting one of them would be shipping schema version 1 under
+  // a later label. `candidates` joins them at version 3: publishing every Card
+  // a query was scored against handed a consumer the catalog's shape one
+  // question at a time.
+  for (const field of [
+    "evidence",
+    "contracts",
+    "retrievalFailures",
+    "candidates",
+  ]) {
     expect(Object.hasOwn(resolution, field)).toBe(false);
   }
+  expect(Object.keys(resolution.selection).sort()).toEqual([
+    "counts",
+    "mode",
+    "selected",
+  ]);
 
   expectNoRetrievalCoordinates(resolution);
 }
@@ -263,7 +312,7 @@ async function send(
 
 /** One `resolve_context` tool call, initialize and handshake included. */
 async function resolveOverMcp(): Promise<ContextResolution> {
-  const server = createMcpQueryServer(createDemoPorts());
+  const server = createMcpQueryServer(createDemoApplication());
 
   const initialized = await send(server, {
     jsonrpc: "2.0",
@@ -315,8 +364,8 @@ async function post(
 }
 
 async function resolveOverHttp(): Promise<ContextResolution> {
-  const handler = createHttpQueryHandler(createDemoPorts());
-  const response = await post(handler, "/v1/context/selection", {
+  const handler = createHttpQueryHandler(createDemoApplication());
+  const response = await post(handler, RESOLVE_PATH, {
     query: DEMO_QUERY,
   });
 
@@ -326,33 +375,31 @@ async function resolveOverHttp(): Promise<ContextResolution> {
 
 describe("resolve context end to end", () => {
   it("resolves the demo query into one item per selected scope", async () => {
-    expectDemoResolution(await resolveContext(createDemoPorts(), DEMO_QUERY));
+    expectDemoResolution(await resolveDirectly());
   });
 
   it("ranks the refund exclusion chunk first", async () => {
-    const resolution = await resolveContext(createDemoPorts(), DEMO_QUERY);
+    const resolution = await resolveDirectly();
     const document = itemFor(resolution, "scope_refund_policy_doc");
 
-    if (document.fulfillment !== "fulfilled") {
+    if (document.fulfillment.status !== "fulfilled") {
       throw new Error("expected a fulfilled document item");
     }
     // The question asks which products cannot be refunded, and the chunk that
     // answers it beats two chunks written in the same vocabulary.
     //
     // The whole order is pinned, not just the winner, and it is reproducible
-    // rather than merely observed: `FixtureDocumentRetriever` sorts with
-    // `compareByScoreThenRevision` and `evidence-assembly.ts` re-sorts with
-    // `compareChunks`, and both are the same total order — score descending,
-    // then `chunkRevisionId` ascending. The three fixture chunks carry distinct
-    // revision ids, so that order is total and the result is deterministic.
-    //
-    // This particular order comes from the scores, not from the tie-break: the
-    // bigram Jaccard of the demo query against the three chunk texts is
-    // 0.108 / 0.030 / 0.027, three distinct numbers, so `compareChunks` never
-    // reaches its `chunkRevisionId` branch here. Anyone tempted to `.sort()`
-    // this assertion into passing should read that as the ranking having
-    // changed, which is the thing under test.
-    expect(document.context.chunks.map((chunk) => chunk.chunkId)).toEqual([
+    // rather than merely observed. `FixtureManagedExecutor` orders the three
+    // chunks by bigram Jaccard against the query — 0.108 / 0.030 / 0.027,
+    // three distinct numbers — and stamps ranks 1, 2, 3 on them in that order.
+    // Fusion then scores each at `1 / (60 + rank)`, which is strictly
+    // decreasing in rank, so the fused order is the rank order and
+    // `compareChunks` never reaches its `chunkRevisionId` branch here. Anyone
+    // tempted to `.sort()` this assertion into passing should read that as the
+    // ranking having changed, which is the thing under test.
+    expect(
+      document.fulfillment.context.chunks.map((chunk) => chunk.chunkId),
+    ).toEqual([
       "chunk_refund_excluded",
       "chunk_shipping_fee",
       "chunk_refund_window",
@@ -365,26 +412,28 @@ describe("resolve context end to end", () => {
 
   it("delivers the same result over an HTTP round trip", async () => {
     expectDemoResolution(await resolveOverHttp());
+  });
 
-    const handler = createHttpQueryHandler(createDemoPorts());
+  it("exposes one route and one tool, and nothing that lists the catalog", async () => {
+    const handler = createHttpQueryHandler(createDemoApplication());
     const listed = await handler({
       method: "GET",
       path: "/v1/context/cards",
       body: "",
     });
 
-    expect(listed.status).toBe(200);
-    const { cards } = JSON.parse(listed.body) as {
-      readonly cards: readonly { readonly cardId: string }[];
-    };
-    expect(cards).toHaveLength(3);
+    // 404, not an empty listing: the route is gone rather than answering with
+    // nothing, so a consumer cannot enumerate the catalog without asking a
+    // question. The MCP half of the same removal is the tool list below.
+    expect(listed.status).toBe(404);
+    expect([...SELECTION_MCP_TOOL_NAMES]).toEqual(["resolve_context"]);
   });
 
   it("returns one identical payload whichever surface asked", async () => {
     // The shared assertion set above says the three surfaces agree on every
     // fact it names. This says they agree on the rest too — a field one surface
     // adds, drops or reorders has nowhere left to hide.
-    const direct = await resolveContext(createDemoPorts(), DEMO_QUERY);
+    const direct = await resolveDirectly();
     const overMcp = await resolveOverMcp();
     const overHttp = await resolveOverHttp();
 

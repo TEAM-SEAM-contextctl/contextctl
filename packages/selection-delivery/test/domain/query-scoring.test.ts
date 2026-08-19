@@ -56,7 +56,10 @@ function scoreByCardId(
 
 describe("scoreCardsAgainstQuery", () => {
   it("declares the policy version its scores were produced under", () => {
-    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-scoring-v1");
+    // `lexical`, and the name is a claim: everything this file compares is
+    // normalized text and character bigrams, so a version that did not name
+    // the family could not be paired with `selection.mode` in a response.
+    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-lexical-v1");
   });
 
   it("reaches the admit band when a declared keyword appears in the query", () => {

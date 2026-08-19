@@ -1,28 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import type { ResolveContextOptions, ResolveContextPorts } from "../../src/application/resolve-context.js";
 import type { ApprovedCard } from "../../src/domain/card-catalog.js";
 import type {
   ContextResolution,
-  ResolutionItem,
+  ContextResolutionItem,
 } from "../../src/domain/context-resolution.js";
-import { FixtureDocumentRetriever } from "../../src/infrastructure/fixture-document-retriever.js";
-import { InMemoryCardCatalog } from "../../src/infrastructure/in-memory-card-catalog.js";
 import {
   createMcpQueryServer,
   SELECTION_MCP_TOOL_NAMES,
   type McpQueryServer,
 } from "../../src/infrastructure/mcp/mcp-query-server.js";
 import {
-  DocumentRetrievalFault,
-  type DocumentRetrievalFaultCode,
-  type ManagedDocumentRetriever,
-} from "../../src/ports/managed-document-retriever.js";
-import {
   createDemoCardSet,
   createRefundPolicyCard,
   DEMO_QUERY,
 } from "../fixtures/approved-card.fixture.js";
+import { createFixtureContextApplication } from "../fixtures/context-application.fixture.js";
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
 
 /** The tool name prefixes ADR 0003 forbids from ever reaching `tools/list`. */
@@ -64,17 +57,13 @@ interface McpToolDescriptor {
   readonly inputSchema: Readonly<Record<string, unknown>>;
 }
 
-function createServer(
-  cards: readonly ApprovedCard[],
-  retriever: ManagedDocumentRetriever,
-  options?: ResolveContextOptions,
-): McpQueryServer {
-  const ports: ResolveContextPorts = {
-    catalog: new InMemoryCardCatalog(cards),
-    retriever,
-  };
-
-  return createMcpQueryServer(ports, options);
+function createServer(cards: readonly ApprovedCard[]): McpQueryServer {
+  return createMcpQueryServer(
+    createFixtureContextApplication({
+      cards,
+      chunks: createRefundPolicyChunkMap(),
+    }),
+  );
 }
 
 /**
@@ -88,17 +77,25 @@ function createServer(
  * under the shipped thresholds, so the checks run on the default path.
  */
 function createDemoServer(): McpQueryServer {
-  return createServer(
-    createDemoCardSet(),
-    new FixtureDocumentRetriever(createRefundPolicyChunkMap()),
-  );
+  return createServer(createDemoCardSet());
 }
 
-/** A one-Card server whose index always raises the given fault. */
-function createFaultingServer(code: DocumentRetrievalFaultCode): McpQueryServer {
-  return createServer([createRefundPolicyCard()], {
-    searchChunks: () => Promise.reject(new DocumentRetrievalFault(code)),
-  });
+/** A one-Card server whose executor always fails with the given code. */
+function createFailingServer(
+  code: string,
+  retriable = false,
+): McpQueryServer {
+  return createMcpQueryServer(
+    createFixtureContextApplication({
+      cards: [createRefundPolicyCard()],
+      execute: (_queryText, targets) =>
+        targets.map((target) => ({
+          targetKey: target.targetKey,
+          status: "failed" as const,
+          failure: { stage: "managed_search" as const, code, retriable },
+        })),
+    }),
+  );
 }
 
 /** Sends one message and asserts a response came back, returning it parsed. */
@@ -130,12 +127,21 @@ function readResolution(envelope: JsonRpcEnvelope): ContextResolution {
   return readToolPayload(envelope) as ContextResolution;
 }
 
-/** The one item a Card produced. Every demo Card declares exactly one Scope. */
-function itemOf(resolution: ContextResolution, cardId: string): ResolutionItem {
-  const item = resolution.items.find((candidate) => candidate.cardId === cardId);
+/**
+ * The one item a Card produced, found through `selectedBy`.
+ *
+ * An item is one Scope under one bound now rather than one (Card, Scope) pair,
+ * so a Card is one of possibly several that selected it. Every demo Card
+ * declares exactly one Scope and no two share one, so the lookup is still
+ * unambiguous here.
+ */
+function itemOf(resolution: ContextResolution, cardId: string): ContextResolutionItem {
+  const item = resolution.items.find((candidate) =>
+    candidate.selectedBy.some((reference) => reference.cardId === cardId),
+  );
 
   expect(item).toBeDefined();
-  return item as ResolutionItem;
+  return item as ContextResolutionItem;
 }
 
 function callTool(
@@ -153,7 +159,7 @@ function callTool(
 }
 
 describe("createMcpQueryServer", () => {
-  it("exposes exactly the two query tools and no control plane tool", async () => {
+  it("exposes exactly one query tool and no control plane tool", async () => {
     const envelope = await send(createDemoServer(), {
       jsonrpc: "2.0",
       id: 1,
@@ -163,9 +169,9 @@ describe("createMcpQueryServer", () => {
     const { tools } = envelope.result as { tools: readonly McpToolDescriptor[] };
     const names = tools.map((tool) => tool.name);
 
-    expect(names).toEqual(["list_context_cards", "resolve_context"]);
+    expect(names).toEqual(["resolve_context"]);
     expect(names).toEqual([...SELECTION_MCP_TOOL_NAMES]);
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(1);
 
     // ADR 0003: the absence is the decision, so it is asserted rather than
     // trusted to review — a control plane tool added later has to delete this.
@@ -198,27 +204,14 @@ describe("createMcpQueryServer", () => {
     expect(result.serverInfo.version).toBe("0.0.0");
   });
 
-  it("lists the approved Cards with their Scope kinds", async () => {
+  it("no longer lists the approved Cards at all", async () => {
+    // Not "answers an empty list": the tool is gone, so a caller asking for it
+    // is asking for a tool that does not exist. An agent that could enumerate
+    // every approved Card could map the catalog without asking a question.
     const envelope = await callTool(createDemoServer(), 2, "list_context_cards");
 
-    const payload = readToolPayload(envelope) as {
-      cards: readonly {
-        cardId: string;
-        description: string;
-        keywords: readonly string[];
-        scopeKinds: readonly string[];
-      }[];
-    };
-
-    expect(payload.cards.map((card) => card.cardId)).toEqual([
-      "card_refund_policy",
-      "card_payments_table",
-      "card_payment_api",
-    ]);
-    expect(payload.cards[0]?.scopeKinds).toEqual(["managed_document"]);
-    expect(payload.cards[1]?.scopeKinds).toEqual(["sql_source"]);
-    expect(payload.cards[2]?.scopeKinds).toEqual(["http_source"]);
-    expect(payload.cards[0]?.keywords).toContain("환불");
+    expect(envelope.result).toBeUndefined();
+    expect(envelope.error?.code).toBe(-32602);
   });
 
   it("resolves the demo query into one item per selected Scope", async () => {
@@ -229,7 +222,7 @@ describe("createMcpQueryServer", () => {
     const resolution = readResolution(envelope);
 
     expect(resolution.query).toBe(DEMO_QUERY);
-    expect(resolution.policy.payloadSchemaVersion).toBe(2);
+    expect(resolution.policy.payloadSchemaVersion).toBe(3);
     expect(resolution.items.length).toBeGreaterThan(0);
     expect(resolution.items).toHaveLength(3);
     expect(resolution.items.map((item) => item.guide.kind).sort()).toEqual([
@@ -239,16 +232,20 @@ describe("createMcpQueryServer", () => {
     ]);
 
     const document = itemOf(resolution, "card_refund_policy");
-    expect(document.fulfillment).toBe("fulfilled");
+    expect(document.fulfillment.status).toBe("fulfilled");
     expect(document.guide.kind).toBe("managed_document");
-    if (document.fulfillment !== "fulfilled") {
+    if (document.fulfillment.status !== "fulfilled") {
       throw new Error("the refund policy Scope must resolve to retrieved context");
     }
-    expect(document.context.chunks.length).toBeGreaterThan(0);
-    expect(document.context.chunks[0]?.cardId).toBe("card_refund_policy");
+    expect(document.fulfillment.context.chunks.length).toBeGreaterThan(0);
+    // Chunks are attributed by the item they sit in, not by a key repeated on
+    // each of them: an item can be selected by several Cards and its context
+    // belongs to all of them at once.
+    expect(document.fulfillment.context.chunks[0]?.contextRank).toBe(1);
+    expect(document.fulfillment.context.contentTrust).toBe("untrusted");
 
     const table = itemOf(resolution, "card_payments_table");
-    expect(table.fulfillment).toBe("delegated");
+    expect(table.fulfillment.status).toBe("delegated");
     expect(table.guide.kind).toBe("sql");
   });
 
@@ -330,33 +327,48 @@ describe("createMcpQueryServer", () => {
 
     expect(delegated).toHaveLength(2);
     for (const item of delegated) {
-      expect(item.fulfillment).toBe("delegated");
+      expect(item.fulfillment.status).toBe("delegated");
       // We never ran the consumer's source, so we are in no position to report
-      // a failure for it — `code` must be absent, not merely undefined.
-      expect(Object.hasOwn(item, "code")).toBe(false);
+      // a failure for it — `failure` must be absent, not merely undefined.
+      expect(Object.hasOwn(item.fulfillment, "failure")).toBe(false);
+      expect(item.fulfillment.executor).toBe("consumer");
     }
   });
 
+  /**
+   * Four codes from the executor's own vocabulary, none of which this package
+   * declares anywhere. That is the assertion: the code crosses by name, so a
+   * surface that folded it into a vocabulary of its own would answer with
+   * something other than what was handed to it.
+   */
   it.each([
-    "index_unavailable",
-    "index_version_mismatch",
-    "access_denied",
-  ] as const)("reports a %s fault as a failed item", async (code) => {
-    const envelope = await callTool(createFaultingServer(code), 14, "resolve_context", {
-      query: DEMO_QUERY,
-    });
+    "index_binding_unavailable",
+    "scope_not_published",
+    "security_domain_mismatch",
+    "query_embedding_failed",
+  ])("reports a %s failure under the executor's own name", async (code) => {
+    const envelope = await callTool(
+      createFailingServer(code, true),
+      14,
+      "resolve_context",
+      { query: DEMO_QUERY },
+    );
 
     const resolution = readResolution(envelope);
     const item = itemOf(resolution, "card_refund_policy");
 
-    expect(item.fulfillment).toBe("failed");
+    expect(item.fulfillment.status).toBe("failed");
     expect(item.guide.kind).toBe("managed_document");
-    if (item.fulfillment !== "failed") {
-      throw new Error("a faulting index must resolve to a failed item");
+    if (item.fulfillment.status !== "failed") {
+      throw new Error("a failing read must resolve to a failed item");
     }
-    expect(item.code).toBe(code);
-    // The fault's own message is written for an operator, not a consumer.
-    expect(JSON.stringify(envelope)).not.toContain("Document retrieval failed");
+    expect(item.fulfillment.failure).toEqual({
+      stage: "managed_search",
+      code,
+      retriable: true,
+    });
+    // The exception behind a failure is written for an operator, not a consumer.
+    expect(JSON.stringify(envelope)).not.toContain("Managed document search failed");
   });
 
   it("rejects a resolve_context call that carries no query", async () => {
@@ -375,13 +387,46 @@ describe("createMcpQueryServer", () => {
 
     expect(envelope.error).toBeUndefined();
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("EmptyQueryError");
+    // A machine-readable record rather than an exception's own `name: message`.
+    // An agent deciding whether to retry should not have to parse English, and
+    // the same record is what the HTTP surface puts in its body.
+    expect(JSON.parse(result.content[0]?.text ?? "null")).toEqual({
+      error: { code: "empty_query", retriable: false },
+    });
   });
 
-  it("applies a caller's evidence character ceiling", async () => {
+  it("reports a ceiling it cannot apply as invalid_context_budget", async () => {
+    const envelope = await callTool(createDemoServer(), 15, "resolve_context", {
+      query: DEMO_QUERY,
+      // Above the configured ceiling: refused rather than clamped, so a caller
+      // that believed it had widened the budget is told it had not.
+      maxContextCharacters: 999_999,
+    });
+
+    const result = readToolResult(envelope);
+
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0]?.text ?? "null")).toEqual({
+      error: { code: "invalid_context_budget", retriable: false },
+    });
+  });
+
+  it("rejects a ceiling of the wrong type as a protocol error", async () => {
+    // The declared input schema says `number`, so a string breaks the contract
+    // the caller was handed rather than asking for something we refuse.
+    const envelope = await callTool(createDemoServer(), 16, "resolve_context", {
+      query: DEMO_QUERY,
+      maxContextCharacters: "1",
+    });
+
+    expect(envelope.result).toBeUndefined();
+    expect(envelope.error?.code).toBe(-32602);
+  });
+
+  it("applies a caller's context character ceiling", async () => {
     const envelope = await callTool(createDemoServer(), 6, "resolve_context", {
       query: DEMO_QUERY,
-      maxEvidenceCharacters: 1,
+      maxContextCharacters: 1,
     });
 
     const resolution = readResolution(envelope);
@@ -391,12 +436,12 @@ describe("createMcpQueryServer", () => {
     expect(resolution.policy.budget.maxTotalCharacters).toBe(1);
 
     const document = itemOf(resolution, "card_refund_policy");
-    expect(document.fulfillment).toBe("fulfilled");
-    if (document.fulfillment !== "fulfilled") {
+    expect(document.fulfillment.status).toBe("fulfilled");
+    if (document.fulfillment.status !== "fulfilled") {
       throw new Error("a clipped Scope is still fulfilled, not failed");
     }
-    expect(document.context.chunks).toEqual([]);
-    expect(document.context.truncated).toBe(true);
+    expect(document.fulfillment.context.chunks).toEqual([]);
+    expect(document.fulfillment.context.truncated).toBe(true);
   });
 
   it("rejects an unknown tool name", async () => {
@@ -451,15 +496,16 @@ describe("createMcpQueryServer", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("reduces an unexpected port failure to internal_error", async () => {
-    const server = createMcpQueryServer({
-      catalog: {
-        listApprovedCards: () => {
-          throw new Error("connection refused to secret host:6333");
+  it("reduces an unexpected port failure to unexpected_failure", async () => {
+    const server = createMcpQueryServer(
+      createFixtureContextApplication({
+        catalog: {
+          listApprovedCards: () => {
+            throw new Error("connection refused to secret host:6333");
+          },
         },
-      },
-      retriever: { searchChunks: async () => [] },
-    });
+      }),
+    );
 
     const envelope = await callTool(server, 10, "resolve_context", {
       query: DEMO_QUERY,
@@ -467,7 +513,9 @@ describe("createMcpQueryServer", () => {
     const result = readToolResult(envelope);
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toBe("internal_error");
+    expect(JSON.parse(result.content[0]?.text ?? "null")).toEqual({
+      error: { code: "unexpected_failure", retriable: false },
+    });
     expect(JSON.stringify(envelope)).not.toContain("secret host");
   });
 });

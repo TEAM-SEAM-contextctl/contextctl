@@ -9,6 +9,9 @@
       "import": "./dist/main.js"
     }
   },
+  "bin": {
+    "contextctl": "./dist/cli/main.js"
+  },
   "files": ["dist"],
   "dependencies": {
     "@contextctl/ingestion-indexing": "0.0.0",
