@@ -23,6 +23,7 @@ const scopes: readonly RetrievalScope[] = [
     kind: "sql_source",
     reference: { scopeId: "scope_1", scopeVersion: "scpv_a" },
     connector: "postgres.main",
+    schema: "public",
     table: "payments",
     columns: ["status"],
   },

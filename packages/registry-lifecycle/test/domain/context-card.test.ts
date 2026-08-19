@@ -37,6 +37,8 @@ const version: CardVersion = {
       connector: "payments.api",
       method: "GET",
       path: "/payments/{id}",
+      operationId: "getPayment",
+      parameters: [{ location: "path", name: "id", required: true }],
     },
   ],
   validationState: "validated",

@@ -1,4 +1,4 @@
-import type { PublishedSourceCoordinate } from "@contextctl/contracts";
+import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 import { groundCardVersion } from "../../src/domain/evidence-grounding.js";
@@ -20,9 +20,9 @@ const coordinate: PublishedSourceCoordinate = {
 
 const request: CardMeaningRequest = {
   coordinate,
-  evidence: [
-    { name: "row_count", value: 128 },
-    { name: "status_values", value: ["failed", "settled"] },
+  facts: [
+    { name: "sql.approximate_row_count", value: 128 },
+    { name: "sql.columns", value: ["failed", "settled"] },
   ],
 };
 
@@ -76,6 +76,7 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
       kind: "sql_source",
       reference: { scopeId: "scope_payments", scopeVersion: "scpv_a" },
       connector: "postgres.main",
+      schema: "public",
       table: "payments",
       columns: ["status", "failed_reason"],
     };
@@ -109,7 +110,7 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
     });
   });
 
-  it("puts only the coordinate and evidence in the prompt", async () => {
+  it("puts only the coordinate and facts in the prompt", async () => {
     let body: { messages?: { content?: string }[] } | undefined;
     await generator(async (_input, init) => {
       body = JSON.parse(String(init?.body));
@@ -118,15 +119,15 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
 
     const prompt = body?.messages?.[1]?.content ?? "";
     expect(prompt).toContain("public.payments");
-    expect(prompt).toContain("row_count: 128");
-    expect(prompt).toContain("status_values: failed, settled");
+    expect(prompt).toContain("sql.approximate_row_count: 128");
+    expect(prompt).toContain("sql.columns: failed, settled");
   });
 
   it("refuses to send a prompt that would not fit the context window", async () => {
     let called = false;
     const long: CardMeaningRequest = {
       coordinate,
-      evidence: [{ name: "sample", value: "가".repeat(9_000) }],
+      facts: [{ name: "sql.table", value: "가".repeat(9_000) }],
     };
 
     // Truncating would describe evidence the model never saw, and that text
@@ -219,6 +220,7 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
       kind: "sql_source",
       reference: { scopeId: "scope_payments", scopeVersion: "scpv_a" },
       connector: "postgres.main",
+      schema: "public",
       table: "payments",
       columns: ["status", "failed_reason"],
     };

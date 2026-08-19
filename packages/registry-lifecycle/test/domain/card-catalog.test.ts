@@ -12,6 +12,7 @@ const scope: RetrievalScope = {
   kind: "sql_source",
   reference: { scopeId: "scope_payments", scopeVersion: "scpv_a" },
   connector: "postgres.main",
+  schema: "public",
   table: "payments",
   columns: ["failed_reason", "status"],
 };

@@ -1,9 +1,12 @@
-import type { PublishedSourceCoordinate } from "@contextctl/contracts";
+import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { CardMeaning } from "../../src/domain/context-card.js";
 import { groundCardVersion } from "../../src/domain/evidence-grounding.js";
-import type { RetrievalScope } from "../../src/domain/retrieval-scope.js";
+import type {
+  ManagedDocumentScope,
+  RetrievalScope,
+} from "../../src/domain/retrieval-scope.js";
 
 const documentCoordinate: PublishedSourceCoordinate = {
   kind: "document",
@@ -25,9 +28,11 @@ const httpCoordinate: PublishedSourceCoordinate = {
   sourceId: "src_payments_api",
   method: "GET",
   path: "/payments/{id}",
+  operationId: "getPayment",
+  parameters: [{ location: "path", name: "id", required: true }],
 };
 
-const documentScope: RetrievalScope = {
+const documentScope: ManagedDocumentScope = {
   kind: "managed_document",
   reference: { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
   documentIndex: {
@@ -35,8 +40,6 @@ const documentScope: RetrievalScope = {
     sourceId: "src_payments",
     documentId: "doc_payments",
     indexVersion: "idxv_aaaa",
-    connectorId: "vector.local",
-    accessHandle: "documents/payments/indexes/aaaa",
   },
   selection: {
     kind: "semantic_units",
@@ -69,6 +72,7 @@ describe("groundCardVersion", () => {
       kind: "sql_source",
       reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
       connector: "postgres.main",
+      schema: "public",
       table: "payments",
       columns: ["status", "card_number"],
     };
@@ -83,6 +87,7 @@ describe("groundCardVersion", () => {
       kind: "sql_source",
       reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
       connector: "postgres.main",
+      schema: "public",
       table: "refunds",
       columns: ["status"],
     };
@@ -92,17 +97,26 @@ describe("groundCardVersion", () => {
     ]);
   });
 
-  it("rejects an HTTP scope whose method and path drifted from the source", () => {
+  // Only the path drifts here. This test used to drift the method too, but v2
+  // pins `method` to the `GET` literal on both the coordinate and the Scope, so
+  // a mismatch can no longer be constructed through the type — a stronger
+  // guarantee than the assertion that was here. `checkHttpScope` still compares
+  // the two at runtime, and that comparison now has no test: it is reachable
+  // only from a stored row an older build wrote, and this file builds its
+  // scopes in memory. Kept rather than deleted because the row reader does not
+  // validate the verb either, so removing it would leave nothing checking it.
+  it("rejects an HTTP scope whose path drifted from the source", () => {
     const scope: RetrievalScope = {
       kind: "http_source",
       reference: { scopeId: "scope_get_payment", scopeVersion: "scpv_dddd" },
       connector: "payments.api",
-      method: "DELETE",
+      method: "GET",
       path: "/payments",
+      operationId: "getPayment",
+      parameters: [],
     };
 
     expect(rules(groundCardVersion(httpCoordinate, [scope], meaning))).toEqual([
-      "scope.http.method",
       "scope.http.path",
     ]);
   });
