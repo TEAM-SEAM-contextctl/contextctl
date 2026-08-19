@@ -18,6 +18,7 @@ import {
 import { openRegistryDatabase } from "../../src/infrastructure/sqlite/registry-database.js";
 import { SqliteCardStore } from "../../src/infrastructure/sqlite/sqlite-card-store.js";
 import { SqliteLifecycleEventStore } from "../../src/infrastructure/sqlite/sqlite-lifecycle-event-store.js";
+import { SqliteConsumerCheckpointStore } from "../../src/infrastructure/sqlite/sqlite-consumer-checkpoint-store.js";
 import { SqliteScopeReachabilityStore } from "../../src/infrastructure/sqlite/sqlite-scope-reachability-store.js";
 import { createDocumentCardVersion } from "../fixtures/card-version.fixture.js";
 
@@ -63,6 +64,10 @@ describe("runOperatorCommand", () => {
     ports = {
       cards: store,
       scopes: new SqliteScopeReachabilityStore(database),
+      checkpoints: new SqliteConsumerCheckpointStore(
+        database,
+        () => "2026-08-19T00:00:00.000Z",
+      ),
       clock: { now: () => "2026-08-10T00:00:00.000Z" },
       ids: {
         nextId: () => {
@@ -281,6 +286,10 @@ describe("runOperatorCommand", () => {
         ...ports,
         cards: store,
         scopes: new SqliteScopeReachabilityStore(soloDatabase),
+      checkpoints: new SqliteConsumerCheckpointStore(
+        soloDatabase,
+        () => "2026-08-19T00:00:00.000Z",
+      ),
       };
       await store.saveCard(
         cardWith("unit_solo", [version("cv_solo", "unit_solo", "validated")]),
@@ -422,6 +431,10 @@ describe("runOperatorCommand", () => {
           ...ports,
           cards: new SqliteCardStore(emptyDatabase),
           scopes: new SqliteScopeReachabilityStore(emptyDatabase),
+          checkpoints: new SqliteConsumerCheckpointStore(
+            emptyDatabase,
+            () => "2026-08-19T00:00:00.000Z",
+          ),
         },
         ["reachability"],
       );
@@ -445,6 +458,10 @@ describe("runOperatorCommand", () => {
         ...ports,
         cards: store,
         scopes: new SqliteScopeReachabilityStore(twoDatabase),
+      checkpoints: new SqliteConsumerCheckpointStore(
+        twoDatabase,
+        () => "2026-08-19T00:00:00.000Z",
+      ),
       };
       await store.saveCard(
         cardWith("unit_b", [

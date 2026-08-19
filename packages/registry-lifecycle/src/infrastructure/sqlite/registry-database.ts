@@ -57,6 +57,16 @@ function migrate(database: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS consumer_checkpoints (
       publication_id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      processed_at TEXT NOT NULL
+    );
+
+    -- How far each Source's Publication chain has been consumed. Separate from
+    -- the claim record above because the two answer different questions: one
+    -- says a Publication was handled, this one says which may be handled next.
+    CREATE TABLE IF NOT EXISTS consumer_source_cursors (
+      source_id TEXT PRIMARY KEY,
+      publication_id TEXT NOT NULL,
       processed_at TEXT NOT NULL
     );
   `);

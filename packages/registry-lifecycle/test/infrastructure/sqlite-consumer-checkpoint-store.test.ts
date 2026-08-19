@@ -32,7 +32,10 @@ describe("SqliteConsumerCheckpointStore", () => {
     );
 
     expect(await store.hasProcessed("pub_initial")).toBe(false);
-    await store.markProcessed("pub_initial");
+    await store.markProcessed({
+      sourceId: "src_payments",
+      publicationId: "pub_initial",
+    });
     expect(await store.hasProcessed("pub_initial")).toBe(true);
   });
 
@@ -42,10 +45,14 @@ describe("SqliteConsumerCheckpointStore", () => {
       now,
     );
 
-    await store.markProcessed("pub_initial");
-    await store.markProcessed("pub_initial");
+    const cursor = { sourceId: "src_payments", publicationId: "pub_initial" };
+    await store.markProcessed(cursor);
+    await store.markProcessed(cursor);
 
     expect(await store.hasProcessed("pub_initial")).toBe(true);
+    // The cursor is a single row per Source, so a repeat leaves one position
+    // rather than two rows claiming different places in the same chain.
+    expect(await store.listCursors()).toEqual([cursor]);
   });
 
   it("keeps consumption idempotent across a restart", async () => {

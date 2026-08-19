@@ -78,6 +78,28 @@ export type RegistryIntakeResult =
       readonly status: "claimed";
       readonly publicationId: string;
       readonly cardVersions: readonly IntakenCardVersion[];
+    }
+  /**
+   * Registry refused the Publication for now: its predecessor in the Source's
+   * chain has not been consumed. Nothing was written, so the notification is
+   * still work — reconciliation retries it once the missing one lands.
+   */
+  | {
+      readonly status: "deferred";
+      readonly publicationId: string;
+      readonly cardVersions: readonly IntakenCardVersion[];
+      readonly awaiting: string;
+    }
+  /**
+   * The Source's chain is not linear and Registry consumed nothing. Reported
+   * rather than retried: no ordering exists to retry into, and choosing one
+   * successor would drop what the other published.
+   */
+  | {
+      readonly status: "forked";
+      readonly publicationId: string;
+      readonly cardVersions: readonly IntakenCardVersion[];
+      readonly reason: string;
     };
 
 /** The Publication shape this file reads, derived so no contract import appears. */
@@ -105,11 +127,32 @@ export class RegistryIntake {
    * Idempotent by way of `claimPublication`'s checkpoint: a redelivered
    * `PublicationReady` answers `already_claimed` and writes nothing, so the
    * append-only history cannot gain the same version twice.
+   *
+   * Registry may also refuse on chain order — `deferred` when a predecessor is
+   * missing, `forked` when the chain is not linear. Both are passed through with
+   * no Card written, because in both cases Registry committed nothing and this
+   * file has nothing to persist.
    */
   async claim(publicationId: string): Promise<RegistryIntakeResult> {
     const claimed = await claimPublication(this.#ports, publicationId);
     if (claimed.status === "already_claimed") {
       return { status: "already_claimed", publicationId, cardVersions: [] };
+    }
+    if (claimed.status === "deferred") {
+      return {
+        status: "deferred",
+        publicationId,
+        cardVersions: [],
+        awaiting: claimed.awaiting,
+      };
+    }
+    if (claimed.status === "forked") {
+      return {
+        status: "forked",
+        publicationId,
+        cardVersions: [],
+        reason: claimed.reason,
+      };
     }
 
     // Read after the claim rather than before: `claimPublication` already
