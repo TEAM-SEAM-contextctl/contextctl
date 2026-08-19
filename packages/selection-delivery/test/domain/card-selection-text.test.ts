@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import type { ApprovedCard } from "../../src/domain/card-catalog.js";
+import type {
+  ApprovedCard,
+  ApprovedHttpParameter,
+  ApprovedHttpScope,
+  ApprovedScope,
+  ApprovedSqlScope,
+} from "../../src/domain/card-catalog.js";
 import {
   buildCardSelectionEntry,
   buildCardSelectionText,
@@ -96,6 +102,8 @@ describe("buildCardSelectionText", () => {
           connector: "c",
           method: "GET",
           path: "/b",
+          operationId: "getB",
+          parameters: [],
         },
         {
           kind: "http_source",
@@ -103,6 +111,8 @@ describe("buildCardSelectionText", () => {
           connector: "c",
           method: "GET",
           path: "/b",
+          operationId: "getB",
+          parameters: [],
         },
         {
           kind: "http_source",
@@ -110,6 +120,8 @@ describe("buildCardSelectionText", () => {
           connector: "c",
           method: "GET",
           path: "/a",
+          operationId: "getA",
+          parameters: [],
         },
       ],
     };
@@ -126,14 +138,17 @@ describe("buildCardSelectionText", () => {
       buildCardSelectionText(createPaymentsTableCard()),
     );
 
-    // The SQL branch of the published schema names a `schema` field the approved
-    // read model has no counterpart for. An empty string there would be a fact
-    // nobody stated.
+    // Exhaustive rather than a containment check, and that is the whole test:
+    // every field of the published SQL branch is either transcribed from a
+    // field the approved read model declares, or it is not here at all. A
+    // placeholder for one the model has no counterpart for would be a fact
+    // nobody stated, embedded into a vector that outlives the Card.
     expect(JSON.parse(serialized).scopes[0]).toEqual({
       kind: "sql",
       scopeId: "scope_payments_table",
       scopeVersion: "scopev_0001",
       connector: "postgres.main",
+      schema: "public",
       table: "payments",
       columns: ["created_at", "failed_reason", "payment_id", "status"],
     });
@@ -151,6 +166,8 @@ describe("buildCardSelectionText", () => {
       connector: "payments.api",
       method: "GET",
       path: "/payments/{paymentId}",
+      operationId: "getPayment",
+      parameters: [{ location: "path", name: "paymentId", required: true }],
     });
   });
 });
@@ -204,7 +221,134 @@ describe("cardSelectionTextDigest", () => {
     );
 
     expect(payload.startsWith('{"aliases":')).toBe(true);
-    expect(payload).toContain('"schema":"card-selection-text-v1"');
+    expect(payload).toContain('"schema":"card-selection-text-v2"');
+  });
+});
+
+/**
+ * The digest of a Card whose only Scope is the given one.
+ *
+ * Everything else about the Card is held fixed, so a difference between two of
+ * these can have come from nothing but the field under test. Taken from
+ * `buildCardSelectionEntry` rather than from `cardSelectionTextDigest` because
+ * the entry is what a candidate index actually stores and compares: a collision
+ * the text function avoided but the entry re-introduced would be invisible from
+ * one layer up.
+ */
+function digestOfScope(scope: ApprovedScope): string {
+  const card = createRefundPolicyCard();
+
+  return buildCardSelectionEntry({ ...card, scopes: [scope] })
+    .selectionTextDigest;
+}
+
+/** One SQL Scope, varying only in which schema inside the connector it names. */
+function sqlScopeIn(schema: string): ApprovedSqlScope {
+  return {
+    kind: "sql_source",
+    reference: { scopeId: "scope_payments", scopeVersion: "scopev_0001" },
+    connector: "postgres.main",
+    schema,
+    table: "payments",
+    columns: ["payment_id", "status"],
+  };
+}
+
+/** One HTTP Scope on one path, varying only in what identifies the operation. */
+function httpScopeOf(
+  operationId: string | undefined,
+  parameters: readonly ApprovedHttpParameter[],
+): ApprovedHttpScope {
+  return {
+    kind: "http_source",
+    reference: { scopeId: "scope_payment_get", scopeVersion: "scopev_0001" },
+    connector: "payments.api",
+    method: "GET",
+    path: "/payments/{paymentId}",
+    operationId,
+    parameters,
+  };
+}
+
+const PAYMENT_ID_PARAMETER: ApprovedHttpParameter = {
+  location: "path",
+  name: "paymentId",
+  required: true,
+};
+
+/**
+ * Two Scopes that differ in a coordinate must not embed as one Card.
+ *
+ * These are the cases the canonical text exists to keep apart, and each one was
+ * a real collision before the coordinate it names was carried: two Cards
+ * produced byte-identical text, therefore one digest, therefore one vector, and
+ * the candidate index could not tell the two apart at all. A consumer handed
+ * the resulting guide could not know which table it had been granted or which
+ * of two operations on one path it was allowed to call — which is the one
+ * question a coordinate has to answer.
+ */
+describe("Scope coordinate identity", () => {
+  it("separates two tables that differ only by schema", () => {
+    // `public.payments` and `analytics.payments` under one connector.
+    expect(digestOfScope(sqlScopeIn("public"))).not.toBe(
+      digestOfScope(sqlScopeIn("analytics")),
+    );
+  });
+
+  it("separates two operations on one path that differ only by parameters", () => {
+    const bySince = httpScopeOf("getPayment", [
+      PAYMENT_ID_PARAMETER,
+      { location: "query", name: "since", required: false },
+    ]);
+    const byStatus = httpScopeOf("getPayment", [
+      PAYMENT_ID_PARAMETER,
+      { location: "query", name: "status", required: false },
+    ]);
+
+    expect(digestOfScope(bySince)).not.toBe(digestOfScope(byStatus));
+  });
+
+  it("separates two operations that differ only by operationId", () => {
+    expect(
+      digestOfScope(httpScopeOf("getPayment", [PAYMENT_ID_PARAMETER])),
+    ).not.toBe(
+      digestOfScope(httpScopeOf("refundPayment", [PAYMENT_ID_PARAMETER])),
+    );
+  });
+
+  it("carries an unnamed operation as an absent key, never as an empty one", () => {
+    const entry = buildCardSelectionEntry({
+      ...createRefundPolicyCard(),
+      scopes: [httpScopeOf(undefined, [PAYMENT_ID_PARAMETER])],
+    });
+    const [scope] = JSON.parse(entry.payload).scopes as readonly object[];
+
+    // A source that names no operations and one whose operation is called ""
+    // are different facts. RFC 8785 serializes the two differently, so writing
+    // the second where the first is meant would put a name in the vector that
+    // nobody declared — and would still be a name the consumer cannot look up.
+    expect(Object.keys(scope as object)).not.toContain("operationId");
+    expect(entry.payload).not.toContain("operationId");
+    expect(entry.selectionTextDigest).not.toBe(
+      digestOfScope(httpScopeOf("", [PAYMENT_ID_PARAMETER])),
+    );
+  });
+
+  it("ignores the order the parameters were declared in", () => {
+    const status: ApprovedHttpParameter = {
+      location: "query",
+      name: "status",
+      required: false,
+    };
+    // The same set, written down the other way round. Declaration order is a
+    // fact about how the Scope was typed, not about what it accepts, and a
+    // digest that moved on a reorder would rebuild the Card's vector for an
+    // edit that changed nothing — the same reason `columns` is sorted.
+    expect(
+      digestOfScope(httpScopeOf("getPayment", [PAYMENT_ID_PARAMETER, status])),
+    ).toBe(
+      digestOfScope(httpScopeOf("getPayment", [status, PAYMENT_ID_PARAMETER])),
+    );
   });
 });
 

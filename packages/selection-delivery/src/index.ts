@@ -4,6 +4,7 @@ export type {
   ApprovedCardPolicy,
   ApprovedDocumentIndexRef,
   ApprovedDocumentSelection,
+  ApprovedHttpParameter,
   ApprovedHttpScope,
   ApprovedManagedDocumentScope,
   ApprovedScope,
@@ -42,6 +43,7 @@ export {
   cardSelectionTextPayload,
   normalizeSelectionText,
   type CardSelectionEntry,
+  type CardSelectionHttpParameter,
   type CardSelectionScope,
   type CardSelectionTextV1,
 } from "./domain/card-selection-text.js";

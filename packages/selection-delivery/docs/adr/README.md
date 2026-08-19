@@ -27,6 +27,7 @@ Records are written in Korean. See [`0000-template.md`](./0000-template.md).
 | [0006](./0006-return-selected-scopes-as-one-array.md) | 선택된 Scope는 종류와 무관하게 하나의 배열로 반환한다 | Accepted · 0007이 부분 정정 · Superseded by 0008 | 2026-08-14 |
 | [0007](./0007-report-unknown-retrieval-failure.md) | 알 수 없는 검색 실패는 `retriever_error`로 보고한다 | Accepted · Superseded by 0008 | 2026-08-14 |
 | [0008](./0008-daemon-orchestrates-managed-document-retrieval.md) | 관리 문서 검색은 daemon이 조정하고 Selection은 계획만 만든다 | Accepted | 2026-08-18 |
+| [0009](./0009-carry-source-coordinates-that-disambiguate-a-scope.md) | Scope를 특정하는 좌표는 승인 read model이 직접 선언하고, 선택 텍스트 스키마를 v2로 올린다 | Accepted | 2026-08-19 |
 
 0001은 **부분 대체**다. 소비자의 원본을 실행하지 않는다는 결정 자체는 그대로 유효하고,
 0006이 바꾼 것은 그 좌표의 이름(`Retrieval Contract` → `Retrieval Guide`)과 그것을 담아

@@ -236,18 +236,26 @@ describe("RegistryApprovedCardCatalog", () => {
   });
 
   /**
-   * The adapter drops what Selection has no field for, and this pins which.
+   * Every coordinate a sql or http Scope carries has to survive the crossing.
    *
-   * Registry now carries `schema` on a sql Scope and `operationId`/`parameters`
-   * on an http one, because Publication v2 publishes them. Selection's approved
-   * read model does not have those fields yet, so the field-by-field translation
-   * leaves them behind — silently, since dropping is not a type error. The
-   * expectation below is written out in full rather than compared to the input so
-   * that the gap is visible here instead of being discovered when a SQL or HTTP
-   * connector first ships: two tables of the same name in different schemas would
-   * reach a Guide as one coordinate.
+   * Registry carries `schema` on a sql Scope and `operationId`/`parameters` on
+   * an http one, because Publication v2 publishes them, and Selection's approved
+   * read model now has a field for each. That is not cosmetic. One connector
+   * holds both `public.payments` and `analytics.payments`, and a Scope naming
+   * only `payments` would reach a Guide as a single coordinate answering
+   * neither — two different grants rendering to the same selection text and so
+   * to the same vector. `operationId` and `parameters` collapse http operations
+   * the same way: two operations on one path are told apart by nothing else.
+   *
+   * The expectation is written out in full so the surviving values are pinned
+   * here as literals rather than inherited from a fixture someone may edit. The
+   * round-trip assertion that follows is the other half, and catches what the
+   * literals cannot: dropping a field is never a type error, so if Registry
+   * grows a coordinate tomorrow and the adapter forgets to copy it, the literal
+   * block below would still be satisfied and only the comparison against the
+   * input Scopes would fail.
    */
-  it("translates sql and http scopes, dropping the fields Selection lacks", async () => {
+  it("translates sql and http scopes, carrying every coordinate across", async () => {
     await store.saveCard(cardWith("unit_a", "cv_a", [sqlScope, httpScope]), []);
     await approveCardVersion(ports, "unit_a", "cv_a", decision);
 
@@ -261,6 +269,7 @@ describe("RegistryApprovedCardCatalog", () => {
           scopeVersion: "scpv_cccc",
         },
         connector: "postgres.main",
+        schema: "public",
         table: "payments",
         columns: ["failed_reason", "status"],
       },
@@ -270,8 +279,54 @@ describe("RegistryApprovedCardCatalog", () => {
         connector: "payments.api",
         method: "GET",
         path: "/payments/{id}",
+        operationId: "getPayment",
+        parameters: [{ location: "path", name: "id", required: true }],
       },
     ]);
+    // Total, not merely correct on the fields named above: `toEqual` is exact in
+    // both directions, so this fails if the adapter leaves anything behind and
+    // equally if it invents something Registry never sent.
+    expect(approved[0]?.scopes).toEqual([sqlScope, httpScope]);
+  });
+
+  /**
+   * A source that names no operation gets no name invented for it.
+   *
+   * `operationId` is `string | undefined` rather than optional, so the absent
+   * case is a value the adapter has to carry, not a key it may omit. The
+   * distinction matters downstream: a Guide whose `operationId` key is missing
+   * altogether reads as a field nobody filled in, while one explicitly set to
+   * `undefined` reads as a source that had nothing to give — and only the second
+   * is true. A minted placeholder would be worse than either, since a consumer
+   * cannot look one up.
+   */
+  it("carries an absent operationId across as undefined rather than minting one", async () => {
+    const unnamedOperation: RetrievalScope = {
+      ...httpScope,
+      kind: "http_source",
+      operationId: undefined,
+      // A query parameter, and the only optional one in this file. Path
+      // parameters are required by construction upstream, so `required: false`
+      // has nowhere else it could legally appear.
+      parameters: [{ location: "query", name: "status", required: false }],
+    };
+    await store.saveCard(cardWith("unit_a", "cv_a", [unnamedOperation]), []);
+    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+
+    const approved = await catalog.listApprovedCards();
+
+    expect(approved[0]?.scopes[0]).toEqual({
+      kind: "http_source",
+      reference: { scopeId: "scope_get_payment", scopeVersion: "scpv_dddd" },
+      connector: "payments.api",
+      method: "GET",
+      path: "/payments/{id}",
+      operationId: undefined,
+      parameters: [{ location: "query", name: "status", required: false }],
+    });
+    // `toEqual` treats an explicit `undefined` and an absent key alike, so it
+    // cannot tell those two apart on its own. This is the assertion that can.
+    expect(Object.keys(approved[0]?.scopes[0] ?? {})).toContain("operationId");
   });
 
   it("builds new objects instead of passing the store's entries through", async () => {
@@ -294,11 +349,12 @@ describe("RegistryApprovedCardCatalog", () => {
     expect(approved[0]?.scopes).not.toBe(entry.scopes);
     expect(approved[0]?.scopes[0]).not.toBe(entry.scopes[0]);
     // The copies still have to be faithful, or independence would be worthless.
-    // `entry.scopes` can no longer be the expectation wholesale: the managed
-    // document Scope is the one shape the adapter narrows, so it is compared
-    // against the narrowed form field for field instead of being skipped. The
-    // sql Scope is compared to the narrowed form for the reason the test above
-    // states: `schema` does not survive into Selection's model.
+    // `entry.scopes` cannot be the expectation wholesale: the managed document
+    // Scope is the one shape the adapter narrows, so it is compared against the
+    // narrowed form field for field instead of being skipped. The sql Scope is
+    // narrowed by nothing, so it is compared against the input itself — fresh
+    // objects that are also complete is the pair this test exists for, and
+    // checking only the first would let a copy that lost `schema` through.
     expect(approved[0]?.scopes[0]).toEqual({
       kind: "managed_document",
       reference: {
@@ -316,10 +372,6 @@ describe("RegistryApprovedCardCatalog", () => {
         semanticUnitIds: ["unit_payment_failures"],
       },
     });
-    const { schema: _dropped, ...sqlWithoutSchema } = sqlScope as Extract<
-      RetrievalScope,
-      { kind: "sql_source" }
-    >;
-    expect(approved[0]?.scopes[1]).toEqual(sqlWithoutSchema);
+    expect(approved[0]?.scopes[1]).toEqual(sqlScope);
   });
 });

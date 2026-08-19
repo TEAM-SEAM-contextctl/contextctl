@@ -68,6 +68,7 @@ function sqlCard(): ApprovedCard {
           scopeVersion: "scopev_0001",
         },
         connector: "postgres.main",
+        schema: "public",
         table: "payments",
         columns: ["payment_id"],
       },
