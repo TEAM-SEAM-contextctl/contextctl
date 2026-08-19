@@ -1,5 +1,8 @@
+// @ts-ignore
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+// @ts-ignore
 import { tmpdir } from "node:os";
+// @ts-ignore
 import { join } from "node:path";
 
 import {

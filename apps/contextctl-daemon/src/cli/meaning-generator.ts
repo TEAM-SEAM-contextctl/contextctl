@@ -135,7 +135,10 @@ export function resolveCardMeaningBackend(input: {
 
   const primary = new OpenAiCompatibleCardMeaningGenerator({
     baseUrl,
-    model: maskSecret(model, apiKey),
+    // The model as configured, never the masked form. Masking exists so a
+    // credential cannot reach a log; putting it on the wire would send a model
+    // name the endpoint does not have.
+    model,
     apiKey,
     timeoutMs,
     contextTokens,
@@ -157,8 +160,55 @@ export function resolveCardMeaningBackend(input: {
     ),
     model: maskSecret(model, apiKey),
     endpoint: maskSecret(baseUrl, apiKey),
-    notices: [],
+    notices: redundantVersionPrefixNotices(baseUrl, apiKey),
   };
+}
+
+/**
+ * The URL the adapter will actually request.
+ *
+ * Exported because `doctor` has to show the same string. The adapter builds this
+ * privately from the configured root, so anyone diagnosing a 404 is comparing a
+ * base URL against a path they cannot see — which is exactly how one deployment
+ * spent an afternoon on a doubled `/v1`.
+ */
+export function cardMeaningRequestUrl(baseUrl: string): string {
+  const root = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return `${root}/v1/chat/completions`;
+}
+
+/**
+ * Warns when the configured root already carries the path the adapter appends.
+ *
+ * `/v1` is the shape of every OpenAI-compatible endpoint an operator verifies by
+ * hand — `curl .../v1/chat/completions` — so pasting that host *plus* `/v1` into
+ * the base URL is the natural mistake, and it produces `/v1/v1/chat/completions`
+ * and a 404 whose message names neither the path nor the reason.
+ *
+ * Warned rather than trimmed. A deployment is free to serve its API under a
+ * `/v1` prefix of its own, and silently rewriting an operator's configuration to
+ * one this code finds more likely would replace a legible 404 with a request to
+ * somewhere they never named.
+ */
+function redundantVersionPrefixNotices(
+  baseUrl: string,
+  apiKey: string,
+): readonly string[] {
+  const root = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  if (!root.endsWith("/v1")) {
+    return [];
+  }
+  const suggested = root.slice(0, -"/v1".length);
+  return [
+    maskSecret(
+      [
+        `경고: ${CARD_MEANING_BASE_URL_VARIABLE} 가 /v1 로 끝납니다: ${root}`,
+        `  이 클라이언트가 /v1/chat/completions 를 직접 붙이므로 실제 요청은 ${cardMeaningRequestUrl(baseUrl)} 가 되어 404 가 날 수 있습니다.`,
+        `  루트만 지정하십시오: ${suggested === "" ? "https://<호스트>" : suggested}`,
+      ].join("\n"),
+      apiKey,
+    ),
+  ];
 }
 
 /**
@@ -193,7 +243,10 @@ export function maskSecret(text: string, secret: string | undefined): string {
  * document says the evidence there is the problem.
  */
 function describeFallback(report: CardMeaningFallbackReport): string {
-  return `Card 의미 생성 실패(${report.kind}) — ${summarizeCoordinate(report.request.coordinate)}: ${report.message} (결정적 생성기로 대체함)`;
+  // The endpoint is deliberately absent. This line is written once per Knowledge
+  // Unit, so a misconfigured endpoint repeats it for every Card in the
+  // publication; the URL belongs where it is read once, which is `doctor`.
+  return `Card 의미 생성 실패(${report.kind}) — ${summarizeCoordinate(report.request.coordinate)}: ${report.message} (결정적 생성기로 대체함). contextctl doctor 로 설정을 확인하세요.`;
 }
 
 function summarizeCoordinate(coordinate: PublishedSourceCoordinate): string {

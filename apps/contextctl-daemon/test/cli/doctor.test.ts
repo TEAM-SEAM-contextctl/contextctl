@@ -339,7 +339,9 @@ describe("runDiagnosis / backends", () => {
       await runDiagnosis({
         environment: {
           CONTEXTCTL_HOME: home,
-          CONTEXTCTL_CARD_MEANING_BASE_URL: "https://api.example.com/v1",
+          // The root, not `/v1`: the adapter appends the version path itself,
+            // and a base URL already carrying it is now a warning of its own.
+            CONTEXTCTL_CARD_MEANING_BASE_URL: "https://api.example.com",
           CONTEXTCTL_CARD_MEANING_MODEL: "gpt-4o-mini",
           CONTEXTCTL_CARD_MEANING_API_KEY: "sk-not-a-real-key",
         },
@@ -510,5 +512,50 @@ describe("runDiagnosis / report", () => {
     expect(body).not.toContain("TransformersJsLocalEmbeddingAdapter");
     expect(body).not.toContain("createDaemonRuntime");
     expect(body).not.toContain("resolveActiveLocalEmbeddingAssets");
+  });
+});
+
+describe("card-meaning reports the URL the adapter will request", () => {
+  const configured = (baseUrl: string) => ({
+    CONTEXTCTL_CARD_MEANING_BASE_URL: baseUrl,
+    CONTEXTCTL_CARD_MEANING_MODEL: "gemma4-12b-qat",
+    CONTEXTCTL_CARD_MEANING_API_KEY: "sk-super-secret",
+  });
+
+  it("shows the composed request URL rather than the configured root", async () => {
+    const home = await makeHome();
+    const report = await runDiagnosis({
+      environment: { CONTEXTCTL_HOME: home, ...configured("https://gllm.dilato.kr") },
+    });
+    const step = report.steps.find((each) => each.name === "card-meaning");
+
+    // The root alone does not tell an operator what is called. The adapter
+    // appends the path privately, so the diagnosis has to compose it.
+    expect(step?.status).toBe("ok");
+    expect(step?.detail).toContain("https://gllm.dilato.kr/v1/chat/completions");
+  });
+
+  it("warns on a doubled version prefix even though all three are set", async () => {
+    const home = await makeHome();
+    const report = await runDiagnosis({
+      environment: { CONTEXTCTL_HOME: home, ...configured("https://gllm.dilato.kr/v1") },
+    });
+    const step = report.steps.find((each) => each.name === "card-meaning");
+
+    // A complete configuration can still be a wrong one. This check used to
+    // return `ok` the moment all three variables were present, which hid the
+    // one notice that says the composed endpoint is unreachable.
+    expect(step?.status).toBe("warn");
+    expect(step?.detail).toContain("https://gllm.dilato.kr/v1/v1/chat/completions");
+    expect(step?.remedy).toBeDefined();
+  });
+
+  it("keeps the credential out of the whole report", async () => {
+    const home = await makeHome();
+    const report = await runDiagnosis({
+      environment: { CONTEXTCTL_HOME: home, ...configured("https://gllm.dilato.kr/v1") },
+    });
+
+    expect(JSON.stringify(report)).not.toContain("sk-super-secret");
   });
 });

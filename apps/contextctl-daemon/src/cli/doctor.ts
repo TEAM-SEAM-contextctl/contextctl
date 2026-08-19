@@ -1,19 +1,25 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
-  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
-  LOCAL_EMBEDDING_ACTIVE_POINTER_FILE,
   openIngestionDatabase,
   verifyLocalEmbeddingAssets,
 } from "@contextctl/ingestion-indexing";
 import { openRegistryDatabase } from "@contextctl/registry-lifecycle";
 
 import { DEFAULT_SECURITY_DOMAIN, DEFAULT_STATE_NAMESPACE_ID } from "../main.js";
-import { maskSecret, resolveCardMeaningBackend } from "./meaning-generator.js";
+import {
+  describeAssetDirectoryProblem,
+  resolveActiveAssetDirectory,
+} from "./asset-directory.js";
+import {
+  cardMeaningRequestUrl,
+  maskSecret,
+  resolveCardMeaningBackend,
+} from "./meaning-generator.js";
 import { resolveContextctlPaths, readNonEmpty } from "./paths.js";
 import { readSourcesFile, SourcesFileError } from "./sources-file.js";
 import { resolveVectorBackend } from "./vector-backend.js";
@@ -302,46 +308,20 @@ async function inspectEmbeddingAssets(
   directory: string,
   deep: boolean,
 ): Promise<DiagnosisStep> {
-  const pointerPath = join(directory, LOCAL_EMBEDDING_ACTIVE_POINTER_FILE);
-  let raw: string;
-  try {
-    raw = await readFile(pointerPath, "utf8");
-  } catch (error) {
+  // Resolved through the shared module rather than here. Reading `active.json`
+  // in this file is what let the diagnosis and the composition disagree about
+  // which directory the assets are in — every check passed and the first embed
+  // failed. There is one answer now and both callers ask for it.
+  const resolution = await resolveActiveAssetDirectory(directory);
+  if (resolution.status === "unavailable") {
     return diagnosis(
       "embedding-assets",
       "fail",
-      `임베딩 모델이 설치되어 있지 않습니다: ${pointerPath} 를 읽을 수 없습니다 (${describeError(error)}).`,
+      describeAssetDirectoryProblem(resolution.problem),
       ASSET_REMEDY,
     );
   }
-
-  const pointer = parsePointer(raw);
-  if (pointer === undefined) {
-    return diagnosis(
-      "embedding-assets",
-      "fail",
-      `설치 포인터가 손상되었습니다: ${pointerPath}`,
-      ASSET_REMEDY,
-    );
-  }
-  if (pointer.manifestSha256 !== DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256) {
-    return diagnosis(
-      "embedding-assets",
-      "fail",
-      `설치된 개정판이 이 빌드가 요구하는 것과 다릅니다. 설치됨=${pointer.manifestSha256}, 필요=${DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256}`,
-      ASSET_REMEDY,
-    );
-  }
-
-  const revisionDirectory = resolve(directory, pointer.revisionDirectory);
-  if (!isInside(directory, revisionDirectory)) {
-    return diagnosis(
-      "embedding-assets",
-      "fail",
-      `설치 포인터가 자산 디렉터리 밖을 가리킵니다: ${pointer.revisionDirectory}`,
-      ASSET_REMEDY,
-    );
-  }
+  const revisionDirectory = resolution.directory;
 
   const problems = await collectSizeProblems(revisionDirectory);
   if (problems.length > 0) {
@@ -410,41 +390,6 @@ async function collectSizeProblems(
   return problems;
 }
 
-/**
- * The pointer, reduced to the two fields this module trusts.
- *
- * Deliberately permissive about *shape* and strict about *use*: an unreadable
- * or unexpected pointer is reported as "not installed, run install-assets",
- * never as a thrown exception, because `doctor` failing to run is strictly
- * worse than `doctor` reporting a failure. Anything the installer did not write
- * ends up here as `undefined`.
- */
-function parsePointer(
-  raw: string,
-): { readonly manifestSha256: string; readonly revisionDirectory: string } | undefined {
-  if (raw.trim() === "") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return undefined;
-  }
-  const candidate = parsed as Record<string, unknown>;
-  const manifestSha256 = candidate["manifestSha256"];
-  const revisionDirectory = candidate["revisionDirectory"];
-  if (
-    typeof manifestSha256 !== "string" ||
-    typeof revisionDirectory !== "string" ||
-    revisionDirectory.trim() === "" ||
-    isAbsolute(revisionDirectory)
-  ) {
-    return undefined;
-  }
-  return { manifestSha256, revisionDirectory };
-}
 
 /**
  * The vector index, read from configuration only.
@@ -514,14 +459,31 @@ function checkCardMeaning(
       onFallback: () => undefined,
     });
     if (backend.kind === "llm_with_fallback") {
-      return diagnosis(
-        "card-meaning",
-        "ok",
-        maskSecret(
-          `Card 의미 생성에 모델을 씁니다: ${backend.model ?? "(모델 없음)"} @ ${backend.endpoint ?? "(주소 없음)"} (접속은 확인하지 않았습니다)`,
-          apiKey,
-        ),
+      // The URL the adapter will request, not the root that was configured.
+      // The adapter appends `/v1/chat/completions` privately, so an operator
+      // reading back their own setting cannot see what is actually called —
+      // which is how a doubled `/v1` produces a 404 that names neither.
+      const requestUrl =
+        backend.endpoint === undefined
+          ? "(주소 없음)"
+          : cardMeaningRequestUrl(backend.endpoint);
+      const detail = maskSecret(
+        `Card 의미 생성에 모델을 씁니다: ${backend.model ?? "(모델 없음)"} @ ${requestUrl} (접속은 확인하지 않았습니다)`,
+        apiKey,
       );
+      // Notices are checked inside this branch as well as below it. A complete
+      // configuration can still be a wrong one, and reporting `ok` because all
+      // three variables are present would hide exactly the warning that says
+      // the endpoint they compose is unreachable.
+      if (backend.notices.length > 0) {
+        return diagnosis(
+          "card-meaning",
+          "warn",
+          maskSecret([detail, ...backend.notices].join("\n       "), apiKey),
+          "CONTEXTCTL_CARD_MEANING_BASE_URL 을 루트만 남기고 다시 설정하세요.",
+        );
+      }
+      return diagnosis("card-meaning", "ok", detail);
     }
     if (backend.notices.length > 0) {
       return diagnosis(
@@ -575,7 +537,3 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isInside(root: string, candidate: string): boolean {
-  const path = relative(root, candidate);
-  return path === "" || (!path.startsWith(`..${sep}`) && path !== "..");
-}

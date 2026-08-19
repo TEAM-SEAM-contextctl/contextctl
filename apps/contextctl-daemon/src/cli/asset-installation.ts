@@ -18,21 +18,19 @@
  * a pipe versus a terminal — belong to the command layer, and because a module
  * that owns them cannot be tested without owning a process.
  */
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
-  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   DirectoryLocalEmbeddingAssetSource,
   installLocalEmbeddingAssets,
-  LOCAL_EMBEDDING_ACTIVE_POINTER_FILE,
   type LocalEmbeddingAssetManifest,
   type LocalEmbeddingAssetSource,
 } from "@contextctl/ingestion-indexing";
 
+import { resolveActiveAssetDirectory } from "./asset-directory.js";
 import { resolveContextctlPaths } from "./paths.js";
 
 const HUGGING_FACE_ORIGIN = "https://huggingface.co";
@@ -51,8 +49,6 @@ const RETRY_DELAY_MS = 2_000;
 const PROGRESS_REPORTING_THRESHOLD_BYTES = 8 * 1024 * 1024;
 /** Byte progress every tenth of a large file: ten lines, not two hundred. */
 const PROGRESS_REPORTING_FRACTION = 10;
-/** Same cap the installer puts on the pointer it writes. */
-const MAX_ACTIVE_POINTER_BYTES = 8 * 1024;
 
 /** What an operator is told before anything is downloaded. */
 export interface AssetInstallationPlan {
@@ -386,53 +382,24 @@ function reportingSource(
 }
 
 /**
- * The already-installed answer, without hashing anything.
+ * The installed revision, or `undefined` when nothing usable is installed.
  *
- * `resolveActiveLocalEmbeddingAssets` is the authoritative check and it re-reads
- * every byte to give its answer, which is the right trade at daemon boot and the
- * wrong one here: this runs before a yes/no question, and a question that takes
- * ten seconds to appear reads as a hang. So only the pointer is consulted, and a
- * pointer that claims the pinned manifest is trusted to that extent. The cost of
- * being wrong is bounded — the daemon still verifies at boot and refuses a
- * corrupt revision — while the cost of hashing here is paid on every invocation.
+ * Delegated rather than implemented. `resolveActiveLocalEmbeddingAssets` is the
+ * authoritative check and re-reads every byte to answer, which is the right
+ * trade at daemon boot and the wrong one here: this runs before a yes/no
+ * question, and a question that takes ten seconds to appear reads as a hang.
+ * The cheap pointer read lives in `asset-directory.ts`, which is also what the
+ * composition and the diagnosis use — three readers of one file, disagreeing
+ * about which directory it names, is the defect that module was extracted to
+ * end.
  */
 async function findInstalledRevisionDirectory(
   targetDirectory: string,
 ): Promise<string | undefined> {
-  try {
-    const bytes = await readFile(
-      join(targetDirectory, LOCAL_EMBEDDING_ACTIVE_POINTER_FILE),
-    );
-    if (bytes.byteLength === 0 || bytes.byteLength > MAX_ACTIVE_POINTER_BYTES) {
-      return undefined;
-    }
-    const pointer: unknown = JSON.parse(bytes.toString("utf8"));
-    if (pointer === null || typeof pointer !== "object") return undefined;
-    const record = pointer as Record<string, unknown>;
-    if (
-      record["manifestSha256"] !== DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256
-    ) {
-      return undefined;
-    }
-    const revisionDirectory = record["revisionDirectory"];
-    if (typeof revisionDirectory !== "string" || revisionDirectory === "") {
-      return undefined;
-    }
-    const directory = resolve(targetDirectory, revisionDirectory);
-    // A pointer is a file on disk and therefore editable; one that escapes its
-    // own root is not a revision this command installed.
-    return isPathInside(targetDirectory, directory) ? directory : undefined;
-  } catch {
-    // Missing, empty, truncated, hand-edited: all mean the same thing to a
-    // caller who is deciding whether to download, so none of them is an error.
-    return undefined;
-  }
+  const resolution = await resolveActiveAssetDirectory(targetDirectory);
+  return resolution.status === "resolved" ? resolution.directory : undefined;
 }
 
-function isPathInside(root: string, candidate: string): boolean {
-  const offset = relative(resolve(root), candidate);
-  return offset !== "" && !offset.startsWith("..") && !isAbsolute(offset);
-}
 
 function totalBytes(manifest: LocalEmbeddingAssetManifest): number {
   return manifest.files.reduce((sum, file) => sum + file.bytes, 0);
