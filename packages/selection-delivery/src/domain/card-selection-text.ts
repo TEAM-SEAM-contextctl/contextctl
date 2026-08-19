@@ -156,10 +156,13 @@ function toSelectionScope(scope: ApprovedScope): CardSelectionScope {
         scopeId: normalizeSelectionText(scope.reference.scopeId),
         scopeVersion: normalizeSelectionText(scope.reference.scopeVersion),
         // Which source and which document, both of which a consumer already
-        // receives on a guide. `documentIndexId`, `connectorId`, `accessHandle`
-        // and `indexVersion` stay out: the first three are our own
-        // infrastructure, and the fourth changes on every republication, which
-        // would invalidate a Card's vector because a document was reindexed.
+        // receives on a guide. `documentIndexId` and `indexVersion` stay out:
+        // the first is our own bookkeeping, and the second changes on every
+        // republication, which would invalidate a Card's vector because a
+        // document was reindexed. A connector and an access handle would belong
+        // in this list too and are not named because the read model no longer
+        // has them — a vector outlives the request it was built for, so a
+        // physical coordinate inside one is a leak with no expiry.
         sourceId: normalizeSelectionText(scope.documentIndex.sourceId),
         documentId: normalizeSelectionText(scope.documentIndex.documentId),
       };

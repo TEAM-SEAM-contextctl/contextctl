@@ -54,12 +54,18 @@ describe("buildRetrievalGuide", () => {
     const scope = scopeOfKind(createRefundPolicyCard(), "managed_document");
     const guide = buildRetrievalGuide(scope, LIMIT);
 
-    // The Scope really holds both — asserted here so the exclusion below is not
-    // vacuous — and the guide holds neither, by name or by value.
-    expect(scope.documentIndex.connectorId).toBe("vector.local");
-    expect(scope.documentIndex.accessHandle).toBe(
-      "documents/policies/indexes/refund",
-    );
+    // The exclusion below used to be paired with a positive assertion that the
+    // Scope really held both, so that "the guide omits them" could not pass
+    // vacuously. The Scope has no such fields any more, so the pairing inverts:
+    // the input itself is checked to be four logical fields and nothing else,
+    // which makes the guide's omission structural rather than something
+    // `buildRetrievalGuide` has to keep choosing not to copy.
+    expect(Object.keys(scope.documentIndex).sort()).toEqual([
+      "documentId",
+      "documentIndexId",
+      "indexVersion",
+      "sourceId",
+    ]);
     const wire = JSON.stringify(guide);
     for (const forbidden of [
       "connectorId",

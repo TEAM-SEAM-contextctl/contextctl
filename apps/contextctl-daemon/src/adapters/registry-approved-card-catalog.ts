@@ -12,13 +12,14 @@ import type {
 /**
  * Serves Selection's `ApprovedCardCatalog` from Registry's `CardStore`.
  *
- * The two read models happen to line up field for field today, so returning
- * Registry's entries unchanged would compile. It is written out by hand anyway
- * because the match is a coincidence, not a contract: the models are owned by
- * different domains and are free to move apart. Naming every field here means a
- * field Registry drops or renames, and any Scope kind it gains, fails this
- * translation at compile time instead of silently reshaping what Selection
- * sees at runtime.
+ * The two read models used to line up field for field, and they no longer do:
+ * Registry's managed document Scope still carries the physical binding, while
+ * Selection's stops at the logical index reference. That divergence is exactly
+ * why this translation is written out by hand rather than passing entries
+ * through — the models are owned by different domains and are free to keep
+ * moving apart. Naming every field here means a field Registry drops or
+ * renames, and any Scope kind it gains, fails at compile time instead of
+ * silently reshaping what Selection sees at runtime.
  *
  * Assembly lives in the daemon because it is the only Composition Root allowed
  * to depend on both domains.
@@ -67,13 +68,19 @@ function toApprovedScope(scope: RetrievalScope): ApprovedScope {
           scopeId: scope.reference.scopeId,
           scopeVersion: scope.reference.scopeVersion,
         },
+        // Registry's v1 Scope still carries `connectorId` and `accessHandle`,
+        // and they stop here. Selection's `ApprovedDocumentIndexRef` names four
+        // logical fields only, so the physical pair is read off the entry and
+        // deliberately not written out: Indexing resolves the binding from its
+        // own durable catalog, under its own authority. Dropping it in the
+        // adapter rather than in Selection means the narrowing happens once, at
+        // the boundary, instead of every layer downstream having to remember
+        // not to project two fields it was handed.
         documentIndex: {
           documentIndexId: scope.documentIndex.documentIndexId,
           sourceId: scope.documentIndex.sourceId,
           documentId: scope.documentIndex.documentId,
           indexVersion: scope.documentIndex.indexVersion,
-          connectorId: scope.documentIndex.connectorId,
-          accessHandle: scope.documentIndex.accessHandle,
         },
         selection:
           scope.selection.kind === "document"

@@ -39,11 +39,15 @@ import { createRefundPolicyChunkMap } from "./fixtures/document-chunk.fixture.js
  */
 
 /**
- * Our own retrieval coordinates, as the demo Card really declares them.
+ * Physical retrieval coordinates in the shape our infrastructure would use.
  *
- * Named here so the exclusion checks below can be paired with a positive
- * assertion that the fixture carries them at all — an exclusion over a payload
- * built from a Card that never held the value proves nothing.
+ * These are literals and no longer read off the fixture: `ApprovedDocumentIndexRef`
+ * has no field to hold them since the contract dropped the physical binding, so
+ * the check is no longer "the value the Card carries does not escape" but the
+ * stronger "a value of this shape appears nowhere in a response". A regression
+ * that reintroduced a connector handle anywhere along the pipeline — read from
+ * Indexing, defaulted in an adapter, rebuilt in a projection — would still have
+ * to produce a string like one of these to be useful, and would trip here.
  */
 const FORBIDDEN_VALUES = {
   connectorId: "vector.local",
@@ -277,19 +281,26 @@ function expectDemoResolution(resolution: ContextResolution): void {
 /**
  * Our own infrastructure coordinates never leave, on any surface.
  *
- * The positive assertion comes first and is not decoration: without it every
- * check below would pass against a Card that never carried the values, and the
- * whole guard would be vacuous. Both the field names and the values are
- * checked, because renaming a field and shipping the value anyway would satisfy
- * the first list and still leak the coordinate.
+ * The first assertion is about the catalog rather than the response, and it is
+ * what keeps the rest from being vacuous. It used to read the coordinates off
+ * the Card to prove the fixture carried something worth excluding; the Card
+ * cannot carry them any more, so it now asserts the opposite and stronger fact
+ * — the entry the whole pipeline reads from holds no physical binding at all,
+ * at runtime and not only in the type. Exclusion downstream is then a property
+ * of the input rather than a projection rule each layer has to keep applying.
+ *
+ * Both the field names and the value shapes are still checked on the response,
+ * because a regression that renamed a field and shipped the coordinate anyway
+ * would satisfy the first list and still leak.
  */
 function expectNoRetrievalCoordinates(resolution: ContextResolution): void {
   const scope = createDemoCardSet()[0]?.scopes[0];
   if (scope?.kind !== "managed_document") {
     throw new Error("expected the refund policy Card to hold a document scope");
   }
-  expect(scope.documentIndex.connectorId).toBe(FORBIDDEN_VALUES.connectorId);
-  expect(scope.documentIndex.accessHandle).toBe(FORBIDDEN_VALUES.accessHandle);
+  for (const field of FORBIDDEN_FIELDS) {
+    expect(Object.keys(scope.documentIndex)).not.toContain(field);
+  }
 
   const serialized = JSON.stringify(resolution);
 

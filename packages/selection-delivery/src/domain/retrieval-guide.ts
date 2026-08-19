@@ -30,10 +30,13 @@ export type RetrievalGuide =
  * Where a document's evidence came from, in citable terms, and how much of it
  * was asked for.
  *
- * Deliberately not `ApprovedDocumentIndexRef`: `connectorId` and `accessHandle`
- * are our own infrastructure coordinates — which store, which handle inside it —
- * and a consumer neither needs them to read a citation nor may act on them.
- * Nothing in this package carries them past the catalog read model any more.
+ * Structurally identical to `ApprovedDocumentIndexRef` today, and separate on
+ * purpose: one is what a Card holds and the other is what a consumer receives,
+ * and the two are free to move apart. `connectorId` and `accessHandle` used to
+ * be the difference between them — infrastructure coordinates naming which store
+ * and which handle inside it — and this guide was defined by their exclusion.
+ * The read model no longer carries them at all, so there is nothing left here to
+ * exclude.
  *
  * `documentIndexId`, `sourceId` and `indexVersion` do stay: they are what makes
  * a citation checkable against the registry, which is the same standard ADR 0001

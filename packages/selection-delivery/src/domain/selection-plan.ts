@@ -78,8 +78,11 @@ export interface SelectionPlanSummary {
 /**
  * One read to perform, reduced to the three fields that identify and bound it.
  *
- * There is no `connectorId`, no `accessHandle` and no `securityDomain` here, and
- * their absence is structural rather than an omission to be reviewed. A Scope
+ * There is no `connectorId`, no `accessHandle` and no `securityDomain` here.
+ * The first two are absent from the approved read model itself, so this target
+ * could not name them if it wanted to; the third is the executor's own to state.
+ * Either way the property is the same one, and it is structural rather than an
+ * omission to be reviewed. A Scope
  * reference plus a bound is everything an executor needs to look the physical
  * binding up for itself under its own authority; handing it one instead would
  * make Selection the party that decided which store is read and under whose

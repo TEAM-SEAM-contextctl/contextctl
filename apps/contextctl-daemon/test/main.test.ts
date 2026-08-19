@@ -11,6 +11,7 @@ import {
   promoteCardVersion,
   withCardVersions,
   type CardVersion,
+  type DocumentIndexRef,
   type RetrievalScope,
 } from "@contextctl/registry-lifecycle";
 import {
@@ -68,19 +69,26 @@ afterEach(() => {
   }
 });
 
-function documentIndexFor(
-  runtime: DaemonRuntime,
-  accessHandle: string,
-): ApprovedDocumentIndexRef {
-  return {
-    documentIndexId: "didx_local",
-    sourceId: "src_local",
-    documentId: "doc_local",
-    indexVersion: "idxv_aaaa",
-    connectorId: runtime.connectorId,
-    accessHandle,
-  };
-}
+/**
+ * The logical coordinates every fixture below shares.
+ *
+ * Typed as `ApprovedDocumentIndexRef` on purpose: that is the narrowest of the
+ * three document index shapes crossing this file, so the annotation pins these
+ * four fields as exactly what Selection is allowed to see, and excess property
+ * checking rejects a physical field being folded back in here.
+ *
+ * The physical pair lives at each point of use instead, and there are only two:
+ * the index catalog's `binding`, and Registry's own v1 Scope. Neither is a
+ * Selection value, and neither shares an access handle with the other, so
+ * naming them separately is what keeps visible which side is asserting a
+ * physical store.
+ */
+const localDocumentIndex: ApprovedDocumentIndexRef = {
+  documentIndexId: "didx_local",
+  sourceId: "src_local",
+  documentId: "doc_local",
+  indexVersion: "idxv_aaaa",
+};
 
 /**
  * Publishes one whole-document Scope into the runtime's own publication store.
@@ -90,9 +98,7 @@ function documentIndexFor(
  * the embedding profile, so a publication carrying any other handle could not
  * be rehydrated and the search would fail for a reason unrelated to wiring.
  */
-async function publishWholeDocument(
-  runtime: DaemonRuntime,
-): Promise<ApprovedDocumentIndexRef> {
+async function publishWholeDocument(runtime: DaemonRuntime): Promise<void> {
   // The state namespace is part of what the handle is derived from, and the
   // search rebuilds the same compatibility out of the manifest: preparing
   // without it mints a handle for the legacy namespace that then fails to
@@ -103,16 +109,11 @@ async function publishWholeDocument(
     embeddingProfile: runtime.embeddingProfile,
     payloadSchemaVersion: 2,
   });
-  const documentIndex = documentIndexFor(runtime, prepared.accessHandle);
-  // The catalog record's own Scope shape carries no physical binding — v2 keeps
-  // `connectorId` and `accessHandle` in `binding` — while the approved read
-  // model Selection hands the retriever still names both.
-  const catalogedIndex = {
-    documentIndexId: documentIndex.documentIndexId,
-    sourceId: documentIndex.sourceId,
-    documentId: documentIndex.documentId,
-    indexVersion: documentIndex.indexVersion,
-  };
+  // The catalog record's own Scope shape carries no physical binding: v2 keeps
+  // `connectorId` and `accessHandle` in `binding` alone, which is now the only
+  // place in this publication that names them. The approved read model
+  // Selection hands the retriever names neither.
+  const catalogedIndex = { ...localDocumentIndex };
   const scopes: PublishedIndexVersion["scopes"] = [
     {
       scopeId: "scope_local",
@@ -128,19 +129,23 @@ async function publishWholeDocument(
     binding: {
       stateNamespaceId: runtime.stateNamespaceId,
       securityDomain: runtime.securityDomain,
-      documentIndexId: documentIndex.documentIndexId,
-      indexVersion: documentIndex.indexVersion,
-      connectorId: documentIndex.connectorId,
-      accessHandle: documentIndex.accessHandle,
+      documentIndexId: localDocumentIndex.documentIndexId,
+      indexVersion: localDocumentIndex.indexVersion,
+      // Straight from the runtime and from the handle the index just minted.
+      // This is the index catalog's binding, not a Selection value: it is the
+      // record Indexing resolves a managed read against, so it is the one place
+      // that has to name the physical store.
+      connectorId: runtime.connectorId,
+      accessHandle: prepared.accessHandle,
     },
     manifest: {
       stateNamespaceId: runtime.stateNamespaceId,
       securityDomain: runtime.securityDomain,
-      documentIndexId: documentIndex.documentIndexId,
-      indexVersion: documentIndex.indexVersion,
-      sourceId: documentIndex.sourceId,
+      documentIndexId: localDocumentIndex.documentIndexId,
+      indexVersion: localDocumentIndex.indexVersion,
+      sourceId: localDocumentIndex.sourceId,
       observationId: "obs_local",
-      documentId: documentIndex.documentId,
+      documentId: localDocumentIndex.documentId,
       documentSchemaVersion: 1,
       parserVersion: "11.0.0+gfm-4.0.1",
       normalizationPolicyVersion: "markdown-normalize-v1",
@@ -162,9 +167,6 @@ async function publishWholeDocument(
   };
 
   await runtime.publications.commitCurrent(publication);
-  // The approved read model, not the catalog record: it is what an approved
-  // Card hands the retriever, and it is the half that still names the binding.
-  return documentIndex;
 }
 
 /**
@@ -234,6 +236,23 @@ function sqlScope(): RetrievalScope {
 }
 
 /**
+ * Registry's v1 index reference: the logical four plus the physical pair.
+ *
+ * Registry still requires both, and the handle it is given here is deliberately
+ * one no index ever minted. Nothing downstream reads it — the daemon adapter
+ * drops the pair on the way into Selection, and the search resolves the real
+ * binding from the catalog — so a value that would break if it were ever
+ * honoured is the fixture that proves it is not.
+ */
+function unresolvedRegistryIndex(runtime: DaemonRuntime): DocumentIndexRef {
+  return {
+    ...localDocumentIndex,
+    connectorId: runtime.connectorId,
+    accessHandle: "memory:v1:unprepared",
+  };
+}
+
+/**
  * A Scope nothing ever published, so the search reports it and its item fails.
  *
  * The unpublished reference is the point of the fixture, not an oversight: the
@@ -245,7 +264,7 @@ function unpublishedDocumentScope(runtime: DaemonRuntime): RetrievalScope {
   return {
     kind: "managed_document",
     reference: { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
-    documentIndex: documentIndexFor(runtime, "memory:v1:unprepared"),
+    documentIndex: unresolvedRegistryIndex(runtime),
     selection: { kind: "document" },
   };
 }
@@ -255,7 +274,7 @@ function publishedDocumentScope(runtime: DaemonRuntime): RetrievalScope {
   return {
     kind: "managed_document",
     reference: { scopeId: "scope_local", scopeVersion: "scpv_aaaa" },
-    documentIndex: documentIndexFor(runtime, "memory:v1:unprepared"),
+    documentIndex: unresolvedRegistryIndex(runtime),
     selection: { kind: "document" },
   };
 }
