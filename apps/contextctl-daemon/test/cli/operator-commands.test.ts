@@ -1,0 +1,251 @@
+import type { DatabaseSync } from "node:sqlite";
+
+import {
+  appendCardVersion,
+  createContextCard,
+  openRegistryDatabase,
+  SqliteCardStore,
+  withCardVersions,
+  type CardVersion,
+  type ContextCard,
+  type RetrievalScope,
+} from "@contextctl/registry-lifecycle";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { parseCliArguments } from "../../src/cli/arguments.js";
+import { runCardsDecision, runReachability } from "../../src/cli/commands.js";
+import { EXIT_CODES } from "../../src/cli/exit-codes.js";
+import type { RegistryOnlyRuntime } from "../../src/cli/runtime.js";
+
+/**
+ * The four operator decisions and the reachability report, reached the way the
+ * CLI reaches them.
+ *
+ * Registry's operator surface has been complete since SEAM-49 and SEAM-63, and
+ * every one of its commands except `approve` was unreachable from a terminal:
+ * `runOperatorCommand` was called by tests and nothing else. So the subject here
+ * is the wiring — argv through the parser, through the command, into Registry,
+ * back out as an exit code — rather than the decisions themselves, which are
+ * tested where they are decided.
+ *
+ * Nothing here is faked. These commands take Registry's database and nothing
+ * else — that is the whole shape of `RegistryOnlyRuntime`, and the reason it
+ * exists: routing them through the assembled runtime made them refuse to start
+ * without the 415MB embedding artifact, which none of them calls. So the runtime
+ * under test is the real one, and the assertions are the ones a fake store could
+ * not support: that `disable` actually stops the Card serving, and that rolling
+ * forward is refused rather than quietly done.
+ */
+
+const meaning = {
+  description: "결제 실패 재시도 정책",
+  representativeQuestions: ["결제가 실패하면 언제 재시도되나요?"],
+  aliases: ["payment retry"],
+  keywords: ["payment", "retry"],
+};
+
+const scope: RetrievalScope = {
+  kind: "managed_document",
+  reference: { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
+  documentIndex: {
+    documentIndexId: "didx_payments",
+    sourceId: "src_payments",
+    documentId: "doc_payments",
+    indexVersion: "idxv_aaaa",
+  },
+  selection: { kind: "document" },
+};
+
+function versionOf(cardId: string, versionId: string, createdAt: string): CardVersion {
+  return {
+    id: versionId,
+    cardId,
+    lineage: {
+      publicationId: "pub_initial",
+      observationId: "obs_initial",
+      knowledgeUnitId: cardId,
+    },
+    scopes: [scope],
+    validationState: "validated",
+    createdAt,
+  };
+}
+
+/** A Card with two validated versions, so `rollback` has somewhere to go. */
+function cardWithTwoVersions(cardId: string): ContextCard {
+  const card = createContextCard(cardId, meaning, {
+    sensitive: false,
+    allowedUsage: ["retrieval"],
+  });
+  const first = appendCardVersion(
+    card.versions,
+    versionOf(cardId, "cv_1", "2026-08-01T00:00:00.000Z"),
+  );
+  return withCardVersions(
+    card,
+    appendCardVersion(first, versionOf(cardId, "cv_2", "2026-08-02T00:00:00.000Z")),
+  );
+}
+
+let database: DatabaseSync;
+let cards: SqliteCardStore;
+let cli: RegistryOnlyRuntime;
+
+beforeEach(async () => {
+  database = openRegistryDatabase(":memory:");
+  cards = new SqliteCardStore(database);
+  await cards.saveCard(cardWithTwoVersions("card_payments"), []);
+  cli = {
+    database,
+    cards,
+    close: () => {
+      database.close();
+    },
+  };
+});
+
+afterEach(() => {
+  cli.close();
+});
+
+/** Parses real argv, so the test cannot pass on a command shape nobody types. */
+function decisionOf(argv: readonly string[]) {
+  const parsed = parseCliArguments(argv);
+  if (parsed.status !== "ok" || parsed.command.kind !== "cards_decision") {
+    throw new Error(`expected a decision, got ${JSON.stringify(parsed)}`);
+  }
+  return parsed.command;
+}
+
+async function currentVersionOf(cardId: string): Promise<string | undefined> {
+  return (await cards.findCard(cardId))?.versions.currentVersionId;
+}
+
+describe("cards approve", () => {
+  it("promotes the newest version and exits zero", async () => {
+    const outcome = await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
+    );
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+    expect(outcome.stdout).toContain("cv_2");
+    expect(await currentVersionOf("card_payments")).toBe("cv_2");
+  });
+
+  it("records who decided, even when nobody said", async () => {
+    // The audit trail is the reason `--by` exists, and an operator who omits it
+    // still has an identity: the OS account running the command. A constant like
+    // `cli` would put a name in an append-only trail that identifies nobody.
+    const outcome = await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments"]),
+    );
+
+    expect(outcome.stdout).toContain("결정자:");
+  });
+});
+
+describe("cards reject", () => {
+  it("refuses the named version and leaves nothing serving", async () => {
+    const outcome = await runCardsDecision(
+      cli,
+      decisionOf(["cards", "reject", "card_payments", "cv_2", "--by", "kim"]),
+    );
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+    // The version is not deleted — a reviewer has to be able to see what was
+    // turned down — so the observable effect is that it did not become current.
+    expect(await currentVersionOf("card_payments")).toBeUndefined();
+  });
+});
+
+describe("cards disable", () => {
+  it("stops the Card serving without touching its history", async () => {
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
+    );
+
+    const outcome = await runCardsDecision(
+      cli,
+      decisionOf(["cards", "disable", "card_payments", "--by", "kim"]),
+    );
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+    expect(await currentVersionOf("card_payments")).toBeUndefined();
+    // Re-approvable afterwards, which is what "history untouched" means in
+    // practice: a disabled Card does not have to be rebuilt from a Publication.
+    const versions = (await cards.findCard("card_payments"))?.versions.versions ?? [];
+    expect(versions.map((version) => version.id)).toEqual(["cv_1", "cv_2"]);
+  });
+});
+
+describe("cards rollback", () => {
+  it("moves the pointer back to the earlier version", async () => {
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
+    );
+
+    const outcome = await runCardsDecision(
+      cli,
+      decisionOf(["cards", "rollback", "card_payments", "cv_1", "--by", "kim"]),
+    );
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+    expect(await currentVersionOf("card_payments")).toBe("cv_1");
+  });
+
+  it("refuses to roll forward, with the refused code", async () => {
+    // The whole reason `rollback` is not an alias for `approve`: an operator who
+    // mistypes the version would otherwise promote a later one under the word
+    // "rollback", and the audit trail would record the opposite of the intent.
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
+    );
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "rollback", "card_payments", "cv_1", "--by", "kim"]),
+    );
+
+    const outcome = await runCardsDecision(
+      cli,
+      decisionOf(["cards", "rollback", "card_payments", "cv_2", "--by", "kim"]),
+    );
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.refused);
+    expect(await currentVersionOf("card_payments")).toBe("cv_1");
+  });
+});
+
+describe("reachability", () => {
+  it("reports the summary and passes the gate on an empty catalog", async () => {
+    const outcome = await runReachability(cli, { kind: "reachability" });
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+    expect(outcome.stdout.length).toBeGreaterThan(0);
+  });
+
+  it("narrows the report to one state", async () => {
+    const outcome = await runReachability(cli, {
+      kind: "reachability",
+      state: "orphaned",
+    });
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+  });
+
+  it("reports a state it does not know as a usage error, not a gate failure", async () => {
+    const outcome = await runReachability(cli, {
+      kind: "reachability",
+      state: "not_a_state",
+    });
+
+    // Both are non-zero, and telling them apart is the point of the mapping: a
+    // typo in a script is fixed in the script, a failed gate stops a release.
+    expect(outcome.exitCode).toBe(EXIT_CODES.usageError);
+    expect(outcome.exitCode).not.toBe(EXIT_CODES.gateFailed);
+  });
+});

@@ -15,7 +15,8 @@ import {
 import { parseCliArguments, usageText, type CliCommand } from "./arguments.js";
 import {
   failed,
-  runCardsApprove,
+  runCardsDecision,
+  runReachability,
   runCardsList,
   runDoctor,
   runInstallAssets,
@@ -31,6 +32,7 @@ import {
   buildCliRuntime,
   cliRuntimeOptions,
   EmbeddingAssetsUnavailableError,
+  openRegistryOnlyRuntime,
   type CliRuntime,
 } from "./runtime.js";
 import { resolveActiveAssetDirectory } from "./asset-directory.js";
@@ -68,10 +70,21 @@ function needsRuntime(command: CliCommand): boolean {
   return (
     command.kind === "ingest" ||
     command.kind === "cards_list" ||
-    command.kind === "cards_approve" ||
     command.kind === "query"
   );
 }
+
+/*
+ * The operator decisions and the reachability report take a different path from
+ * every other command: they need Registry's database and nothing else.
+ *
+ * They decide about Cards — promote, refuse, withdraw, roll back — and report
+ * which Scopes an approved Card can reach. None of them embeds anything, so none
+ * should require the 415MB embedding artifact to be installed. Routing them
+ * through the full runtime meant an operator could not disable a Card that was
+ * serving badly, or find out which Scopes were unreachable, on a machine where
+ * the model was never downloaded. See the branch in `runCli`.
+ */
 
 export async function runCli(input: {
   readonly argv: readonly string[];
@@ -142,6 +155,23 @@ export async function runCli(input: {
     );
   }
 
+  if (command.kind === "cards_decision" || command.kind === "reachability") {
+    const registry = openRegistryOnlyRuntime({
+      environment: input.environment,
+      workingDirectory,
+    });
+    try {
+      return emit(
+        input,
+        command.kind === "cards_decision"
+          ? await runCardsDecision(registry, command)
+          : await runReachability(registry, command),
+      );
+    } finally {
+      registry.close();
+    }
+  }
+
   try {
     if (!needsRuntime(command)) {
       return emit(input, await runWithoutRuntime(command, paths.sourcesFile, workingDirectory));
@@ -197,8 +227,6 @@ async function runWithRuntime(
       return runIngest(cli, command.reference);
     case "cards_list":
       return runCardsList(cli, command.json);
-    case "cards_approve":
-      return runCardsApprove(cli, command);
     case "query":
       return runQuery(cli, command);
     default:

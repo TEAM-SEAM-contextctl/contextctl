@@ -29,13 +29,25 @@ export type CliCommand =
   | { readonly kind: "source_remove"; readonly reference: string }
   | { readonly kind: "ingest"; readonly reference?: string }
   | { readonly kind: "cards_list"; readonly json: boolean }
+  /**
+   * The four decisions share one shape, because Registry's surface does.
+   *
+   * `runOperatorCommand` takes the same `<card-id> <version-id> --by` for
+   * approve, reject and rollback, and `disable` differs only in having no
+   * version. Splitting them into four command types here would mean four almost
+   * identical parsers and four almost identical call sites, and the one thing
+   * that genuinely differs — which word Registry is given — is already the
+   * discriminant.
+   */
   | {
-      readonly kind: "cards_approve";
+      readonly kind: "cards_decision";
+      readonly decision: "approve" | "reject" | "disable" | "rollback";
       readonly cardId: string;
       readonly versionId?: string;
       readonly by?: string;
       readonly note?: string;
     }
+  | { readonly kind: "reachability"; readonly state?: string }
   | {
       readonly kind: "query";
       readonly text: string;
@@ -139,6 +151,27 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
     summary: "카드 버전을 승인한다. 버전을 생략하면 최신 버전을 승인한다.",
   },
   {
+    topic: "cards reject",
+    line: "contextctl cards reject <cardId> <versionId> [--by <who>] [--note <text>]",
+    summary: "카드 버전을 거부한다. 버전은 지우지 않고 거부 사실을 이력에 남긴다.",
+  },
+  {
+    topic: "cards disable",
+    line: "contextctl cards disable <cardId> [--by <who>] [--note <text>]",
+    summary: "서비스 중인 카드를 내린다. 이력은 남으므로 다시 승인하면 복구된다.",
+  },
+  {
+    topic: "cards rollback",
+    line: "contextctl cards rollback <cardId> <versionId> [--by <who>] [--note <text>]",
+    summary: "이전 버전으로 되돌린다. 현재보다 뒤가 아닌 버전은 거부한다.",
+  },
+  {
+    topic: "reachability",
+    line: "contextctl reachability [--state <state>]",
+    summary:
+      "인덱싱됐지만 승인 카드로 도달할 수 없는 범위를 보고한다. 릴리스 기준을 넘기지 못하면 0이 아닌 코드로 끝난다.",
+  },
+  {
     topic: "query",
     line: 'contextctl query "<질문>" [--json] [--max-context <n>]',
     summary: "승인된 카드에서 컨텍스트를 선택해 답한다. --max-context 는 문자 수 상한이다.",
@@ -217,6 +250,8 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
       return parseDoctorCommand(argv.slice(1));
     case "paths":
       return parsePathsCommand(argv.slice(1));
+    case "reachability":
+      return parseReachabilityCommand(argv.slice(1));
     case "serve":
       return parseServeCommand(argv.slice(1));
     case "help":
@@ -321,11 +356,90 @@ function parseSourceCommand(rest: readonly string[]): ParsedArguments {
   }
 }
 
+/**
+ * The three decisions that name a version, and the one that does not.
+ *
+ * `approve` may omit the version — the surface resolves the newest pending one —
+ * but `reject` and `rollback` may not. Rejecting or rolling back "whatever is
+ * latest" is not a decision an operator can mean: both statements are about one
+ * specific version, and guessing which would record an audit entry naming a
+ * version nobody chose. `disable` is the opposite case: it moves the current
+ * pointer off whatever is serving, so a version would have nothing to bind to.
+ */
+function parseDecisionCommand(
+  decision: "approve" | "reject" | "disable" | "rollback",
+  rest: readonly string[],
+): ParsedArguments {
+  const topic = `cards ${decision}`;
+  const outcome = tokenize(
+    rest,
+    { by: { type: "string" }, note: { type: "string" } },
+    topic,
+  );
+  if (outcome.status === "usage_error") {
+    return outcome;
+  }
+
+  const cardId = outcome.positionals[0];
+  if (cardId === undefined) {
+    return usageError("카드 식별자가 필요합니다.", topic);
+  }
+
+  const allowed = decision === "disable" ? 1 : 2;
+  if (outcome.positionals.length > allowed) {
+    return usageError(
+      decision === "disable"
+        ? "cards disable 은 카드 식별자만 받습니다."
+        : `${topic} 은 카드 식별자와 버전 식별자만 받습니다.`,
+      topic,
+    );
+  }
+
+  const versionId = outcome.positionals[1];
+  if (versionId === undefined && (decision === "reject" || decision === "rollback")) {
+    return usageError(`${topic} 은 버전 식별자가 필요합니다.`, topic);
+  }
+
+  const by = stringOf(outcome.values["by"]);
+  const note = stringOf(outcome.values["note"]);
+  return ok({
+    kind: "cards_decision",
+    decision,
+    cardId,
+    ...(versionId === undefined ? {} : { versionId }),
+    ...(by === undefined ? {} : { by }),
+    ...(note === undefined ? {} : { note }),
+  });
+}
+
+/**
+ * The reachability report, optionally narrowed to one state.
+ *
+ * `--state` takes any string rather than a fixed list. The six state names are
+ * Registry's vocabulary and it already refuses one it does not know; repeating
+ * them here would be a second copy to keep in step, and the error an operator
+ * gets from the domain names the states it accepts.
+ */
+function parseReachabilityCommand(rest: readonly string[]): ParsedArguments {
+  const outcome = tokenize(rest, { state: { type: "string" } }, "reachability");
+  if (outcome.status === "usage_error") {
+    return outcome;
+  }
+  if (outcome.positionals.length > 0) {
+    return usageError("reachability 는 인자를 받지 않습니다.", "reachability");
+  }
+  const state = stringOf(outcome.values["state"]);
+  return ok({ kind: "reachability", ...(state === undefined ? {} : { state }) });
+}
+
 function parseCardsCommand(rest: readonly string[]): ParsedArguments {
   const subcommand = rest[0];
   switch (subcommand) {
     case undefined:
-      return usageError("cards 에는 하위 명령이 필요합니다: list, approve", "cards");
+      return usageError(
+        "cards 에는 하위 명령이 필요합니다: list, approve, reject, disable, rollback",
+        "cards",
+      );
     case "list": {
       const outcome = tokenize(rest.slice(1), { json: { type: "boolean" } }, "cards list");
       if (outcome.status === "usage_error") {
@@ -336,35 +450,11 @@ function parseCardsCommand(rest: readonly string[]): ParsedArguments {
       }
       return ok({ kind: "cards_list", json: outcome.values["json"] === true });
     }
-    case "approve": {
-      const outcome = tokenize(rest.slice(1), {
-        by: { type: "string" },
-        note: { type: "string" },
-      }, "cards approve");
-      if (outcome.status === "usage_error") {
-        return outcome;
-      }
-      const cardId = outcome.positionals[0];
-      if (cardId === undefined) {
-        return usageError("승인할 카드 식별자가 필요합니다.", "cards approve");
-      }
-      if (outcome.positionals.length > 2) {
-        return usageError(
-          "cards approve 는 카드 식별자와 버전 식별자만 받습니다.",
-          "cards approve",
-        );
-      }
-      const versionId = outcome.positionals[1];
-      const by = stringOf(outcome.values["by"]);
-      const note = stringOf(outcome.values["note"]);
-      return ok({
-        kind: "cards_approve",
-        cardId,
-        ...(versionId === undefined ? {} : { versionId }),
-        ...(by === undefined ? {} : { by }),
-        ...(note === undefined ? {} : { note }),
-      });
-    }
+    case "approve":
+    case "reject":
+    case "disable":
+    case "rollback":
+      return parseDecisionCommand(subcommand, rest.slice(1));
     default:
       return usageError(`알 수 없는 하위 명령입니다: cards ${subcommand}`, "cards");
   }

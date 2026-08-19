@@ -5,9 +5,11 @@ import {
   SqliteConsumerCheckpointStore,
   SqliteScopeReachabilityStore,
   type ContextCard,
+  type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
 
 import type { CliCommand } from "./arguments.js";
+import { EXIT_CODES, operatorExitCode, type ExitCode } from "./exit-codes.js";
 import {
   describeAssetInstallationPlan,
   planAssetInstallation,
@@ -22,7 +24,14 @@ import {
   renderSourceListing,
   type CardListing,
 } from "./render.js";
-import type { CliRuntime } from "./runtime.js";
+import type { RegistryIntakeResult } from "../registry-intake.js";
+
+/** A Source that Registry refused, with the diagnostic that says why. */
+type IngestRefusal = Extract<
+  RegistryIntakeResult,
+  { readonly status: "deferred" | "forked" }
+>;
+import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
 import {
   addSource,
   defaultReferenceFor,
@@ -54,7 +63,12 @@ export function ok(stdout: string, stderr: readonly string[] = []): CommandOutco
 }
 
 export function failed(message: string): CommandOutcome {
-  return { stdout: "", stderr: [message], exitCode: 1 };
+  return { stdout: "", stderr: [message], exitCode: EXIT_CODES.refused };
+}
+
+/** Fails with a code other than the default, for outcomes a script must tell apart. */
+export function failedWith(code: ExitCode, message: string): CommandOutcome {
+  return { stdout: "", stderr: [message], exitCode: code };
 }
 
 /* ------------------------------------------------------------------ source */
@@ -144,6 +158,9 @@ export async function runIngest(
   }
 
   const lines: string[] = [];
+  // Narrowed at the point of collection rather than at the point of use, so the
+  // exit-code decision below reads the diagnostic without re-proving it exists.
+  const refusals: IngestRefusal[] = [];
   let claimedVersions = 0;
 
   for (const each of references) {
@@ -174,6 +191,17 @@ export async function runIngest(
 
     const claimed = await cli.runtime.registryIntake.claim(publicationId);
     lines.push(`  Publication ${publicationId} — ${claimed.status}`);
+    if (claimed.status === "deferred" || claimed.status === "forked") {
+      // The code and the Source are printed, not just the status word. A refusal
+      // that reads as one word tells an operator that something stopped without
+      // saying which Source or what to do about it, and the sentence Registry
+      // built names the Publications that actually collided.
+      refusals.push(claimed);
+      lines.push(
+        `    ${claimed.diagnostic.code} — ${claimed.diagnostic.detail}`,
+        `    Source: ${claimed.sourceId}`,
+      );
+    }
     for (const version of claimed.cardVersions) {
       claimedVersions += 1;
       const findings =
@@ -194,7 +222,40 @@ export async function runIngest(
   );
 
   const warning = ingestVolatilityWarning(cli.vectorBackend);
-  return ok(lines.join("\n"), warning === undefined ? [] : [warning]);
+  const stderr = warning === undefined ? [] : [warning];
+
+  // A refused Source means the run did not do what it was asked, so it cannot
+  // exit 0: a script or a scheduled job would read a stopped Source as a
+  // successful ingest. Fork outranks gap when both happened, because a gap
+  // clears itself on the next delivery and a fork waits for a person.
+  const forked = refusals.find((refusal) => refusal.status === "forked");
+  if (forked !== undefined) {
+    return {
+      stdout: lines.join("\n"),
+      stderr: [...stderr, refusalSummary(forked, "체인이 갈라져 소비를 멈췄습니다")],
+      exitCode: EXIT_CODES.chainForked,
+    };
+  }
+  const deferred = refusals[0];
+  if (deferred !== undefined) {
+    return {
+      stdout: lines.join("\n"),
+      stderr: [
+        ...stderr,
+        refusalSummary(deferred, "선행 Publication을 아직 소비하지 않아 보류했습니다"),
+      ],
+      exitCode: EXIT_CODES.chainDeferred,
+    };
+  }
+  return ok(lines.join("\n"), stderr);
+}
+
+/** One line naming the Source, the code and what an operator should read next. */
+function refusalSummary(refusal: IngestRefusal, headline: string): string {
+  return [
+    `${headline}: ${refusal.sourceId} (${refusal.diagnostic.code})`,
+    refusal.diagnostic.detail,
+  ].join("\n  ");
 }
 
 /* ------------------------------------------------------------------- cards */
@@ -258,12 +319,15 @@ function pendingVersionIdsOf(card: ContextCard): readonly string[] {
  * This is the daemon owning them. Rebuilding the same decision path here would
  * mean a second place where "may this version be promoted" is answered.
  */
-export async function runCardsApprove(
-  cli: CliRuntime,
-  command: Extract<CliCommand, { kind: "cards_approve" }>,
+export async function runCardsDecision(
+  cli: RegistryOnlyRuntime,
+  command: Extract<CliCommand, { kind: "cards_decision" }>,
 ): Promise<CommandOutcome> {
   const decidedBy = command.by ?? currentOperator();
   let versionId = command.versionId;
+  if (command.decision === "disable") {
+    return decide(cli, command, ["disable", command.cardId, "--by", decidedBy], decidedBy);
+  }
   if (versionId === undefined) {
     const target = await resolveApprovalTarget(cli, command.cardId);
     switch (target.kind) {
@@ -273,7 +337,9 @@ export async function runCardsApprove(
       case "already_current":
         // Reported as success, because it is one. The Card an operator asked to
         // approve is the Card that is serving, and exiting non-zero here would
-        // make a re-run of a finished step look like a broken install.
+        // make a re-run of a finished step look like a broken install. Only
+        // `approve` can reach this branch — the other decisions require a
+        // version, so they never ask which one was meant.
         return ok(
           [
             `Card ${command.cardId} 는 이미 승인되어 있습니다.`,
@@ -293,28 +359,100 @@ export async function runCardsApprove(
     }
   }
 
+  return decide(
+    cli,
+    command,
+    [command.decision, command.cardId, versionId, "--by", decidedBy],
+    decidedBy,
+  );
+}
+
+/**
+ * Hands one decision to Registry and turns its answer into an exit code.
+ *
+ * The four decisions differ in the word they pass and in nothing else, so they
+ * share this path: a second place that assembled ports or mapped statuses would
+ * be a second place to keep in step with `OperatorCommandResult`.
+ */
+async function decide(
+  cli: RegistryOnlyRuntime,
+  command: Extract<CliCommand, { kind: "cards_decision" }>,
+  argv: readonly string[],
+  decidedBy: string,
+): Promise<CommandOutcome> {
   const result = await runOperatorCommand(
-    {
-      cards: cli.runtime.cards,
-      clock: { now: () => new Date().toISOString() },
-      ids: { nextId: () => `id_${randomToken()}` },
-      scopes: new SqliteScopeReachabilityStore(cli.runtime.database),
-      checkpoints: new SqliteConsumerCheckpointStore(cli.runtime.database, () =>
-        new Date().toISOString(),
-      ),
-    },
-    ["approve", command.cardId, versionId, "--by", decidedBy,
-      ...(command.note === undefined ? [] : ["--note", command.note])],
+    operatorPorts(cli),
+    [...argv, ...(command.note === undefined ? [] : ["--note", command.note])],
   );
 
-  const trail = `승인자: ${decidedBy}`;
+  const trail = `결정자: ${decidedBy}`;
   if (result.status === "ok") {
-    return ok([result.output, trail, "", "다음: contextctl query \"<질문>\""].join("\n"));
+    return ok([result.output, trail, "", ...nextStepFor(command.decision)].join("\n"));
   }
-  // `usage_error`, `refused` and `gate_failed` are all "Registry said no", and
-  // the CLI reports the reason it was given rather than restating it: the
-  // vocabulary belongs to the domain that refused.
-  return failed(`${result.status}: ${result.output}`);
+  // The reason is reported as Registry gave it — the vocabulary belongs to the
+  // domain that refused — but the status is not flattened into it. A script has
+  // to be able to tell a mistyped command from a rule that said no.
+  return failedWith(operatorExitCode(result.status), `${result.status}: ${result.output}`);
+}
+
+/** What an operator does next, which differs by decision rather than by outcome. */
+function nextStepFor(
+  decision: Extract<CliCommand, { kind: "cards_decision" }>["decision"],
+): readonly string[] {
+  switch (decision) {
+    case "approve":
+    case "rollback":
+      return ['다음: contextctl query "<질문>"'];
+    case "reject":
+    case "disable":
+      // Deliberately not a query: nothing new is servable, and the useful next
+      // look is at what the Card's state now is.
+      return ["다음: contextctl cards list"];
+    default: {
+      const unreachable: never = decision;
+      throw new Error(`unknown decision: ${String(unreachable)}`);
+    }
+  }
+}
+
+/** The ports Registry's operator surface needs, assembled from one database. */
+function operatorPorts(cli: RegistryOnlyRuntime): OperatorCommandPorts {
+  return {
+    cards: cli.cards,
+    clock: { now: () => new Date().toISOString() },
+    ids: { nextId: () => `id_${randomToken()}` },
+    scopes: new SqliteScopeReachabilityStore(cli.database),
+    checkpoints: new SqliteConsumerCheckpointStore(cli.database, () =>
+      new Date().toISOString(),
+    ),
+  };
+}
+
+/* ------------------------------------------------------ reachability report */
+
+/**
+ * The reachability report, and the release gate that reads it.
+ *
+ * This is the only surface the report has: the design keeps approved Card lists,
+ * reachability, status checks and audit on the local operator CLI and status
+ * surface, so without this command an operator has no way to see a Scope that
+ * was indexed and cannot be reached. `gate_failed` gets its own exit code
+ * because CI is the consumer that matters here — a gate whose failure a script
+ * cannot detect is not a gate.
+ */
+export async function runReachability(
+  cli: RegistryOnlyRuntime,
+  command: Extract<CliCommand, { kind: "reachability" }>,
+): Promise<CommandOutcome> {
+  const result = await runOperatorCommand(operatorPorts(cli), [
+    "reachability",
+    ...(command.state === undefined ? [] : ["--state", command.state]),
+  ]);
+
+  if (result.status === "ok") {
+    return ok(result.output);
+  }
+  return failedWith(operatorExitCode(result.status), result.output);
 }
 
 /**
@@ -336,10 +474,10 @@ type ApprovalTarget =
   | { readonly kind: "already_current"; readonly currentVersionId: string };
 
 async function resolveApprovalTarget(
-  cli: CliRuntime,
+  cli: RegistryOnlyRuntime,
   cardId: string,
 ): Promise<ApprovalTarget> {
-  const card = await cli.runtime.cards.findCard(cardId);
+  const card = await cli.cards.findCard(cardId);
   if (card === undefined) {
     return { kind: "card_missing" };
   }
