@@ -240,7 +240,7 @@ export class RegistryIntake {
     }
     const meaning = await this.#ports.meanings.generate({
       coordinate: unit.sourceCoordinate,
-      evidence: unit.evidence,
+      facts: unit.facts,
     });
     return createContextCard(cardId, meaning, this.#policy);
   }

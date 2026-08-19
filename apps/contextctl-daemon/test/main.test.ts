@@ -242,26 +242,23 @@ function sqlScope(): RetrievalScope {
     kind: "sql_source",
     reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
     connector: "postgres.main",
+    schema: "public",
     table: "payments",
     columns: ["failed_reason", "status"],
   };
 }
 
 /**
- * Registry's v1 index reference: the logical four plus the physical pair.
+ * Registry's index reference: the logical four, and nothing else.
  *
- * Registry still requires both, and the handle it is given here is deliberately
- * one no index ever minted. Nothing downstream reads it — the daemon adapter
- * drops the pair on the way into Selection, and the search resolves the real
- * binding from the catalog — so a value that would break if it were ever
- * honoured is the fixture that proves it is not.
+ * This fixture used to add a `connectorId` and a deliberately unmintable
+ * `accessHandle` to prove nothing downstream honoured them. It cannot any more —
+ * `DocumentIndexRef` has no such fields — which is the stronger version of what
+ * the fixture was asserting: the physical binding is resolved from the index
+ * catalog at search time and never travels with a Scope.
  */
-function unresolvedRegistryIndex(runtime: DaemonRuntime): DocumentIndexRef {
-  return {
-    ...localDocumentIndex,
-    connectorId: runtime.connectorId,
-    accessHandle: "memory:v1:unprepared",
-  };
+function registryIndex(): DocumentIndexRef {
+  return { ...localDocumentIndex };
 }
 
 /**
@@ -272,21 +269,21 @@ function unresolvedRegistryIndex(runtime: DaemonRuntime): DocumentIndexRef {
  * Scope up to fill the gap, so an unpublished reference has to come back as
  * exactly that.
  */
-function unpublishedDocumentScope(runtime: DaemonRuntime): RetrievalScope {
+function unpublishedDocumentScope(): RetrievalScope {
   return {
     kind: "managed_document",
     reference: { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
-    documentIndex: unresolvedRegistryIndex(runtime),
+    documentIndex: registryIndex(),
     selection: { kind: "document" },
   };
 }
 
 /** The Scope reference `publishWholeDocument` really commits to the catalog. */
-function publishedDocumentScope(runtime: DaemonRuntime): RetrievalScope {
+function publishedDocumentScope(): RetrievalScope {
   return {
     kind: "managed_document",
     reference: { scopeId: "scope_local", scopeVersion: "scpv_aaaa" },
-    documentIndex: unresolvedRegistryIndex(runtime),
+    documentIndex: registryIndex(),
     selection: { kind: "document" },
   };
 }
@@ -536,7 +533,7 @@ describe("createDaemonRuntime", () => {
         runtime,
         "unit_payment_failures",
         "cv_document",
-        publishedDocumentScope(runtime),
+        publishedDocumentScope(),
       );
 
       const [item] = await resolveItems(runtime, "결제 실패 재시도");
@@ -556,7 +553,7 @@ describe("createDaemonRuntime", () => {
         runtime,
         "unit_payment_failures",
         "cv_document",
-        publishedDocumentScope(runtime),
+        publishedDocumentScope(),
       );
 
       const [item] = await resolveItems(runtime, "결제 실패 재시도");
@@ -663,7 +660,7 @@ describe("createDaemonRuntime", () => {
         runtime,
         "unit_payment_failures",
         "cv_document",
-        unpublishedDocumentScope(runtime),
+        unpublishedDocumentScope(),
       );
 
       const result = await callMcp(runtime, "tools/call", {
