@@ -2,6 +2,7 @@ import type {
   IngestionPublication,
   PublicationId,
   PublishedKnowledgeUnit,
+  SourceId,
 } from "@contextctl/contracts";
 
 import type { CardVersion } from "../domain/card-version.js";
@@ -9,6 +10,7 @@ import {
   locateInChain,
   type ChainCursor,
   type ChainPosition,
+  type ConsumptionDiagnostic,
 } from "../domain/publication-chain.js";
 import {
   groundCardVersion,
@@ -63,7 +65,16 @@ export type ClaimPublicationResult =
   | {
       readonly status: "deferred";
       readonly publicationId: PublicationId;
+      /**
+       * Which Source is behind, so the caller need not derive it.
+       *
+       * The daemon degrades one Source's lane, not the whole of Registry, and
+       * without this it would have to read the Publication back to learn which
+       * lane a refusal belongs to — a second read of the record we just refused.
+       */
+      readonly sourceId: SourceId;
       readonly awaiting: PublicationId;
+      readonly diagnostic: ConsumptionDiagnostic;
     }
   /**
    * The Source's chain is not linear. No Card transition is committed and the
@@ -73,7 +84,8 @@ export type ClaimPublicationResult =
   | {
       readonly status: "forked";
       readonly publicationId: PublicationId;
-      readonly reason: string;
+      readonly sourceId: SourceId;
+      readonly diagnostic: ConsumptionDiagnostic;
     };
 
 /**
@@ -112,7 +124,7 @@ export async function claimPublication(
     await ports.checkpoints.findCursor(publication.sourceId),
     publication,
   );
-  const refusal = refuse(publicationId, position);
+  const refusal = refuse(publicationId, publication.sourceId, position);
   if (refusal !== undefined) {
     return refusal;
   }
@@ -136,6 +148,7 @@ export async function claimPublication(
 /** The result for a position that must not be consumed, or nothing. */
 function refuse(
   publicationId: PublicationId,
+  sourceId: SourceId,
   position: ChainPosition,
 ): ClaimPublicationResult | undefined {
   switch (position.kind) {
@@ -146,10 +159,17 @@ function refuse(
       return {
         status: "deferred",
         publicationId,
+        sourceId,
         awaiting: position.expectedAfter,
+        diagnostic: position.diagnostic,
       };
     case "fork":
-      return { status: "forked", publicationId, reason: position.reason };
+      return {
+        status: "forked",
+        publicationId,
+        sourceId,
+        diagnostic: position.diagnostic,
+      };
     default: {
       const unreachable: never = position;
       throw new Error(`unknown chain position: ${JSON.stringify(unreachable)}`);

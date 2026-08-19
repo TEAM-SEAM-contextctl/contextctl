@@ -28,10 +28,13 @@ export {
   type CardCatalogEntry,
 } from "./domain/card-catalog.js";
 export {
+  CONSUMPTION_DIAGNOSTIC_CODE_PATTERN,
   locateInChain,
   type ChainCursor,
   type ChainLink,
   type ChainPosition,
+  type ConsumptionDiagnostic,
+  type ConsumptionDiagnosticCode,
 } from "./domain/publication-chain.js";
 export {
   collectScopeObservations,

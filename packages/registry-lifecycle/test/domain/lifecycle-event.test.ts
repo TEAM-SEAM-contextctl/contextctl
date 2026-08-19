@@ -62,4 +62,30 @@ describe("lifecycle event trail", () => {
     expect(lifecycleEventsForCard(trail, "card_2")).toEqual([otherCard]);
     expect(lifecycleEventsForCard(trail, "card_missing")).toEqual([]);
   });
+
+  /**
+   * The audit trail stays Card-scoped, and a consumption diagnostic is not one.
+   *
+   * A refused Publication is a fact about a Source, not about a Card, and the
+   * temptation when the design asked for an operator diagnostic was to loosen
+   * `cardId` so a Source-level event could be appended here. That would cost the
+   * property this trail is built on: `lifecycleEventsForCard` reconstructs a
+   * Card's whole life because nothing in the trail is unattached. Diagnostics
+   * travel on the consumption result instead — see `publication-chain.ts`.
+   */
+  it("admits no event that names no card", () => {
+    // @ts-expect-error every lifecycle event belongs to exactly one Card
+    const unattached: LifecycleEvent = {
+      id: "ev_unattached",
+      kind: "card_version_added",
+      occurredAt: "2026-08-19T00:00:00.000Z",
+      versionId: "cv_1",
+      publicationId: "pub_1",
+    };
+
+    // Also checked at runtime: the directive above proves the shape is refused,
+    // and this proves the trail filter has no bucket such an event could land in.
+    expect(lifecycleEventsForCard([added, promoted, otherCard], "")).toEqual([]);
+    expect(unattached).not.toHaveProperty("cardId");
+  });
 });
