@@ -2,7 +2,7 @@ import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@
 import { describe, expect, it } from "vitest";
 
 import type { CardMeaning } from "../../src/domain/context-card.js";
-import { groundCardVersion } from "../../src/domain/evidence-grounding.js";
+import { groundCardVersion } from "../../src/domain/fact-grounding.js";
 import type {
   ManagedDocumentScope,
   RetrievalScope,

@@ -13,7 +13,7 @@ import {
 import {
   groundCardVersion,
   type GroundingFinding,
-} from "../domain/evidence-grounding.js";
+} from "../domain/fact-grounding.js";
 import { translatePublishedScope } from "../domain/retrieval-scope.js";
 import { PublicationNotFoundError } from "./errors.js";
 import type { CardMeaningGenerator } from "../ports/card-meaning-generator.js";

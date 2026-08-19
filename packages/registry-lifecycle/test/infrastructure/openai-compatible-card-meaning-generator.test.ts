@@ -1,7 +1,7 @@
 import type { PublishedSourceCoordinateV2 as PublishedSourceCoordinate } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
-import { groundCardVersion } from "../../src/domain/evidence-grounding.js";
+import { groundCardVersion } from "../../src/domain/fact-grounding.js";
 import type { RetrievalScope } from "../../src/domain/retrieval-scope.js";
 import {
   CardMeaningGenerationError,

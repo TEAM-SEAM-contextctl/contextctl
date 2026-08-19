@@ -19,6 +19,12 @@ export type GroundingResult =
  * for presence; every machine coordinate is checked against the coordinate
  * Ingestion observed, so a Card can never name a source location that the
  * source does not actually have.
+ *
+ * The design calls this Fact Grounding, and the name is precise about what is
+ * and is not claimed: the check compares a Card against the Published Facts and
+ * coordinates of its Knowledge Unit. It does not claim to prove that a natural
+ * language sentence is true. Semantic faithfulness is shown to an operator as
+ * coverage and change comparison, and no generated version is auto-approved.
  */
 export function groundCardVersion(
   coordinate: PublishedSourceCoordinate,

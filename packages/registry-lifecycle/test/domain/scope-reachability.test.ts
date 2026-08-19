@@ -114,6 +114,72 @@ describe("judgeScopeReachability", () => {
     expect(result.state).toBe("broken");
   });
 
+  /**
+   * The fields v2 added have to take part in the comparison, or two Scopes over
+   * different things compare equal and `broken` stops meaning anything.
+   *
+   * Both cases below are one `scopeVersion` claimed by two Card Versions that
+   * describe different ranges — the situation this judgement exists to catch.
+   * They pass only because `schema` and `parameters` are part of the compared
+   * shape; before v2 neither field existed and both pairs looked identical.
+   */
+  it("treats two schemas holding the same table name as different Scopes", () => {
+    const publicSchema: RetrievalScope = {
+      kind: "sql_source",
+      reference,
+      connector: "postgres.main",
+      schema: "public",
+      table: "payments",
+      columns: ["failed_reason", "status"],
+    };
+    const analyticsSchema: RetrievalScope = {
+      ...publicSchema,
+      schema: "analytics",
+    };
+
+    const result = judgeScopeReachability(
+      observe({
+        carriers: [
+          carrier({ versionId: "cv_1", isCurrent: true, scope: publicSchema }),
+          carrier({
+            cardId: "card_analytics",
+            versionId: "cv_2",
+            scope: analyticsSchema,
+          }),
+        ],
+      }),
+    );
+
+    expect(result.state).toBe("broken");
+  });
+
+  it("treats two operations on one path with different parameters as different Scopes", () => {
+    const byId: RetrievalScope = {
+      kind: "http_source",
+      reference,
+      connector: "payments.api",
+      method: "GET",
+      path: "/payments",
+      operationId: "listPayments",
+      parameters: [{ location: "query", name: "id", required: false }],
+    };
+    const byStatus: RetrievalScope = {
+      ...byId,
+      parameters: [{ location: "query", name: "status", required: false }],
+    };
+
+    const result = judgeScopeReachability(
+      observe({
+        carriers: [
+          carrier({ versionId: "cv_1", isCurrent: true, scope: byId }),
+          carrier({ cardId: "card_by_status", versionId: "cv_2", scope: byStatus }),
+        ],
+      }),
+    );
+
+    expect(result.state).toBe("broken");
+  });
+
   it("reports a refusal that recorded a reason as intentionally_unexposed", () => {
     const result = judgeScopeReachability(
       observe({

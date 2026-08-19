@@ -205,6 +205,74 @@ describe("analyzeCardImpact", () => {
     });
   });
 
+  /**
+   * Every `changedFields` name, judged one at a time.
+   *
+   * The vocabulary is closed, so this table can be exhaustive — and it has to be:
+   * the rule table in `card-impact.ts` enumerates all five, and a name that fell
+   * through would decide nothing while still looking handled. `provenance` is
+   * listed here with no rule on purpose. It records how the observation was
+   * produced, and treating a policy-version bump as staleness would flag every
+   * Card on every rebuild.
+   */
+  it.each([
+    ["facts", "change.facts"],
+    ["kind", "change.kind"],
+    ["published.scopes", "change.publishedScopes"],
+    ["source.coordinate", "change.sourceCoordinate"],
+  ] as const)("reports %s as %s", (field, rule) => {
+    const impact = analyzeCardImpact(
+      createDocumentCardVersion(),
+      updated("unit_payment_failures", [field]),
+      onlyUnit(createIngestionPublicationFixture()),
+    );
+
+    expect(impact.decision).toBe("review");
+    expect(rules(impact)).toEqual([rule]);
+  });
+
+  it("reports nothing for a provenance-only change", () => {
+    const impact = analyzeCardImpact(
+      createDocumentCardVersion(),
+      updated("unit_payment_failures", ["provenance"]),
+      onlyUnit(createIngestionPublicationFixture()),
+    );
+
+    expect(impact).toEqual({
+      cardId: "unit_payment_failures",
+      decision: "none",
+      reasons: [],
+    });
+  });
+
+  it("reports a rebuilt index once, not twice under two names", () => {
+    // `documentIndex` lives inside a published Scope, so re-indexing moves
+    // `indexVersion` and sets `published.scopes` at the same time. Both are true,
+    // and reporting both would tell an operator there are two things to look
+    // into. The drift reason survives because it names the index and the versions
+    // it moved between; the declared field name only says something differs.
+    const impact = analyzeCardImpact(
+      createDocumentCardVersion({ indexVersion: "idxv_zzzz" }),
+      updated("unit_payment_failures", ["published.scopes"]),
+      onlyUnit(createIngestionPublicationFixture()),
+    );
+
+    expect(impact.decision).toBe("review");
+    expect(rules(impact)).toEqual(["scope.document.indexVersionChanged"]);
+  });
+
+  it("still reports a scope change that moved no index version", () => {
+    // The suppression above is narrow. With no drift to report, the declared
+    // change is the only thing that would tell an operator the range moved.
+    const impact = analyzeCardImpact(
+      createDocumentCardVersion(),
+      updated("unit_payment_failures", ["published.scopes"]),
+      onlyUnit(createIngestionPublicationFixture()),
+    );
+
+    expect(rules(impact)).toEqual(["change.publishedScopes"]);
+  });
+
   it("is deterministic: the same input yields the same decision", () => {
     const version = createSqlCardVersion();
     const change = updated("unit_payments_table", ["source.coordinate"]);

@@ -86,10 +86,8 @@ export function analyzeCardImpact(
     return { cardId, decision: "block", reasons: lost };
   }
 
-  const reasons = [
-    ...findIndexDrift(currentVersion.scopes, currentUnit),
-    ...describeContentChange(change),
-  ];
+  const drift = findIndexDrift(currentVersion.scopes, currentUnit);
+  const reasons = [...drift, ...describeContentChange(change, drift.length > 0)];
 
   return reasons.length > 0
     ? { cardId, decision: "review", reasons }
@@ -246,14 +244,33 @@ const CHANGED_FIELD_RULES: Readonly<
   provenance: undefined,
 };
 
+/**
+ * The declared changes, as reasons — minus the one the drift check already gave.
+ *
+ * `documentIndex` sits inside a published Scope, so rebuilding a document sets
+ * `published.scopes` and moves `indexVersion` at the same time. Reporting both
+ * would tell an operator there are two causes to look into when there is one,
+ * and the drift reason is the more useful of the two: it names the index and the
+ * versions it moved between, where the declared field name only says that
+ * something about the Scope differs. So when drift was found, the declared
+ * `published.scopes` is dropped rather than the other way round.
+ *
+ * Only that pair overlaps. A Scope change with no index movement — a selector
+ * narrowed, a column set rewritten — produces no drift reason, and then
+ * `published.scopes` is the only thing that would report it, so it is kept.
+ */
 function describeContentChange(
   change: Extract<PublishedChange, { kind: "added" | "updated" }>,
+  driftAlreadyReported: boolean,
 ): CardImpactReason[] {
   if (change.kind !== "updated") {
     return [];
   }
 
   return change.changedFields.flatMap((field) => {
+    if (field === "published.scopes" && driftAlreadyReported) {
+      return [];
+    }
     const entry = CHANGED_FIELD_RULES[field];
     return entry === undefined
       ? []
