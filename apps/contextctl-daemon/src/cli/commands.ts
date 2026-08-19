@@ -2,6 +2,7 @@ import { userInfo } from "node:os";
 
 import {
   runOperatorCommand,
+  SqliteConsumerCheckpointStore,
   SqliteScopeReachabilityStore,
   type ContextCard,
 } from "@contextctl/registry-lifecycle";
@@ -267,6 +268,9 @@ export async function runCardsApprove(
       clock: { now: () => new Date().toISOString() },
       ids: { nextId: () => `id_${randomToken()}` },
       scopes: new SqliteScopeReachabilityStore(cli.runtime.database),
+      checkpoints: new SqliteConsumerCheckpointStore(cli.runtime.database, () =>
+        new Date().toISOString(),
+      ),
     },
     ["approve", command.cardId, versionId, "--by", decidedBy,
       ...(command.note === undefined ? [] : ["--note", command.note])],

@@ -191,9 +191,11 @@ describe("consuming a publication with no model behind the generator", () => {
       },
       checkpoints: {
         hasProcessed: async (id: string) => processed.has(id),
-        markProcessed: async (id: string) => {
-          processed.add(id);
+        findCursor: async () => undefined,
+        markProcessed: async (cursor: { publicationId: string }) => {
+          processed.add(cursor.publicationId);
         },
+        listCursors: async () => [],
       },
       meanings: generator,
       clock: { now: () => "2026-08-10T00:00:00.000Z" },

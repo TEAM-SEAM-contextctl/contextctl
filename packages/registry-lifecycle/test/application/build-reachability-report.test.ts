@@ -6,11 +6,20 @@ import { reachabilityGateViolations } from "../../src/domain/scope-reachability.
 import type { ScopeSighting } from "../../src/domain/scope-reachability.js";
 import type { RetrievalScope } from "../../src/domain/retrieval-scope.js";
 import type { Clock } from "../../src/ports/clock.js";
+import type { ConsumerCheckpointStore } from "../../src/ports/consumer-checkpoint-store.js";
 import type { ScopeReachabilityStore } from "../../src/ports/scope-reachability-store.js";
 
 const generatedAt = "2026-08-15T00:00:00.000Z";
 
 const clock: Clock = { now: () => generatedAt };
+
+/** No cursor recorded, so the report carries no Source checkpoint. */
+const noCursors: ConsumerCheckpointStore = {
+  hasProcessed: async () => false,
+  findCursor: async () => undefined,
+  markProcessed: async () => {},
+  listCursors: async () => [],
+};
 
 class FakeScopeReachabilityStore implements ScopeReachabilityStore {
   constructor(
@@ -86,6 +95,7 @@ describe("buildReachabilityReport", () => {
           scope: documentScope("scpv_bbbb"),
         }),
       ]),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -108,6 +118,7 @@ describe("buildReachabilityReport", () => {
 
     const report = await buildReachabilityReport({
       scopes: new FakeScopeReachabilityStore([both, second]),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -127,6 +138,7 @@ describe("buildReachabilityReport", () => {
           validationState: "draft",
         }),
       ]),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -159,6 +171,7 @@ describe("buildReachabilityReport", () => {
           },
         ],
       ),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -171,6 +184,7 @@ describe("buildReachabilityReport", () => {
   it("reports full coverage when there is nothing to expose", async () => {
     const report = await buildReachabilityReport({
       scopes: new FakeScopeReachabilityStore([]),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -181,6 +195,7 @@ describe("buildReachabilityReport", () => {
   it("passes the release gate when every Scope is reachable", async () => {
     const report = await buildReachabilityReport({
       scopes: new FakeScopeReachabilityStore([sighting()]),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -193,6 +208,7 @@ describe("buildReachabilityReport", () => {
         [sighting({ isCurrent: false, validationState: "rejected" })],
         [withdrawal(undefined)],
       ),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -212,6 +228,7 @@ describe("buildReachabilityReport", () => {
         [sighting({ isCurrent: false, validationState: "rejected" })],
         [withdrawal("replaced by the refund policy card")],
       ),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -232,6 +249,7 @@ describe("buildReachabilityReport", () => {
           scope: documentScope("scpv_aaaa", "idxv_drifted"),
         }),
       ]),
+      checkpoints: noCursors,
       clock,
     });
 
@@ -239,5 +257,98 @@ describe("buildReachabilityReport", () => {
     expect(reachabilityGateViolations(report)[0]?.rule).toBe(
       "reachability.broken",
     );
+  });
+});
+
+describe("scope provenance and source checkpoints", () => {
+  function sightingIn(publicationId: string, scopeVersion: string): ScopeSighting {
+    return sighting({
+      publicationId,
+      versionId: `cv_${publicationId}`,
+      scope: documentScope(scopeVersion),
+    });
+  }
+
+  it("keeps the introducing Publication fixed while the last seen one moves", async () => {
+    // An immutable Scope carries forward: an edit elsewhere in the document
+    // republishes it unchanged. Folding both ids into one would either lose when
+    // the Scope appeared or claim it appeared later than it did.
+    const report = await buildReachabilityReport({
+      scopes: new FakeScopeReachabilityStore([
+        sightingIn("pub_first", "scpv_aaaa"),
+        sightingIn("pub_second", "scpv_aaaa"),
+      ]),
+      checkpoints: noCursors,
+      clock,
+    });
+
+    expect(report.scopes).toHaveLength(1);
+    expect(report.scopes[0]?.introducedByPublicationId).toBe("pub_first");
+    expect(report.scopes[0]?.lastSeenPublicationId).toBe("pub_second");
+  });
+
+  it("gives a Scope seen once the same id twice", async () => {
+    const report = await buildReachabilityReport({
+      scopes: new FakeScopeReachabilityStore([
+        sightingIn("pub_first", "scpv_aaaa"),
+      ]),
+      checkpoints: noCursors,
+      clock,
+    });
+
+    expect(report.scopes[0]?.introducedByPublicationId).toBe("pub_first");
+    expect(report.scopes[0]?.lastSeenPublicationId).toBe("pub_first");
+  });
+
+  it("reports one checkpoint per Source, in id order", async () => {
+    // Per Source rather than one global position: no ordering exists between two
+    // chains, so a single number would invent one and make a Source that is
+    // behind look current whenever another moved.
+    const report = await buildReachabilityReport({
+      scopes: new FakeScopeReachabilityStore([sighting()]),
+      checkpoints: {
+        ...noCursors,
+        listCursors: async () => [
+          { sourceId: "src_refunds", publicationId: "pub_r2" },
+          { sourceId: "src_payments", publicationId: "pub_p7" },
+        ],
+      },
+      clock,
+    });
+
+    expect(report.sourceCheckpoints).toEqual([
+      { sourceId: "src_payments", processedPublicationId: "pub_p7" },
+      { sourceId: "src_refunds", processedPublicationId: "pub_r2" },
+    ]);
+  });
+
+  it("leaves the latest ready Publication absent rather than guessing it", async () => {
+    // That value is Ingestion's to report and arrives with the notification
+    // path. Filling it from the newest thing we happened to see would make a
+    // Source look current when it is behind.
+    const report = await buildReachabilityReport({
+      scopes: new FakeScopeReachabilityStore([sighting()]),
+      checkpoints: {
+        ...noCursors,
+        listCursors: async () => [
+          { sourceId: "src_payments", publicationId: "pub_p7" },
+        ],
+      },
+      clock,
+    });
+
+    expect(
+      report.sourceCheckpoints[0]?.latestReadyPublicationId,
+    ).toBeUndefined();
+  });
+
+  it("reports no checkpoint for a Source that consumed nothing", async () => {
+    const report = await buildReachabilityReport({
+      scopes: new FakeScopeReachabilityStore([sighting()]),
+      checkpoints: noCursors,
+      clock,
+    });
+
+    expect(report.sourceCheckpoints).toEqual([]);
   });
 });
