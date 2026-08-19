@@ -1,7 +1,17 @@
 import type { ApprovedCard, ApprovedCardMeaning } from "./card-catalog.js";
 
-/** Identifies the scoring rules a candidate score was produced under. */
-export const QUERY_SCORING_POLICY_VERSION = "selection-scoring-v1";
+/**
+ * Identifies the scoring rules a candidate score was produced under.
+ *
+ * `lexical`, and the name is a claim about what this file does rather than a
+ * label. Everything below compares normalized text and character bigrams; no
+ * Card embedding exists, so nothing here can contribute a vector signal. The
+ * previous `selection-scoring-v1` said only "version one of whatever scoring
+ * is", which a consumer could not compare against a later hybrid run — and the
+ * response's `selection.mode` is paired with exactly this value, so a name that
+ * did not state the family would have made the pairing unverifiable.
+ */
+export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v1" as const;
 
 /**
  * A direct match always lands at or above this floor, which is above the admit

@@ -18,9 +18,16 @@ import type { DeliveryHttpHandler } from "./http-query-handler.js";
  * daemon is the only Composition Root.
  */
 
-/** The response written when the handler itself fails. */
+/**
+ * The response written when the handler itself fails.
+ *
+ * The same `ResolveContextError` shape the handler emits, and the same code it
+ * uses for a fault nobody diagnosed. A client that only learned to read
+ * `error.code` and `error.retriable` must not meet a second, adapter-shaped
+ * error object on the one path where the handler never ran.
+ */
 const INTERNAL_ERROR_BODY = JSON.stringify({
-  error: { code: "internal_error" },
+  error: { code: "unexpected_failure", retriable: false },
 });
 
 /**

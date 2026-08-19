@@ -19,6 +19,9 @@
     "typecheck": "tsc -p tsconfig.check.json --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@contextctl/daemon": "*"
+  },
   "devDependencies": {
     "@types/node": "24.13.3",
     "typescript": "6.0.3",

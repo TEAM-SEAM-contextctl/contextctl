@@ -2,18 +2,17 @@ import type { Server } from "node:http";
 
 import { describe, expect, it } from "vitest";
 
-import type {
-  ContextResolution,
-  ResolutionItem,
-} from "../../src/domain/context-resolution.js";
-import { createHttpQueryHandler } from "../../src/infrastructure/http/http-query-handler.js";
+import type { ContextResolution } from "../../src/domain/context-resolution.js";
+import {
+  createHttpQueryHandler,
+  RESOLVE_PATH,
+} from "../../src/infrastructure/http/http-query-handler.js";
 import { createDeliveryHttpServer } from "../../src/infrastructure/http/node-http-server.js";
-import { FixtureDocumentRetriever } from "../../src/infrastructure/fixture-document-retriever.js";
-import { InMemoryCardCatalog } from "../../src/infrastructure/in-memory-card-catalog.js";
 import {
   createDemoCardSet,
   DEMO_QUERY,
 } from "../fixtures/approved-card.fixture.js";
+import { createFixtureContextApplication } from "../fixtures/context-application.fixture.js";
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
 
 /**
@@ -50,19 +49,21 @@ function close(server: Server): Promise<void> {
 }
 
 describe("createDeliveryHttpServer", () => {
-  it("answers a real selection request over a socket", async () => {
+  it("answers a real resolution request over a socket", async () => {
     const server = createDeliveryHttpServer(
-      createHttpQueryHandler({
-        catalog: new InMemoryCardCatalog(createDemoCardSet()),
-        retriever: new FixtureDocumentRetriever(createRefundPolicyChunkMap()),
-      }),
+      createHttpQueryHandler(
+        createFixtureContextApplication({
+          cards: createDemoCardSet(),
+          chunks: createRefundPolicyChunkMap(),
+        }),
+      ),
     );
 
     try {
       const port = await listenOnLoopback(server);
 
       const response = await fetch(
-        `http://127.0.0.1:${String(port)}/v1/context/selection`,
+        `http://127.0.0.1:${String(port)}${RESOLVE_PATH}`,
         {
           method: "POST",
           body: JSON.stringify({ query: DEMO_QUERY }),
@@ -74,16 +75,15 @@ describe("createDeliveryHttpServer", () => {
 
       const resolution = (await response.json()) as ContextResolution;
       expect(resolution.query).toBe(DEMO_QUERY);
-      expect(resolution.policy.payloadSchemaVersion).toBe(2);
+      expect(resolution.policy.payloadSchemaVersion).toBe(3);
 
       // The round trip is what this test exists for, so it checks that a
       // fulfilled item survived the socket rather than re-checking assembly.
-      const fulfilled = resolution.items.filter(
-        (item): item is Extract<ResolutionItem, { fulfillment: "fulfilled" }> =>
-          item.fulfillment === "fulfilled",
+      const fulfilled = resolution.items.flatMap((item) =>
+        item.fulfillment.status === "fulfilled" ? [item.fulfillment.context] : [],
       );
       expect(fulfilled).toHaveLength(1);
-      expect(fulfilled[0]?.context.chunks.length).toBeGreaterThan(0);
+      expect(fulfilled[0]?.chunks.length).toBeGreaterThan(0);
     } finally {
       await close(server);
     }

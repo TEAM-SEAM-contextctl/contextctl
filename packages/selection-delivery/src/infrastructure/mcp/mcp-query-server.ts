@@ -1,12 +1,11 @@
-import { EmptyQueryError } from "../../application/errors.js";
+import type {
+  ResolveContextApplication,
+  ResolveContextRequest,
+} from "../../application/context-application.js";
 import {
-  resolveContext,
-  type ResolveContextOptions,
-  type ResolveContextPorts,
-} from "../../application/resolve-context.js";
-import type { ApprovedCard, ApprovedScope } from "../../domain/card-catalog.js";
-import { EvidenceBudgetInvariantError } from "../../domain/errors.js";
-import { DEFAULT_EVIDENCE_BUDGET } from "../../domain/evidence-assembly.js";
+  resolveContextError,
+  toResolveContextErrorCode,
+} from "../../application/errors.js";
 import {
   formatJsonRpcError,
   formatJsonRpcResult,
@@ -28,16 +27,20 @@ export const MCP_PROTOCOL_VERSION = "2025-06-18";
 /**
  * Every tool this server exposes, in the order `tools/list` reports them.
  *
- * ADR 0003 forbids control plane tools on MCP — no approve, reject, rollback,
- * sync, or edit — and its cost section asks for that absence to be pinned by a
- * regression test rather than by review discipline. This constant is what the
- * test asserts against, so a tool added anywhere else in this file without
- * being named here cannot reach `tools/list`.
+ * One tool, and the tuple is what pins that. ADR 0003 forbids control plane
+ * tools on MCP — no approve, reject, rollback, sync, or edit — and its cost
+ * section asks for that absence to be held by a regression test rather than by
+ * review discipline; this constant is what the test asserts against, so a tool
+ * added anywhere else in this file without being named here cannot reach
+ * `tools/list`.
+ *
+ * A catalog listing tool used to be the first entry and is gone. An agent that
+ * can enumerate every approved Card can map the catalog without asking a single
+ * question, and the listing answered nothing a resolution does not answer
+ * already — the Cards that matter to a query come back as `selection.selected`,
+ * attributed to the items they authorised.
  */
-export const SELECTION_MCP_TOOL_NAMES = [
-  "list_context_cards",
-  "resolve_context",
-] as const;
+export const SELECTION_MCP_TOOL_NAMES = ["resolve_context"] as const;
 
 /** A JSON-RPC endpoint over one message at a time; transport-agnostic. */
 export interface McpQueryServer {
@@ -58,18 +61,13 @@ interface McpToolDefinition {
 const TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
   {
     name: SELECTION_MCP_TOOL_NAMES[0],
-    description: "List the approved context cards available for resolution.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: SELECTION_MCP_TOOL_NAMES[1],
     description:
       "Resolve a query into the approved scopes it may be answered from, each with its retrieval guide and, for a managed document, the retrieved context.",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string" },
-        maxEvidenceCharacters: { type: "number" },
+        maxContextCharacters: { type: "number" },
       },
       required: ["query"],
     },
@@ -77,18 +75,20 @@ const TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
 ];
 
 /**
- * An MCP server over the resolution use case, exposing queries only.
+ * An MCP server over the resolution use case, exposing one query tool.
  *
- * The server owns no state beyond the ports and options it was built with, so
- * two messages never interfere and a transport may hand it one message at a
- * time in any order. Assembly of the ports themselves stays with the daemon.
+ * The server owns no state beyond the application it was built with, so two
+ * messages never interfere and a transport may hand it one message at a time in
+ * any order. Assembly of the ports themselves stays with the daemon.
+ *
+ * A budget default used to be handed in here too. It is gone for the reason it
+ * is gone from the HTTP handler: the ceiling rule belongs where the configured
+ * budget lives, and a surface holding its own copy was a second place for it to
+ * drift.
  */
 export function createMcpQueryServer(
-  ports: ResolveContextPorts,
-  options?: ResolveContextOptions,
+  application: ResolveContextApplication,
 ): McpQueryServer {
-  const baseOptions: ResolveContextOptions = options ?? {};
-
   return {
     async handleMessage(rawMessage: string): Promise<string | undefined> {
       const parsed = parseJsonRpcMessage(rawMessage);
@@ -113,7 +113,7 @@ export function createMcpQueryServer(
         case "tools/list":
           return formatJsonRpcResult(id, { tools: TOOL_DEFINITIONS });
         case "tools/call":
-          return await handleToolCall(ports, baseOptions, id, params);
+          return await handleToolCall(application, id, params);
         default:
           return formatJsonRpcError(
             id,
@@ -126,8 +126,7 @@ export function createMcpQueryServer(
 }
 
 async function handleToolCall(
-  ports: ResolveContextPorts,
-  baseOptions: ResolveContextOptions,
+  application: ResolveContextApplication,
   id: JsonRpcId,
   params: unknown,
 ): Promise<string> {
@@ -146,23 +145,15 @@ async function handleToolCall(
   const rawArguments = callParams["arguments"];
   const toolArguments = isRecord(rawArguments) ? rawArguments : {};
 
-  switch (name) {
-    case "list_context_cards":
-      return await runTool(id, async () => summarizeCatalog(await listCards(ports)));
-    case "resolve_context":
-      return await callResolveContext(ports, baseOptions, id, toolArguments);
-    default:
-      return formatJsonRpcError(
-        id,
-        JSON_RPC_INVALID_PARAMS,
-        `Unknown tool: ${name}.`,
-      );
+  if (name === SELECTION_MCP_TOOL_NAMES[0]) {
+    return await callResolveContext(application, id, toolArguments);
   }
+
+  return formatJsonRpcError(id, JSON_RPC_INVALID_PARAMS, `Unknown tool: ${name}.`);
 }
 
 async function callResolveContext(
-  ports: ResolveContextPorts,
-  baseOptions: ResolveContextOptions,
+  application: ResolveContextApplication,
   id: JsonRpcId,
   toolArguments: Readonly<Record<string, unknown>>,
 ): Promise<string> {
@@ -177,93 +168,61 @@ async function callResolveContext(
 
   // A wrong-typed argument is a protocol error rather than a tool failure: the
   // declared input schema says `number`, so the caller broke the contract it
-  // was handed. An absent one is not an error — the server's own budget stands.
-  const maxEvidenceCharacters = toolArguments["maxEvidenceCharacters"];
+  // was handed. An absent one is not an error — the deployment's own ceiling
+  // stands. A number that is out of range is a different thing entirely and is
+  // not judged here: it is a well-formed request the resolution refuses, and it
+  // comes back as an `invalid_context_budget` tool error.
+  const maxContextCharacters = toolArguments["maxContextCharacters"];
   if (
-    maxEvidenceCharacters !== undefined &&
-    typeof maxEvidenceCharacters !== "number"
+    maxContextCharacters !== undefined &&
+    typeof maxContextCharacters !== "number"
   ) {
     return formatJsonRpcError(
       id,
       JSON_RPC_INVALID_PARAMS,
-      'Tool "resolve_context" requires "maxEvidenceCharacters" to be a number.',
+      'Tool "resolve_context" requires "maxContextCharacters" to be a number.',
     );
   }
 
-  // Only the character ceiling is overridden; the chunk ceiling stays whatever
-  // the server was assembled with, so a caller cannot widen a limit it was
-  // never given control of.
-  const callOptions: ResolveContextOptions =
-    maxEvidenceCharacters === undefined
-      ? baseOptions
-      : {
-          ...baseOptions,
-          budget: {
-            ...(baseOptions.budget ?? DEFAULT_EVIDENCE_BUDGET),
-            maxTotalCharacters: maxEvidenceCharacters,
-          },
-        };
+  // Built by assignment rather than as one literal: `exactOptionalPropertyTypes`
+  // makes `{ maxContextCharacters: undefined }` different from an absent key,
+  // and an absent key is what selects the configured ceiling.
+  const request: ResolveContextRequest =
+    maxContextCharacters === undefined
+      ? { query }
+      : { query, maxContextCharacters };
 
-  return await runTool(id, () => resolveContext(ports, query, callOptions));
-}
-
-function listCards(ports: ResolveContextPorts): Promise<readonly ApprovedCard[]> {
-  return ports.catalog.listApprovedCards();
-}
-
-/** What a listing exposes about one Card: enough to choose it, no Scope detail. */
-function summarizeCatalog(cards: readonly ApprovedCard[]): unknown {
-  return {
-    cards: cards.map((card) => ({
-      cardId: card.cardId,
-      description: card.meaning.description,
-      keywords: card.meaning.keywords,
-      scopeKinds: distinctScopeKinds(card.scopes),
-    })),
-  };
-}
-
-/** Scope kinds in the order the Card declares them, each reported once. */
-function distinctScopeKinds(
-  scopes: readonly ApprovedScope[],
-): readonly ApprovedScope["kind"][] {
-  const kinds: ApprovedScope["kind"][] = [];
-
-  for (const scope of scopes) {
-    if (!kinds.includes(scope.kind)) {
-      kinds.push(scope.kind);
-    }
-  }
-
-  return kinds;
+  return await runTool(id, () => application.resolveContext(request));
 }
 
 /**
- * Runs one tool and reduces whatever it throws to an MCP result.
+ * Runs the tool and reduces whatever it throws to an MCP result.
  *
- * A failing tool is not a failing JSON-RPC call: the request was well formed
- * and was answered, so the failure travels as `isError` content the model can
- * read, exactly as MCP intends. Which errors get their message forwarded is the
- * only judgement here — a domain error states a rule the caller broke and is
- * safe to repeat, while anything else may carry adapter-internal detail (a
- * host, a path, a store's own wording) and is reduced to a fixed string. This
- * matches how `resolve-context.ts` treats a retriever's own exception.
+ * A failing tool is not a failing JSON-RPC call: the request was well formed and
+ * was answered, so the failure travels as `isError` content the model can read,
+ * exactly as MCP intends.
+ *
+ * The content is the same `ResolveContextError` the HTTP surface puts in its
+ * body, serialized as JSON rather than as prose. It used to be an exception's
+ * own `name: message` for the two errors deemed safe to repeat and the fixed
+ * string `internal_error` for everything else, which meant an agent had to parse
+ * English to learn whether retrying was worth it. `code` and `retriable` are
+ * both machine-readable, and no exception message crosses at all — a fault
+ * raised deep in an adapter names hosts, paths and credentials.
  */
-async function runTool(id: JsonRpcId, execute: () => Promise<unknown>): Promise<string> {
+async function runTool(
+  id: JsonRpcId,
+  execute: () => Promise<unknown>,
+): Promise<string> {
   try {
     const payload = await execute();
     return formatJsonRpcResult(id, {
       content: [{ type: "text", text: JSON.stringify(payload) }],
     });
   } catch (cause: unknown) {
-    const text =
-      cause instanceof EmptyQueryError ||
-      cause instanceof EvidenceBudgetInvariantError
-        ? `${cause.name}: ${cause.message}`
-        : "internal_error";
-
+    const error = resolveContextError(toResolveContextErrorCode(cause));
     return formatJsonRpcResult(id, {
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: JSON.stringify({ error }) }],
       isError: true,
     });
   }

@@ -1,17 +1,14 @@
+import type { ContextBudget, ContextOmission } from "./context-assembly.js";
+import type { ManagedResolutionFailure } from "./managed-resolution.js";
 import type {
-  ApprovedDocumentSelection,
-  ApprovedScope,
-  ApprovedScopeReference,
-} from "./card-catalog.js";
-import { SelectionScopeInvariantError } from "./errors.js";
+  HttpRetrievalGuide,
+  ManagedDocumentGuide,
+  SqlRetrievalGuide,
+} from "./retrieval-guide.js";
 import type {
-  EvidenceBudget,
-  EvidenceChunk,
-  EvidenceOmission,
-} from "./evidence-assembly.js";
-import type { CandidateScore } from "./query-scoring.js";
-import type { SelectionResult } from "./selection-verdict.js";
-import type { DocumentRetrievalFaultCode } from "../ports/managed-document-retriever.js";
+  ApprovedCardReference,
+  SelectedByList,
+} from "./selection-plan.js";
 
 /**
  * What one query resolved to: every selected Scope as one item, whatever kind of
@@ -19,7 +16,7 @@ import type { DocumentRetrievalFaultCode } from "../ports/managed-document-retri
  *
  * This is the serialized shape a consumer receives. The three Scope kinds used
  * to leave this domain through separate channels — managed documents as a single
- * merged evidence record, SQL and HTTP as a contract list, failures as a third
+ * merged context record, SQL and HTTP as a contract list, failures as a third
  * list — and a consumer had to re-join them by `cardId`/`scopeRef` to answer the
  * only question it actually asks: "what did this query give me, and can I use
  * it?". One array answers that directly, and the join stops being the
@@ -32,39 +29,58 @@ export interface ContextResolution {
   /** Echoed back exactly as received, so a caller can pair result with request. */
   readonly query: string;
   readonly policy: ResolutionPolicy;
-  readonly items: readonly ResolutionItem[];
+  readonly selection: SelectionSummary;
+  readonly items: readonly ContextResolutionItem[];
+}
+
+/**
+ * What the selection decided, reduced to what an agent may act on.
+ *
+ * The raw candidate scores and the per-Card verdicts used to travel at the root
+ * as `candidates` and `selection`, and they are gone: a response that named
+ * every Card it looked at, its score, and the finding that sank it published the
+ * catalog's shape and the threshold band to anyone who asked a question. What
+ * survives is the part a consumer can use — which Cards answered, and how many
+ * were admitted, deferred and rejected.
+ *
+ * `counts.rejected` is an aggregate and stays. The identity of a rejected Card
+ * does not: `selected` lists admitted Cards only, so no rejected Card is named
+ * anywhere in a response.
+ */
+export interface SelectionSummary {
   /**
-   * Every Card that was considered, in catalog order, with the signals that
-   * produced each score.
+   * Which scoring family produced the ranking behind `selected`.
    *
-   * Present alongside `selection` because the two answer different questions —
-   * "what was looked at" and "what was decided" — and a consumer that receives
-   * only the second cannot tell a narrow catalog from a strict threshold. ADR
-   * 0006 deferred moving both here; this is where they land.
+   * Paired with `ResolutionPolicy.scoring` by invariant — `hybrid` requires
+   * `selection-hybrid-v1`, `lexical_degraded` requires `selection-lexical-v1`,
+   * and any other combination is refused before assembly. Card embeddings are
+   * not wired yet, so every response is `lexical_degraded` today; the field
+   * exists rather than being implied so that the day they are, a consumer can
+   * tell the two runs apart without comparing policy strings.
    */
-  readonly candidates: readonly CandidateScore[];
-  /**
-   * The ranked verdicts and the provenance of the ranking.
-   *
-   * `selection.provenance.policyVersion` repeats `policy.ranking`. The
-   * duplication is intended: `policy` is the summary block a consumer reads to
-   * decide whether two responses are comparable, while `provenance` is the
-   * record of the run that produced these outcomes, and a consumer reading
-   * either one alone must not have to look elsewhere.
-   */
-  readonly selection: SelectionResult;
+  readonly mode: "hybrid" | "lexical_degraded";
+  /** The admitted Cards, in rank order. Deferred and rejected Cards are absent. */
+  readonly selected: readonly ApprovedCardReference[];
+  readonly counts: SelectionCounts;
+}
+
+/** How many Cards each verdict claimed. An aggregate; no Card is named here. */
+export interface SelectionCounts {
+  readonly admitted: number;
+  readonly deferred: number;
+  readonly rejected: number;
 }
 
 /**
  * Everything a consumer needs to decide whether two responses are comparable.
  *
- * The four versions sit in one block rather than beside the data they describe
- * for three reasons. Evidence now hangs off each item, so a per-record
+ * The five policy versions sit in one block rather than beside the data they
+ * describe for three reasons. Context now hangs off each item, so a per-record
  * `policyVersion` would repeat one identical string once per item. A consumer
- * asking "may I compare this answer with yesterday's?" needs all four at once,
- * and today they are scattered across the root, two levels down inside
- * `selection.provenance`, and the evidence record. And `payloadSchemaVersion`
- * only describes itself when it sits with the policies it travels with.
+ * asking "may I compare this answer with yesterday's?" needs all of them at
+ * once, and they would otherwise be scattered across the root, the selection
+ * summary and each item's context. And `payloadSchemaVersion` only describes
+ * itself when it sits with the policies it travels with.
  *
  * `budget` joins them for the same reason, and for one more. It is a ceiling on
  * the response as a whole, so putting it on each item would repeat one identical
@@ -76,37 +92,58 @@ export interface ContextResolution {
 export interface ResolutionPolicy {
   /**
    * The serialized shape of this payload. `1` was the split-channel
-   * `DeliveryResult`; `2` is this one. A literal type, not `number`: a consumer
-   * narrowing on it gets an exhaustiveness error when the shape moves again,
-   * rather than a value it silently fails to recognise.
+   * `DeliveryResult`; `2` carried the raw candidate scores and the selection
+   * audit trail at the root; `3` is this one. A literal type, not `number`: a
+   * consumer narrowing on it gets an exhaustiveness error when the shape moves
+   * again, rather than a value it silently fails to recognise.
    */
-  readonly payloadSchemaVersion: 2;
-  /** `QUERY_SCORING_POLICY_VERSION`. */
-  readonly scoring: string;
+  readonly payloadSchemaVersion: 3;
+  /**
+   * `QUERY_SCORING_POLICY_VERSION`, and the other half of the invariant
+   * `SelectionSummary.mode` states — see that field.
+   */
+  readonly scoring: "selection-hybrid-v1" | "selection-lexical-v1";
   /** `SELECTION_RANKING_POLICY_VERSION`. */
-  readonly ranking: string;
-  /** `EVIDENCE_ASSEMBLY_POLICY_VERSION`. */
-  readonly evidence: string;
+  readonly ranking: "selection-ranking-v2";
+  /** `SELECTION_PLANNING_POLICY_VERSION`. */
+  readonly planning: "selection-planning-v1";
+  /** `CONTEXT_FUSION_POLICY_VERSION`. */
+  readonly fusion: "rrf-v1";
+  /** `CONTEXT_ASSEMBLY_POLICY_VERSION`. */
+  readonly assembly: "context-assembly-v2";
   /** The ceiling every fulfilled item's context was assembled under, together. */
-  readonly budget: EvidenceBudget;
+  readonly budget: ContextBudget;
 }
 
 /**
  * One selected Scope, and what became of it.
+ *
+ * `selectedBy` comes straight from the plan this was assembled from. One item is
+ * one Scope under one bound, not one (Card, Scope) pair: several admitted Cards
+ * can authorise the same read, and a consumer that received the same context
+ * once per Card could not tell that apart from a document genuinely repeating
+ * itself. `selectedBy` keeps the attribution the merge would otherwise lose, in
+ * Card rank order.
+ *
+ * The plan's `itemKey` does not travel. It is the digest that merges two Cards
+ * onto one read — our own bookkeeping — and a consumer correlates on
+ * `guide.scopeRef`, which is the coordinate it was actually granted.
  *
  * `fulfillment` is a state, not a pair of booleans, and each state carries
  * exactly the payload that state can have. Four things are unrepresentable as a
  * result, all at compile time rather than by review:
  *
  * 1. `fulfilled` without retrieved context — `context` is required on it.
- * 2. `delegated` carrying a failure code — `code` exists on no other member.
+ * 2. `delegated` carrying a failure — `failure` exists on no other member.
  * 3. a SQL or HTTP Scope reported as `failed` — `failed` only guides documents.
  * 4. a managed document reported as `delegated` — `delegated` never guides one.
  *
  * (2) and (4) are the same fact from two sides, and it is the one worth stating:
  * we have not run the consumer's database or endpoint, so we are in no position
  * to say whether it would have succeeded. `delegated` means the work moved, not
- * that it went well.
+ * that it went well. `executor` says the same thing in a field a consumer can
+ * branch on without reading this comment: either `contextctl` performed the
+ * read, or the consumer still has to.
  *
  * A `fulfilled` item with no chunks is a real and different outcome from a
  * `failed` one, and both occur: the index answered and had nothing to say, or
@@ -115,117 +152,81 @@ export interface ResolutionPolicy {
  * when it is merely quiet. `failed` means the read did not happen or cannot be
  * trusted, and nothing else.
  */
-export type ResolutionItem =
+export type ContextResolutionItem =
   | {
-      readonly fulfillment: "fulfilled";
-      readonly cardId: string;
-      readonly versionId: string;
+      readonly selectedBy: SelectedByList;
       readonly guide: ManagedDocumentGuide;
+      readonly fulfillment: ManagedFulfillment;
+    }
+  | {
+      readonly selectedBy: SelectedByList;
+      readonly guide: SqlRetrievalGuide | HttpRetrievalGuide;
+      readonly fulfillment: DelegatedFulfillment;
+    };
+
+/** What became of a read this process performed. */
+export type ManagedFulfillment =
+  | {
+      readonly status: "fulfilled";
+      readonly executor: "contextctl";
       readonly context: RetrievedDocumentContext;
     }
   | {
-      readonly fulfillment: "delegated";
-      readonly cardId: string;
-      readonly versionId: string;
-      readonly guide: SqlRetrievalGuide | HttpRetrievalGuide;
-    }
-  | {
-      readonly fulfillment: "failed";
-      readonly cardId: string;
-      readonly versionId: string;
-      readonly guide: ManagedDocumentGuide;
-      readonly code: ResolutionFaultCode;
+      readonly status: "failed";
+      readonly executor: "contextctl";
+      /**
+       * Why the read did not happen, exactly as the executor stated it.
+       *
+       * The code is an opaque token this domain neither interprets nor
+       * translates — see `assertOpaqueFailure`. Delivery once folded everything
+       * it could not name into a `retriever_error` of its own, which told a
+       * consumer "we do not know" for failures that had a perfectly good name
+       * one layer down. The name travels now; the exception behind it never
+       * does, because a fault message is written for an operator reading logs
+       * and forwarding it would put adapter-internal detail — a host, a path, a
+       * store's own wording — in front of a consumer.
+       *
+       * Never a `ResolveContextError`. That channel reports a query that could
+       * not be planned or ran out of time as a whole; this one reports one
+       * granted coordinate that could not be read while the rest of the answer
+       * stands.
+       */
+      readonly failure: ManagedResolutionFailure;
     };
 
-/**
- * Why one managed document Scope could not be read.
- *
- * The three declared codes are the retriever port's own vocabulary: this domain
- * does not invent a reason an adapter cannot state. `retriever_error` is the
- * fourth case and not a reason at all — it says the adapter threw something
- * outside its declared vocabulary, a transport library's own error, and that we
- * therefore do not know why. Collapsing it into one of the three would claim a
- * diagnosis nobody made, and dropping it would leave the total `catch` in
- * `resolveContext` with nothing to report.
- *
- * The exception itself never travels with the code. A fault message is written
- * for an operator reading logs, and forwarding it would put adapter-internal
- * detail — a host, a path, a store's own wording — in front of a consumer.
- */
-export type ResolutionFaultCode =
-  | DocumentRetrievalFaultCode
-  | "retriever_error";
+/** One coordinate handed to the consumer. Nothing of ours executed it. */
+export interface DelegatedFulfillment {
+  readonly status: "delegated";
+  readonly executor: "consumer";
+}
 
 /**
- * What a Scope authorises, in the words a consumer may read.
+ * One chunk of retrieved document text, as a consumer receives it.
  *
- * `RetrievalGuide` renames what used to be `RetrievalContract` and widens it to
- * cover managed documents. "Contract" claimed too much once documents joined:
- * for a document we do the retrieval ourselves and the record is a citation of
- * where the evidence came from, not an instruction to execute. "Guide" is true
- * of all three.
+ * Distinct from `ResolvedDocumentChunk`, which is what an executor hands back:
+ * that one carries a per-target `rank`, and the fused `ContextChunk` inside
+ * assembly carries a `score` on top of it. Neither reaches here. A per-target
+ * position means nothing once several targets have been fused, and a fused score
+ * is a number on a scale nobody outside this package can interpret — publishing
+ * either would invite a consumer to re-sort an answer that was already ordered
+ * for it.
  *
- * Every field is transcribed from an already approved Scope, so a guide can
- * never widen what was approved.
+ * `contextRank` replaces both: a 1-based position that is unique and gap-free
+ * across the whole response, so two chunks that landed in two different items
+ * still have an order relative to one another.
  */
-export type RetrievalGuide =
-  | ManagedDocumentGuide
-  | SqlRetrievalGuide
-  | HttpRetrievalGuide;
-
-/**
- * Where a document's evidence came from, in citable terms.
- *
- * Deliberately not `ApprovedDocumentIndexRef`: `connectorId` and `accessHandle`
- * are our own infrastructure coordinates — which store, which handle inside it —
- * and a consumer neither needs them to read a citation nor may act on them. They
- * live on `ManagedDocumentFulfillmentTarget`, which nothing on
- * `ContextResolution` can reach.
- *
- * `documentIndexId`, `sourceId` and `indexVersion` do stay: they are what makes
- * a citation checkable against the registry, which is the same standard ADR 0001
- * holds SQL and HTTP coordinates to.
- */
-export interface ManagedDocumentGuide {
-  readonly kind: "managed_document";
-  readonly scopeRef: ApprovedScopeReference;
-  readonly sourceId: string;
+export interface RetrievedDocumentChunk {
+  readonly contextRank: number;
+  readonly chunkId: string;
+  readonly chunkRevisionId: string;
+  readonly semanticUnitId: string;
   readonly documentId: string;
-  readonly documentIndexId: string;
-  readonly indexVersion: string;
-  readonly selection: ApprovedDocumentSelection;
+  readonly text: string;
+  readonly contentDigest: string;
 }
 
 /**
- * A verifiable coordinate into a consumer's table.
- *
- * `connector` names the consumer's own datasource — `postgres.main` — and is not
- * our infrastructure the way `connectorId` on a document index is. A consumer
- * cannot run the query without it, so it stays.
- *
- * `allowedOperations` is the "허용 연산" ADR 0001 requires to be stated rather
- * than assumed. A fixed `["select"]` tuple, not a configurable list.
- */
-export interface SqlRetrievalGuide {
-  readonly kind: "sql";
-  readonly scopeRef: ApprovedScopeReference;
-  readonly connector: string;
-  readonly table: string;
-  readonly columns: readonly string[];
-  readonly allowedOperations: readonly ["select"];
-}
-
-/** A verifiable coordinate into a consumer's HTTP endpoint. Never called here. */
-export interface HttpRetrievalGuide {
-  readonly kind: "http";
-  readonly scopeRef: ApprovedScopeReference;
-  readonly connector: string;
-  readonly method: string;
-  readonly path: string;
-}
-
-/**
- * The evidence one managed document Scope contributed, and what it cost.
+ * The context one managed document Scope contributed, and what it cost.
  *
  * `policyVersion` and `budget` both moved up to `ResolutionPolicy`: assembly
  * runs under one policy and one ceiling for the whole response, and repeating
@@ -237,94 +238,22 @@ export interface HttpRetrievalGuide {
  * chunk to a repeat while another loses none. `omitted` holds only this Scope's
  * losses and `truncated` says only whether this Scope lost something to the
  * budget. There is deliberately no response-wide `truncated` beside them —
- * every chunk carries the Scope it came from, so every omission belongs to
+ * every chunk carries the item it came from, so every omission belongs to
  * exactly one item, and a consumer wanting the response-wide answer takes the
  * OR across items rather than reading a second field that could contradict them.
  *
  * They travel with the chunks rather than in a side channel because a consumer
  * that sees only the surviving chunks cannot tell an exhaustive answer from a
  * clipped one, and that difference changes how the answer may be used.
+ *
+ * `contentTrust` is a constant, and the type says so. Retrieved document text is
+ * data a document happened to contain, never instruction: a model reading this
+ * field has been told once, in the payload itself, that nothing inside `chunks`
+ * may be obeyed.
  */
 export interface RetrievedDocumentContext {
-  readonly chunks: readonly EvidenceChunk[];
-  readonly omitted: readonly EvidenceOmission[];
+  readonly contentTrust: "untrusted";
+  readonly chunks: readonly RetrievedDocumentChunk[];
+  readonly omitted: readonly ContextOmission[];
   readonly truncated: boolean;
-}
-
-/**
- * Transcribes one approved Scope into the guide it authorises.
- *
- * Total over `ApprovedScope`: every kind produces a guide, and there is no
- * branch that returns nothing. That is the point of this function, and the
- * reason it replaced `buildRetrievalContracts`: that one answered `undefined`
- * for a managed document and let the Scope fall out of the result without a
- * trace — and a selected Scope that vanishes between selection and delivery
- * cannot be told apart, downstream, from one that was never selected at all.
- *
- * A guide is all this returns. The physical binding a managed document needs in
- * order to actually be read comes from `buildFulfillmentTarget` instead, so no
- * caller can obtain the two together by accident.
- */
-export function buildRetrievalGuide(scope: ApprovedScope): RetrievalGuide {
-  switch (scope.kind) {
-    case "managed_document":
-      return {
-        kind: "managed_document",
-        scopeRef: scope.reference,
-        sourceId: scope.documentIndex.sourceId,
-        documentId: scope.documentIndex.documentId,
-        documentIndexId: scope.documentIndex.documentIndexId,
-        indexVersion: scope.documentIndex.indexVersion,
-        selection: copySelection(scope.selection),
-      };
-    case "sql_source":
-      return {
-        kind: "sql",
-        scopeRef: scope.reference,
-        connector: scope.connector,
-        table: scope.table,
-        // Copied rather than aliased: the guide is handed to a consumer, and it
-        // must not be a live window onto the catalog's own array.
-        columns: [...scope.columns],
-        allowedOperations: ["select"],
-      };
-    case "http_source":
-      return {
-        kind: "http",
-        scopeRef: scope.reference,
-        connector: scope.connector,
-        method: scope.method,
-        path: scope.path,
-      };
-    default:
-      return refuseUnknownScope(scope);
-  }
-}
-
-/** Copied for the same reason `columns` is: a guide never aliases catalog state. */
-function copySelection(
-  selection: ApprovedDocumentSelection,
-): ApprovedDocumentSelection {
-  if (selection.kind === "semantic_units") {
-    return {
-      kind: "semantic_units",
-      semanticUnitIds: [...selection.semanticUnitIds],
-    };
-  }
-  return { kind: "document" };
-}
-
-/**
- * Unreachable for any `ApprovedScope`, which is what the `never` binding
- * asserts: adding a fourth Scope kind breaks the build here instead of silently
- * dropping that kind from every resolution. At runtime it is reachable only
- * through an adapter that produced data outside the declared union, and that is
- * a corrupted read model, not an unsupported feature.
- */
-function refuseUnknownScope(scope: never): never {
-  const { kind } = scope as { readonly kind: unknown };
-
-  throw new SelectionScopeInvariantError(
-    `scope kind ${String(kind)} cannot be resolved into a retrieval guide`,
-  );
 }

@@ -1,4 +1,4 @@
-import type { FixtureChunk } from "../../src/infrastructure/fixture-document-retriever.js";
+import type { FixtureChunk } from "./managed-execution.fixture.js";
 
 /**
  * The indexed chunks of the refund policy document the demo Card points at.
@@ -7,7 +7,7 @@ import type { FixtureChunk } from "../../src/infrastructure/fixture-document-ret
  * `approved-card.fixture.ts`, so a test that narrows or reorders a returned
  * list cannot leak into the next one. The three chunks are deliberately close
  * in vocabulary — all three mention 환불 — so a ranking test measures the
- * scoring rather than an accidental single keyword hit.
+ * ranking rather than an accidental single keyword hit.
  */
 export function createRefundPolicyChunks(): readonly FixtureChunk[] {
   return [
@@ -39,11 +39,23 @@ export function createRefundPolicyChunks(): readonly FixtureChunk[] {
 }
 
 /**
- * The chunk map keyed the way a retriever looks it up: by the
- * `documentIndexId` the refund policy Card's Scope declares.
+ * The chunk map keyed the way an executor looks it up: by `scopeId`.
+ *
+ * By the Scope rather than by the document index, because a plan hands an
+ * executor a Scope reference and a bound and nothing else. The index a Scope
+ * pins is the executor's own lookup, and a fixture keyed on it would let a test
+ * pass with a plan that leaked physical coordinates it is not supposed to
+ * carry.
+ *
+ * Two Scopes are registered against the same chunks on purpose: the demo Card
+ * and the all-outcomes Card both point at the refund policy document, and both
+ * have to resolve for the suites that use them.
  */
 export function createRefundPolicyChunkMap(): Readonly<
   Record<string, readonly FixtureChunk[]>
 > {
-  return { docidx_refund_policy: createRefundPolicyChunks() };
+  return {
+    scope_refund_policy_doc: createRefundPolicyChunks(),
+    scope_indexed_document: createRefundPolicyChunks(),
+  };
 }
