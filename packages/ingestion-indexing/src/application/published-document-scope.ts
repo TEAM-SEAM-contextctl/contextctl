@@ -1,8 +1,8 @@
 import {
-  PublishedDocumentIndexRefV2Schema as PublishedDocumentIndexRefSchema,
-  PublishedDocumentScopeV2Schema as PublishedDocumentScopeSchema,
-  type PublishedDocumentIndexRefV2 as PublishedDocumentIndexRef,
-  type PublishedDocumentScopeV2 as PublishedDocumentScope,
+  PublishedDocumentIndexRefSchema,
+  PublishedDocumentScopeSchema,
+  type PublishedDocumentIndexRef,
+  type PublishedDocumentScope,
 } from "@contextctl/contracts";
 
 import type { IndexManifest } from "../domain/index-manifest.js";

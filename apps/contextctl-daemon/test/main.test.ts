@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
   EmbeddingProviderFault,
-  type PublishedIndexVersionV2 as PublishedIndexVersion,
+  type PublishedIndexVersion,
 } from "@contextctl/ingestion-indexing";
 import {
   appendCardVersion,

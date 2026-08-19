@@ -2,11 +2,11 @@ import type {
   ConnectorId,
   DocumentId,
   DocumentIndexId,
-  HttpParameterRefV2 as HttpParameterRef,
+  HttpParameterRef,
   IndexVersion,
   PublicationScopeId,
   PublicationScopeVersion,
-  PublishedScopeV2 as PublishedScope,
+  PublishedScope,
   SemanticUnitId,
   SourceId,
 } from "@contextctl/contracts";

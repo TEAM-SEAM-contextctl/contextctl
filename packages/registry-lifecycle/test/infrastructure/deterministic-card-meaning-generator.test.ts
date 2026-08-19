@@ -1,6 +1,6 @@
 import type {
-  PublishedFactV2 as PublishedFact,
-  PublishedSourceCoordinateV2 as PublishedSourceCoordinate,
+  PublishedFact,
+  PublishedSourceCoordinate,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 

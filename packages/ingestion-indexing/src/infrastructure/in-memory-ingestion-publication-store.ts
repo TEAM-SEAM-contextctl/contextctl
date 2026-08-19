@@ -1,8 +1,8 @@
 import {
-  assertIngestionPublicationV2Transition as assertIngestionPublicationTransition,
-  parseIngestionPublicationV2 as parseIngestionPublication,
+  assertIngestionPublicationTransition,
+  parseIngestionPublication,
   parsePublicationReady,
-  type IngestionPublicationV2 as IngestionPublication,
+  type IngestionPublication,
 } from "@contextctl/contracts";
 
 import { canonicalJson } from "../domain/revision-identity.js";

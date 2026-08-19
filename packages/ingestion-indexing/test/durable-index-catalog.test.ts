@@ -6,8 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import type {
   PublicationReady,
-  PublishedDocumentIndexRefV2 as PublishedDocumentIndexRef,
-  PublishedDocumentScopeV2 as PublishedDocumentScope,
+  PublishedDocumentIndexRef,
+  PublishedDocumentScope,
 } from "@contextctl/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -16,7 +16,7 @@ import {
   DeterministicEmbeddingAdapter,
   INGESTION_DATABASE_APPLICATION_ID,
   INGESTION_DATABASE_SCHEMA_VERSION,
-  InMemoryIndexPublicationStoreV2 as InMemoryIndexPublicationStore,
+  InMemoryIndexPublicationStore,
   InMemoryPublicationReadyNotifier,
   InMemoryVectorIndexAdapter,
   IndexCatalogFault,
@@ -37,10 +37,10 @@ import {
   openIngestionDatabase,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
-  type IndexPublicationStoreV2 as IndexPublicationStore,
+  type IndexPublicationStore,
   type IngestionPublicationStore,
   type PublicationReadyNotifier,
-  type PublishedIndexVersionV2 as PublishedIndexVersion,
+  type PublishedIndexVersion,
   type PublishMarkdownSourceCommand,
   type VectorIndexPort,
 } from "../src/index.js";

@@ -1,16 +1,17 @@
 import { readFile } from "node:fs/promises";
 
 import {
-  assertIngestionPublicationV2Transition,
-  computePublicationV2Changes,
-  computePublishedKnowledgeUnitV2Digest,
+  assertIngestionPublicationTransition,
+  computePublicationChanges,
+  computePublishedKnowledgeUnitDigest,
   ContractValidationError,
-  parseIngestionPublication as parseIngestionPublicationV1,
-  parseIngestionPublicationV2 as parseIngestionPublication,
+  INGESTION_PUBLICATION_SCHEMA_VERSION,
+  IngestionPublicationSchema,
+  parseIngestionPublication,
   parsePublicationReady,
-  PublishedFactV2Schema,
-  type IngestionPublicationV2 as IngestionPublication,
-  type PublishedKnowledgeUnitV2,
+  PublishedFactSchema,
+  type IngestionPublication,
+  type PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -64,14 +65,12 @@ describe("IngestionPublication contract", () => {
     ]);
   });
 
-  it("keeps v1 and v2 parsing explicit during downstream migration", async () => {
+  it("exposes schema v2 as the only canonical contract", async () => {
     const legacy = await loadLegacyFixture();
     const current = await loadIngestionProducerFixture();
-    expect(parseIngestionPublicationV1(legacy).schemaVersion).toBe(1);
+    expect(INGESTION_PUBLICATION_SCHEMA_VERSION).toBe(2);
+    expect(IngestionPublicationSchema.parse(current).schemaVersion).toBe(2);
     expect(() => parseIngestionPublication(legacy)).toThrow(
-      ContractValidationError,
-    );
-    expect(() => parseIngestionPublicationV1(current)).toThrow(
       ContractValidationError,
     );
   });
@@ -100,7 +99,7 @@ describe("IngestionPublication contract", () => {
     );
   });
 
-  it("recomputes publication-unit-v2 digests instead of trusting producers", async () => {
+  it("recomputes publication unit digests instead of trusting producers", async () => {
     const fixture = (await loadIngestionProducerFixture()) as {
       knowledgeUnits: Array<{ contentDigest: string }>;
     };
@@ -124,8 +123,8 @@ describe("IngestionPublication contract", () => {
     unit.kind = "segment";
     const kindFact = unit.facts.find((fact) => fact.name === "unit.kind")!;
     kindFact.value = "segment";
-    unit.contentDigest = computePublishedKnowledgeUnitV2Digest(
-      unit as PublishedKnowledgeUnitV2,
+    unit.contentDigest = computePublishedKnowledgeUnitDigest(
+      unit as PublishedKnowledgeUnit,
     );
     fixture.changes[0]!.currentContentDigest = unit.contentDigest;
 
@@ -136,7 +135,7 @@ describe("IngestionPublication contract", () => {
 
   it("keeps boolean in the frozen fact scalar schema", () => {
     expect(
-      PublishedFactV2Schema.safeParse({
+      PublishedFactSchema.safeParse({
         name: "keywords.derived",
         value: true,
       }).success,
@@ -156,8 +155,8 @@ describe("IngestionPublication contract", () => {
       (fact) => fact.name === "document.media_type",
     )!;
     mediaType.value = ["text/markdown"];
-    unit.contentDigest = computePublishedKnowledgeUnitV2Digest(
-      unit as PublishedKnowledgeUnitV2,
+    unit.contentDigest = computePublishedKnowledgeUnitDigest(
+      unit as PublishedKnowledgeUnit,
     );
     fixture.changes[0]!.currentContentDigest = unit.contentDigest;
 
@@ -189,10 +188,10 @@ describe("IngestionPublication contract", () => {
       previousPublicationId: previous.publicationId,
       producedAt: "2026-08-16T00:01:00.000Z",
       knowledgeUnits: [],
-      changes: computePublicationV2Changes(previous, []),
+      changes: computePublicationChanges(previous, []),
     });
     expect(() =>
-      assertIngestionPublicationV2Transition(previous, current),
+      assertIngestionPublicationTransition(previous, current),
     ).not.toThrow();
     expect(current.changes).toEqual([
       {
@@ -247,7 +246,7 @@ describe("IngestionPublication contract", () => {
       changes: [],
     });
     expect(() =>
-      assertIngestionPublicationV2Transition(previous, unchanged),
+      assertIngestionPublicationTransition(previous, unchanged),
     ).not.toThrow();
 
     const falseDelta = {
@@ -263,7 +262,7 @@ describe("IngestionPublication contract", () => {
       ],
     };
     expect(() =>
-      assertIngestionPublicationV2Transition(
+      assertIngestionPublicationTransition(
         previous,
         falseDelta as IngestionPublication,
       ),

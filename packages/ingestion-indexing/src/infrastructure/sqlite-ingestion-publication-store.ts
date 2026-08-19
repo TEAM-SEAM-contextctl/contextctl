@@ -1,10 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
-  assertIngestionPublicationV2Transition as assertIngestionPublicationTransition,
-  parseIngestionPublicationV2 as parseIngestionPublication,
+  assertIngestionPublicationTransition,
+  parseIngestionPublication,
   parsePublicationReady,
-  type IngestionPublicationV2 as IngestionPublication,
+  type IngestionPublication,
 } from "@contextctl/contracts";
 
 import { expirationAfter } from "../domain/index-staging-attempt.js";

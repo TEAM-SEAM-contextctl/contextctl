@@ -1,7 +1,7 @@
 import {
-  computePublishedKnowledgeUnitV2Digest,
-  parseIngestionPublicationV2 as parseIngestionPublication,
-  type IngestionPublicationV2 as IngestionPublication,
+  computePublishedKnowledgeUnitDigest,
+  parseIngestionPublication,
+  type IngestionPublication,
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -55,7 +55,7 @@ function createUpdatePublication(): IngestionPublication {
   };
   const unit = {
     ...edited,
-    contentDigest: computePublishedKnowledgeUnitV2Digest(edited),
+    contentDigest: computePublishedKnowledgeUnitDigest(edited),
   };
 
   return parseIngestionPublication({
