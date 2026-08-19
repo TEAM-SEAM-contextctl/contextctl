@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { readFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import {
   EmbeddingProviderFault,
   openIngestionDatabase,
@@ -15,6 +17,8 @@ import {
   failed,
   runCardsApprove,
   runCardsList,
+  runDoctor,
+  runInstallAssets,
   runIngest,
   runQuery,
   runSourceAdd,
@@ -41,8 +45,9 @@ import { resolveVectorBackend } from "./vector-backend.js";
 
 export const INSTALL_ASSETS_HINT = [
   EMBEDDING_ASSETS_MISSING_GUIDANCE,
-  "  node apps/contextctl-daemon/scripts/install-embedding-assets.mjs",
-  "  (약 390MB를 내려받는다. 설치 위치는 CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY 로 바꿀 수 있다.)",
+  "  contextctl install-assets",
+  "  (약 415MB를 내려받는다. 설치 위치는 CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY 로 바꿀 수 있다.)",
+  "  상태를 먼저 보려면: contextctl doctor",
 ].join("\n");
 
 /**
@@ -80,7 +85,7 @@ export async function runCli(input: {
     return 0;
   }
   if (command.kind === "version") {
-    input.stdout("contextctl 0.0.0");
+    input.stdout(`contextctl ${await readPackageVersion()}`);
     return 0;
   }
   if (command.kind === "serve") {
@@ -94,6 +99,35 @@ export async function runCli(input: {
 
   const paths = resolveContextctlPaths(input.environment, input.workingDirectory);
   const workingDirectory = input.workingDirectory ?? process.cwd();
+
+  // Both run before any runtime is built, and deliberately so: they are the two
+  // commands an operator reaches for when the runtime will not build. Asking
+  // them to install a 415MB model in order to be told the model is missing
+  // would be the same trap `source` avoids.
+  if (command.kind === "install_assets") {
+    return emit(
+      input,
+      await runInstallAssets({
+        command,
+        environment: input.environment,
+        workingDirectory,
+        progress: input.stderr,
+        ...(shouldPromptForConsent(command.yes)
+          ? { confirm: () => promptForConsent(input.stderr) }
+          : {}),
+      }),
+    );
+  }
+  if (command.kind === "doctor") {
+    return emit(
+      input,
+      await runDoctor({
+        command,
+        environment: input.environment,
+        workingDirectory,
+      }),
+    );
+  }
 
   try {
     if (!needsRuntime(command)) {
@@ -221,6 +255,74 @@ async function runServe(
     }),
   });
   await runDaemon(environment, options);
+}
+
+/**
+ * The version this build was packed at, read from the manifest beside it.
+ *
+ * A literal here was wrong in a way that only shows up after a release: the
+ * string said `0.0.0` while the installed package said `0.1.0`, and nothing in
+ * the build could notice, because the two are only compared by a person running
+ * the command. Reading the manifest makes the number a fact about the artifact
+ * rather than a copy someone has to remember to update.
+ *
+ * Two levels up from `dist/cli/`, which is the package root in both the packed
+ * tarball and a repository build. Read on demand rather than at import, so the
+ * commands that never print it pay nothing.
+ */
+async function readPackageVersion(): Promise<string> {
+  try {
+    const manifest = await readFile(
+      new URL("../../package.json", import.meta.url),
+      "utf8",
+    );
+    const parsed: unknown = JSON.parse(manifest);
+    const version =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as { readonly version?: unknown }).version
+        : undefined;
+    return typeof version === "string" ? version : "unknown";
+  } catch {
+    // A missing or unreadable manifest is not worth failing `--version` over:
+    // the command exists so a user can say what they are running, and "unknown"
+    // is a truthful answer where a stale literal was not.
+    return "unknown";
+  }
+}
+
+/**
+ * Whether there is anyone at the other end to answer.
+ *
+ * `--yes` is an answer already given. Absent that, a prompt is only meaningful
+ * on a terminal: in a pipeline or a CI job there is no one to type, and blocking
+ * on stdin there would hang the job rather than ask it anything. Non-interactive
+ * therefore proceeds, which is the same reading the flag has — the operator
+ * arranged for this command to run unattended.
+ */
+function shouldPromptForConsent(yes: boolean): boolean {
+  return !yes && process.stdin.isTTY === true;
+}
+
+/**
+ * Asks once, on stderr, and treats anything but an explicit yes as no.
+ *
+ * The question goes to stderr because stdout carries the command's result and
+ * may be redirected to a file; a prompt written there would be invisible and
+ * the terminal would look frozen.
+ */
+async function promptForConsent(write: (text: string) => void): Promise<boolean> {
+  write("계속하려면 y 를 입력하십시오 [y/N]:");
+  const reader = createInterface({ input: process.stdin });
+  try {
+    for await (const line of reader) {
+      const answer = line.trim().toLowerCase();
+      return answer === "y" || answer === "yes";
+    }
+    // stdin closed without a line. Silence is not consent.
+    return false;
+  } finally {
+    reader.close();
+  }
 }
 
 /** Turns an exception into the one sentence an operator can act on. */

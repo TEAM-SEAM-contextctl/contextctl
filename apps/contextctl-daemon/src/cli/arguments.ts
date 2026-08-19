@@ -42,6 +42,16 @@ export type CliCommand =
       readonly json: boolean;
       readonly maxContextCharacters?: number;
     }
+  | {
+      readonly kind: "install_assets";
+      /** Skip the consent prompt. Also implied when stdin is not a terminal. */
+      readonly yes: boolean;
+      /** Read the bytes from a directory staged ahead of time. */
+      readonly sourceDirectory?: string;
+      /** Install somewhere other than the configured asset directory. */
+      readonly target?: string;
+    }
+  | { readonly kind: "doctor"; readonly deep: boolean }
   | { readonly kind: "serve" }
   | { readonly kind: "help"; readonly topic?: string }
   | { readonly kind: "version" };
@@ -79,6 +89,18 @@ interface CommandUsage {
  * which is a visible gap rather than a silent lie.
  */
 const COMMAND_USAGES: readonly CommandUsage[] = [
+  {
+    topic: "install-assets",
+    line: "contextctl install-assets [--yes] [--target <dir>] [--source-directory <dir>]",
+    summary:
+      "질의에 필요한 임베딩 모델을 내려받아 설치한다. 약 415MB를 받으므로 먼저 동의를 묻는다.",
+  },
+  {
+    topic: "doctor",
+    line: "contextctl doctor [--deep]",
+    summary:
+      "설치 상태를 점검하고 다음에 할 일을 알려준다. --deep 은 모델 파일 전체를 다시 검증한다(느리다).",
+  },
   {
     topic: "source add",
     line: "contextctl source add <path> [--name <ref>] [--display-name <text>]",
@@ -182,6 +204,10 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
       return parseIngestCommand(argv.slice(1));
     case "query":
       return parseQueryCommand(argv.slice(1));
+    case "install-assets":
+      return parseInstallAssetsCommand(argv.slice(1));
+    case "doctor":
+      return parseDoctorCommand(argv.slice(1));
     case "serve":
       return parseServeCommand(argv.slice(1));
     case "help":
@@ -204,8 +230,20 @@ export function usageText(topic?: string): string {
     return ["사용법:", ...selected.flatMap(renderUsage)].join("\n");
   }
 
+  // The order of operations comes before the command list, because the list
+  // answers "what exists" and a first run needs "what now". Someone who has
+  // just installed the binary has no model, no source and no approved Card, and
+  // every command except the first two will tell them so one at a time.
   return [
     "contextctl — 승인된 컨텍스트 카드를 골라 전달하는 데몬.",
+    "",
+    "처음이라면 이 순서로 실행하십시오:",
+    "  1. contextctl install-assets    임베딩 모델 설치 (약 415MB)",
+    "  2. contextctl doctor            설치 상태 점검",
+    "  3. contextctl source add <path> 문서 등록",
+    "  4. contextctl ingest            카드 후보 생성",
+    "  5. contextctl cards approve <id> 카드 승인",
+    "  6. contextctl query \"<질문>\"     질의",
     "",
     "사용법:",
     ...COMMAND_USAGES.flatMap(renderUsage),
@@ -321,6 +359,70 @@ function parseCardsCommand(rest: readonly string[]): ParsedArguments {
     default:
       return usageError(`알 수 없는 하위 명령입니다: cards ${subcommand}`, "cards");
   }
+}
+
+/**
+ * Consent is a flag rather than a prompt decision made here.
+ *
+ * `--yes` states that the operator already agreed; whether a prompt is possible
+ * at all depends on the terminal, and that is the caller's fact to know. Parsing
+ * only records what was typed.
+ */
+function parseInstallAssetsCommand(rest: readonly string[]): ParsedArguments {
+  const outcome = tokenize(
+    rest,
+    {
+      yes: { type: "boolean" },
+      target: { type: "string" },
+      "source-directory": { type: "string" },
+    },
+    "install-assets",
+  );
+  if (outcome.status === "usage_error") {
+    return outcome;
+  }
+  if (outcome.positionals.length > 0) {
+    return usageError(
+      "install-assets 는 피연산자를 받지 않습니다.",
+      "install-assets",
+    );
+  }
+  const target = outcome.values["target"];
+  const sourceDirectory = outcome.values["source-directory"];
+  if (target !== undefined && typeof target !== "string") {
+    return usageError("--target 은 디렉터리 경로가 필요합니다.", "install-assets");
+  }
+  if (sourceDirectory !== undefined && typeof sourceDirectory !== "string") {
+    return usageError(
+      "--source-directory 는 디렉터리 경로가 필요합니다.",
+      "install-assets",
+    );
+  }
+  return ok({
+    kind: "install_assets",
+    yes: outcome.values["yes"] === true,
+    ...(target === undefined ? {} : { target }),
+    ...(sourceDirectory === undefined ? {} : { sourceDirectory }),
+  });
+}
+
+/**
+ * `--deep` is off by default because a diagnosis nobody runs diagnoses nothing.
+ *
+ * The shallow pass answers "is the model installed" from the pointer and the
+ * file sizes; the deep pass re-hashes 390MB. Making the slow one the default
+ * would turn a first-run check into something an operator waits out once and
+ * then stops using.
+ */
+function parseDoctorCommand(rest: readonly string[]): ParsedArguments {
+  const outcome = tokenize(rest, { deep: { type: "boolean" } }, "doctor");
+  if (outcome.status === "usage_error") {
+    return outcome;
+  }
+  if (outcome.positionals.length > 0) {
+    return usageError("doctor 는 피연산자를 받지 않습니다.", "doctor");
+  }
+  return ok({ kind: "doctor", deep: outcome.values["deep"] === true });
 }
 
 function parseIngestCommand(rest: readonly string[]): ParsedArguments {
