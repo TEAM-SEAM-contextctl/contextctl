@@ -10,8 +10,19 @@ import { measureTextUnits } from "./text-measure.js";
  * trusting a profile field. `CardSelectionProfile.selectionTextSchemaVersion`
  * states the same number; the two exist together because one identifies the
  * vector family and the other identifies the bytes that were embedded.
+ *
+ * `v2` adds the SQL `schema` and the HTTP `operationId` and `parameters`. That
+ * is a schema change and not a widening, because under `v1` two Scopes that
+ * differed only in those fields produced byte-identical text and therefore one
+ * vector — the exact collision this shape exists to prevent. A vector built
+ * under `v1` cannot be told apart from a correct one by any means except this
+ * label, which is what the label is for.
+ *
+ * Bumping it changes every Card's text, since the name is a field of the text,
+ * so every vector is rebuilt on the next query. That is the cost of the answer
+ * being knowable, and it is paid once.
  */
-export const CARD_SELECTION_TEXT_SCHEMA = "card-selection-text-v1" as const;
+export const CARD_SELECTION_TEXT_SCHEMA = "card-selection-text-v2" as const;
 
 /**
  * What a Card contributes to the semantic index, and nothing else.
@@ -49,6 +60,7 @@ export type CardSelectionScope =
       readonly scopeId: string;
       readonly scopeVersion: string;
       readonly connector: string;
+      readonly schema: string;
       readonly table: string;
       readonly columns: readonly string[];
     }
@@ -59,7 +71,17 @@ export type CardSelectionScope =
       readonly connector: string;
       readonly method: string;
       readonly path: string;
+      /** Absent, never empty, when the source named no operation. */
+      readonly operationId?: string;
+      readonly parameters: readonly CardSelectionHttpParameter[];
     };
+
+/** One HTTP parameter, normalized for embedding exactly like every other field. */
+export interface CardSelectionHttpParameter {
+  readonly location: "path" | "query";
+  readonly name: string;
+  readonly required: boolean;
+}
 
 /**
  * Builds the one canonical text a Card is embedded from.
@@ -172,6 +194,10 @@ function toSelectionScope(scope: ApprovedScope): CardSelectionScope {
         scopeId: normalizeSelectionText(scope.reference.scopeId),
         scopeVersion: normalizeSelectionText(scope.reference.scopeVersion),
         connector: normalizeSelectionText(scope.connector),
+        // Without this, `public.payments` and `analytics.payments` produce the
+        // same bytes, the same digest and one shared vector — two Cards the
+        // candidate index cannot tell apart at all.
+        schema: normalizeSelectionText(scope.schema),
         table: normalizeSelectionText(scope.table),
         // Sorted and deduplicated like the meaning lists. A column order is a
         // fact about how a Scope was written down, not about what it means, and
@@ -186,6 +212,14 @@ function toSelectionScope(scope: ApprovedScope): CardSelectionScope {
         connector: normalizeSelectionText(scope.connector),
         method: normalizeSelectionText(scope.method),
         path: normalizeSelectionText(scope.path),
+        // An absent operation name is carried as an absent field rather than as
+        // an empty string: a source that names no operations and one whose
+        // operation is called "" are different facts, and RFC 8785 serializes
+        // the two differently, so the digest keeps them apart.
+        ...(scope.operationId === undefined
+          ? {}
+          : { operationId: normalizeSelectionText(scope.operationId) }),
+        parameters: normalizeParameters(scope.parameters),
       };
   }
 }
@@ -207,6 +241,36 @@ function toSelectionScope(scope: ApprovedScope): CardSelectionScope {
  */
 export function normalizeSelectionText(text: string): string {
   return text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * Parameters normalized and put in one order, like every other list here.
+ *
+ * Ordered by `(location, name)` rather than left as declared, for the reason
+ * `columns` is sorted: the order a source happened to list its parameters in is
+ * a fact about how the Scope was written down, not about what it means, and two
+ * Scopes accepting the same parameters must embed alike. Nothing is
+ * deduplicated — the upstream contract already refuses a repeated key, and
+ * silently dropping one here would hide a Scope that broke that rule.
+ */
+function normalizeParameters(
+  parameters: readonly {
+    readonly location: "path" | "query";
+    readonly name: string;
+    readonly required: boolean;
+  }[],
+): readonly CardSelectionHttpParameter[] {
+  return [...parameters]
+    .map((parameter) => ({
+      location: parameter.location,
+      name: normalizeSelectionText(parameter.name),
+      required: parameter.required,
+    }))
+    .sort(
+      (left, right) =>
+        compareByCodePoint(left.location, right.location) ||
+        compareByCodePoint(left.name, right.name),
+    );
 }
 
 /** Normalized, empties dropped, duplicates dropped, code point order. */

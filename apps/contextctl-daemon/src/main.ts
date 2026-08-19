@@ -135,9 +135,9 @@ export const CARD_SELECTION_EMBEDDING_PROFILE: CardSelectionEmbeddingProfile =
     pooling: "cls",
     normalization: "l2",
     distance: "cosine",
-    selectionTextSchemaVersion: 1,
-    cardInputTransformVersion: "card-selection-text-v1",
-    queryInputTransformVersion: "card-selection-text-v1",
+    selectionTextSchemaVersion: 2,
+    cardInputTransformVersion: "card-selection-text-v2",
+    queryInputTransformVersion: "card-selection-text-v2",
     admissionLimits: DEFAULT_CARD_ADMISSION_LIMITS,
   });
 
@@ -158,7 +158,7 @@ export const DETERMINISTIC_CARD_SELECTION_PROFILE: CardSelectionProfile =
     dimensions: 8,
     distance: "cosine",
     normalization: "l2",
-    selectionTextSchemaVersion: 1,
+    selectionTextSchemaVersion: 2,
     admissionLimits: DEFAULT_CARD_ADMISSION_LIMITS,
   });
 

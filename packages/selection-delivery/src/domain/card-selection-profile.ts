@@ -60,7 +60,7 @@ export interface CardSelectionProfile {
   readonly dimensions: number;
   readonly distance: "cosine";
   readonly normalization: "l2";
-  readonly selectionTextSchemaVersion: 1;
+  readonly selectionTextSchemaVersion: 2;
   readonly admissionLimits: CardAdmissionLimits;
 }
 

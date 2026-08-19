@@ -43,6 +43,7 @@ function sqlGuide(scopeId: string): SqlRetrievalGuide {
     kind: "sql",
     scopeRef: { scopeId, scopeVersion: "v2" },
     connector: "postgres.main",
+    schema: "public",
     table: "payments",
     columns: ["id", "status"],
     allowedOperations: ["select"],

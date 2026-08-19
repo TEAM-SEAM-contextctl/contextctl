@@ -78,8 +78,35 @@ export interface ApprovedSqlScope {
   readonly kind: "sql_source";
   readonly reference: ApprovedScopeReference;
   readonly connector: string;
+  /**
+   * Required, not optional, and that is the whole point of it being here.
+   *
+   * One connector can hold `public.payments` and `analytics.payments`, and
+   * without this they are one coordinate that names neither: two Cards would
+   * produce the same guide, the same selection text and therefore the same
+   * vector. A consumer handed such a guide cannot know which table it was
+   * granted, which is the one thing a coordinate has to answer.
+   */
+  readonly schema: string;
   readonly table: string;
   readonly columns: readonly string[];
+}
+
+/**
+ * One parameter an HTTP operation accepts.
+ *
+ * Declared here rather than imported. This package depends on no other — not
+ * even on `contracts` — and ADR 0004 keeps the approved read model Selection's
+ * own: these types are a semantic mirror of the upstream shape, not a
+ * compile-time link to it. Importing the producer's type to save five lines
+ * would trade that for a workspace dependency, a project reference and a
+ * boundary-test entry, and would make Ingestion's versioning cadence this
+ * domain's problem.
+ */
+export interface ApprovedHttpParameter {
+  readonly location: "path" | "query";
+  readonly name: string;
+  readonly required: boolean;
 }
 
 /** A Scope over a consumer's HTTP endpoint. Coordinates only; never called here. */
@@ -89,6 +116,22 @@ export interface ApprovedHttpScope {
   readonly connector: string;
   readonly method: string;
   readonly path: string;
+  /**
+   * The operation's own name, when the source declared one.
+   *
+   * Optional because a source may not name its operations at all, and inventing
+   * an identifier for one that has none would put a coordinate in a guide that
+   * the consumer cannot look up.
+   */
+  readonly operationId: string | undefined;
+  /**
+   * Path and query parameters the operation accepts.
+   *
+   * Part of the Scope rather than decoration: two operations on one path differ
+   * by these alone, so a Scope that omitted them would collapse them exactly as
+   * a missing `schema` collapses two tables.
+   */
+  readonly parameters: readonly ApprovedHttpParameter[];
 }
 
 export type ApprovedScope =
