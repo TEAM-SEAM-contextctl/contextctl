@@ -8,26 +8,27 @@ import { describe, expect, it } from "vitest";
 import { RegistryApprovedCardCatalog } from "../src/adapters/registry-approved-card-catalog.js";
 
 /**
- * The boundary where a physical binding actually exists, and stops.
+ * The physical binding is now absent from both sides of this boundary.
  *
- * Selection's own tests can no longer prove containment: `connectorId` and
- * `accessHandle` are absent from its read model, so nothing there can even
- * construct the values it would then check for. The proof has to live where the
- * values are real, and that is here. Registry still consumes Publication v1 and
- * still carries both fields on `DocumentIndexRef`; this adapter is the one place
- * that reads a Registry Card and hands back a Selection Card, so it is the one
- * place where "the daemon received a credential-bearing coordinate and did not
- * pass it on" is a statement about behaviour rather than about a type.
+ * This file was written when Registry still consumed Publication v1 and still
+ * carried `connectorId` and `accessHandle` on its `DocumentIndexRef`. The proof
+ * it needed then was behavioural — "the daemon was handed a credential-bearing
+ * coordinate and did not pass it on" — and its own comment warned that deleting
+ * the fields from the fixture would leave a test passing because nothing was
+ * ever there.
  *
- * It matters that the fixture below keeps the two fields. Deleting them to make
- * the file shorter would leave a test that passes because nothing was ever there
- * — exactly the empty guard this replaces.
+ * Registry consuming v2 is not that deletion. The values are gone from the
+ * contract, from Registry's read model, and from Selection's, so there is no
+ * fixture that can carry them and no adapter line that could forward them. What
+ * replaces the behavioural proof is a structural one, which is why the two
+ * assertions below are about the shape of the types rather than about a value
+ * surviving a copy: a future edit that puts either field back has to fail the
+ * build, and `@ts-expect-error` is what makes that a test rather than a hope.
+ *
+ * The serialized-output checks are kept. They are the ones that still catch
+ * something a type cannot: a binding smuggled through under another name.
  */
 
-const CONNECTOR_ID = "vector.local";
-const ACCESS_HANDLE = "documents/payments/indexes/aaaa";
-
-/** A Registry Scope as Registry really produces it: physical binding included. */
 const registryScope: RetrievalScope = {
   kind: "managed_document",
   reference: { scopeId: "scope_payments", scopeVersion: "scpv_aaaa" },
@@ -36,8 +37,6 @@ const registryScope: RetrievalScope = {
     sourceId: "src_payments",
     documentId: "doc_payments",
     indexVersion: "idxv_aaaa",
-    connectorId: CONNECTOR_ID,
-    accessHandle: ACCESS_HANDLE,
   },
   selection: { kind: "document" },
 };
@@ -98,14 +97,18 @@ function collectKeys(value: unknown, into: Set<string> = new Set()): Set<string>
 }
 
 describe("physical binding containment at the Registry boundary", () => {
-  it("is handed a connector and an access handle by Registry", async () => {
-    // Asserted first, and about the input rather than the output. Without it
-    // every assertion below would also hold for an adapter that was handed
-    // nothing, and the file would prove containment of an empty set.
-    expect(registryScope.kind).toBe("managed_document");
-    if (registryScope.kind !== "managed_document") return;
-    expect(registryScope.documentIndex.connectorId).toBe(CONNECTOR_ID);
-    expect(registryScope.documentIndex.accessHandle).toBe(ACCESS_HANDLE);
+  it("cannot be given a connector or an access handle by Registry", () => {
+    if (registryScope.kind !== "managed_document") {
+      throw new Error("fixture must be a managed document Scope");
+    }
+
+    // Restoring either field must break the build. If one is ever added back to
+    // `DocumentIndexRef`, these directives stop erroring and TS2578 fails this
+    // test — which is the same signal, arriving from the other direction.
+    // @ts-expect-error the physical binding is absent from Registry's read model
+    expect(registryScope.documentIndex.connectorId).toBeUndefined();
+    // @ts-expect-error the physical binding is absent from Registry's read model
+    expect(registryScope.documentIndex.accessHandle).toBeUndefined();
   });
 
   it("returns the four logical coordinates and nothing else", async () => {
@@ -124,7 +127,7 @@ describe("physical binding containment at the Registry boundary", () => {
   });
 
   it.each(["connectorId", "accessHandle"])(
-    "drops the %s key at every depth of the translated Card",
+    "carries no %s key at any depth of the translated Card",
     async (forbidden) => {
       const translated = await new RegistryApprovedCardCatalog(cards).listApprovedCards();
 
@@ -135,7 +138,7 @@ describe("physical binding containment at the Registry boundary", () => {
     },
   );
 
-  it.each([CONNECTOR_ID, ACCESS_HANDLE])(
+  it.each(["vector.local", "documents/payments/indexes/aaaa"])(
     "carries the value %s nowhere in the serialized Card",
     async (forbidden) => {
       const translated = await new RegistryApprovedCardCatalog(cards).listApprovedCards();

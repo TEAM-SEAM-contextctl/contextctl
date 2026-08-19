@@ -23,7 +23,7 @@ const request: CardMeaningRequest = {
     documentId: "doc_a",
     semanticUnitId: "unit_b",
   },
-  evidence: [{ name: "document.title", value: "운영 안내" }],
+  facts: [{ name: "document.title", value: "운영 안내" }],
 };
 
 const fullEnvironment: Record<string, string> = {

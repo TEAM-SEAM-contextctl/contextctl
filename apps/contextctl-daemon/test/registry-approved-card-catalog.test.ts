@@ -40,8 +40,6 @@ const documentScope: RetrievalScope = {
     sourceId: "src_payments",
     documentId: "doc_payments",
     indexVersion: "idxv_aaaa",
-    connectorId: "vector.local",
-    accessHandle: "documents/payments/indexes/aaaa",
   },
   selection: {
     kind: "semantic_units",
@@ -53,6 +51,7 @@ const sqlScope: RetrievalScope = {
   kind: "sql_source",
   reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
   connector: "postgres.main",
+  schema: "public",
   table: "payments",
   columns: ["failed_reason", "status"],
 };
@@ -63,6 +62,8 @@ const httpScope: RetrievalScope = {
   connector: "payments.api",
   method: "GET",
   path: "/payments/{id}",
+  operationId: "getPayment",
+  parameters: [{ location: "path", name: "id", required: true }],
 };
 
 function cardWith(
@@ -234,7 +235,19 @@ describe("RegistryApprovedCardCatalog", () => {
     });
   });
 
-  it("translates sql and http scopes with their coordinates intact", async () => {
+  /**
+   * The adapter drops what Selection has no field for, and this pins which.
+   *
+   * Registry now carries `schema` on a sql Scope and `operationId`/`parameters`
+   * on an http one, because Publication v2 publishes them. Selection's approved
+   * read model does not have those fields yet, so the field-by-field translation
+   * leaves them behind — silently, since dropping is not a type error. The
+   * expectation below is written out in full rather than compared to the input so
+   * that the gap is visible here instead of being discovered when a SQL or HTTP
+   * connector first ships: two tables of the same name in different schemas would
+   * reach a Guide as one coordinate.
+   */
+  it("translates sql and http scopes, dropping the fields Selection lacks", async () => {
     await store.saveCard(cardWith("unit_a", "cv_a", [sqlScope, httpScope]), []);
     await approveCardVersion(ports, "unit_a", "cv_a", decision);
 
@@ -284,7 +297,8 @@ describe("RegistryApprovedCardCatalog", () => {
     // `entry.scopes` can no longer be the expectation wholesale: the managed
     // document Scope is the one shape the adapter narrows, so it is compared
     // against the narrowed form field for field instead of being skipped. The
-    // sql Scope round-trips untouched and is still compared to the input.
+    // sql Scope is compared to the narrowed form for the reason the test above
+    // states: `schema` does not survive into Selection's model.
     expect(approved[0]?.scopes[0]).toEqual({
       kind: "managed_document",
       reference: {
@@ -302,6 +316,10 @@ describe("RegistryApprovedCardCatalog", () => {
         semanticUnitIds: ["unit_payment_failures"],
       },
     });
-    expect(approved[0]?.scopes[1]).toEqual(sqlScope);
+    const { schema: _dropped, ...sqlWithoutSchema } = sqlScope as Extract<
+      RetrievalScope,
+      { kind: "sql_source" }
+    >;
+    expect(approved[0]?.scopes[1]).toEqual(sqlWithoutSchema);
   });
 });

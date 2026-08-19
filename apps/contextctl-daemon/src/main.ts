@@ -479,10 +479,7 @@ export function createDaemonRuntime(
   });
 
   const registryIntake = new RegistryIntake({
-    publications: new IngestionPublicationRepository(
-      ingestionPublications,
-      publications,
-    ),
+    publications: new IngestionPublicationRepository(ingestionPublications),
     checkpoints: new SqliteConsumerCheckpointStore(database, now),
     meanings: options.meanings ?? new DeterministicCardMeaningGenerator(),
     cards,
