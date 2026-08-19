@@ -25,7 +25,7 @@ export const TEST_CARD_PROFILE: CardSelectionProfile = {
   dimensions: 4,
   distance: "cosine",
   normalization: "l2",
-  selectionTextSchemaVersion: 1,
+  selectionTextSchemaVersion: 2,
   admissionLimits: DEFAULT_CARD_ADMISSION_LIMITS,
 };
 
@@ -46,8 +46,8 @@ export const TEST_PRODUCTION_CARD_PROFILE: CardSelectionEmbeddingProfile = {
     precision: "fp32",
   },
   pooling: "cls",
-  cardInputTransformVersion: "card-selection-text-v1",
-  queryInputTransformVersion: "card-selection-text-v1",
+  cardInputTransformVersion: "card-selection-text-v2",
+  queryInputTransformVersion: "card-selection-text-v2",
 };
 
 /** One meaning, and the surface forms that express it. */
@@ -156,6 +156,8 @@ export function createLeavePolicyCard(): ApprovedCard {
         connector: "hr.api",
         method: "GET",
         path: "/leave/{employeeId}",
+        operationId: "getLeaveBalance",
+        parameters: [{ location: "path", name: "employeeId", required: true }],
       },
     ],
   };
@@ -190,6 +192,8 @@ export function createShippingCard(): ApprovedCard {
         connector: "logistics.api",
         method: "GET",
         path: "/shipments/{trackingId}",
+        operationId: "getShipment",
+        parameters: [{ location: "path", name: "trackingId", required: true }],
       },
     ],
   };

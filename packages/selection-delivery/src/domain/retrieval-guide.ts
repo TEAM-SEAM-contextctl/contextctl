@@ -1,5 +1,6 @@
 import type {
   ApprovedDocumentSelection,
+  ApprovedHttpParameter,
   ApprovedScope,
   ApprovedScopeReference,
 } from "./card-catalog.js";
@@ -71,18 +72,28 @@ export interface SqlRetrievalGuide {
   readonly kind: "sql";
   readonly scopeRef: ApprovedScopeReference;
   readonly connector: string;
+  /** Which schema inside the connector. Without it `table` names two tables. */
+  readonly schema: string;
   readonly table: string;
   readonly columns: readonly string[];
   readonly allowedOperations: readonly ["select"];
 }
 
-/** A verifiable coordinate into a consumer's HTTP endpoint. Never called here. */
+/**
+ * A verifiable coordinate into a consumer's HTTP endpoint. Never called here.
+ *
+ * `operationId` and `parameters` travel for the same reason `schema` does above:
+ * a consumer executes this itself, and a path alone does not identify which of
+ * two operations it was granted when they differ only by what they accept.
+ */
 export interface HttpRetrievalGuide {
   readonly kind: "http";
   readonly scopeRef: ApprovedScopeReference;
   readonly connector: string;
   readonly method: string;
   readonly path: string;
+  readonly operationId: string | undefined;
+  readonly parameters: readonly ApprovedHttpParameter[];
 }
 
 /**
@@ -118,6 +129,7 @@ export function buildRetrievalGuide(
         kind: "sql",
         scopeRef: copyScopeRef(scope.reference),
         connector: scope.connector,
+        schema: scope.schema,
         table: scope.table,
         // Copied rather than aliased: the guide is handed to a consumer, and it
         // must not be a live window onto the catalog's own array.
@@ -131,6 +143,12 @@ export function buildRetrievalGuide(
         connector: scope.connector,
         method: scope.method,
         path: scope.path,
+        operationId: scope.operationId,
+        // Copied element by element for the reason `columns` is copied above:
+        // a guide is handed to a consumer and must not be a live window onto
+        // the catalog's own array. The elements are flat records of primitives,
+        // so one level is the whole structure.
+        parameters: scope.parameters.map((parameter) => ({ ...parameter })),
       };
     default:
       return refuseUnknownScope(scope);

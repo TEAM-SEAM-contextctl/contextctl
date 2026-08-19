@@ -104,6 +104,7 @@ export function createPaymentsTableCard(): ApprovedCard {
           scopeVersion: "scopev_0001",
         },
         connector: "postgres.main",
+        schema: "public",
         table: "payments",
         columns: ["created_at", "failed_reason", "payment_id", "status"],
       },
@@ -133,6 +134,8 @@ export function createPaymentApiCard(): ApprovedCard {
         connector: "payments.api",
         method: "GET",
         path: "/payments/{paymentId}",
+        operationId: "getPayment",
+        parameters: [{ location: "path", name: "paymentId", required: true }],
       },
     ],
   };
@@ -231,6 +234,7 @@ export function createLedgerTableCard(): ApprovedCard {
           scopeVersion: "scopev_0001",
         },
         connector: "postgres.ledger",
+        schema: "public",
         table: "inventory_ledger",
         columns: ["ledger_id", "product_id", "delta_quantity", "recorded_at"],
       },
@@ -262,6 +266,15 @@ export function createLookupApiCard(): ApprovedCard {
         connector: "billing.api",
         method: "GET",
         path: "/settlements/{settlementId}",
+        // The one Card in the fixtures whose source names no operation, held
+        // explicitly at `undefined` rather than omitted. It is what makes the
+        // serialization suites cover the absent-key branch end to end: an
+        // `operationId` that never appears anywhere would let a build that
+        // emitted `""` for it pass every assertion in this repository.
+        operationId: undefined,
+        parameters: [
+          { location: "path", name: "settlementId", required: true },
+        ],
       },
     ],
   };

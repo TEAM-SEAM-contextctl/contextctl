@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type {
   ApprovedCard,
+  ApprovedHttpParameter,
   ApprovedManagedDocumentScope,
   ApprovedScope,
 } from "../../src/domain/card-catalog.js";
@@ -11,6 +12,7 @@ import {
   retrievalGuideKey,
 } from "../../src/domain/retrieval-guide.js";
 import {
+  createLookupApiCard,
   createPaymentApiCard,
   createPaymentsTableCard,
   createRefundPolicyCard,
@@ -104,6 +106,64 @@ describe("buildRetrievalGuide", () => {
       method: "GET",
       path: "/payments/{paymentId}",
     });
+  });
+
+  it("carries the schema, without which the table name names two tables", () => {
+    const guide = buildRetrievalGuide(
+      scopeOfKind(createPaymentsTableCard(), "sql_source"),
+      LIMIT,
+    );
+
+    // One connector can hold `public.payments` and `analytics.payments`. A
+    // consumer executes this guide itself, so a coordinate that does not say
+    // which of the two it was granted is not a coordinate.
+    expect(guide).toMatchObject({ kind: "sql", schema: "public" });
+  });
+
+  it("carries the operation name and the parameters it accepts", () => {
+    expect(
+      buildRetrievalGuide(
+        scopeOfKind(createPaymentApiCard(), "http_source"),
+        LIMIT,
+      ),
+    ).toMatchObject({
+      kind: "http",
+      operationId: "getPayment",
+      parameters: [{ location: "path", name: "paymentId", required: true }],
+    });
+  });
+
+  it("transcribes an unnamed operation as undefined, not as an empty name", () => {
+    const guide = buildRetrievalGuide(
+      scopeOfKind(createLookupApiCard(), "http_source"),
+      LIMIT,
+    );
+
+    // Inventing an identifier for an operation the source never named would
+    // put a coordinate in the guide that the consumer cannot look up.
+    expect(guide).toMatchObject({ kind: "http", operationId: undefined });
+  });
+
+  it("copies the parameters instead of aliasing the scope's array", () => {
+    const scope = scopeOfKind(createPaymentApiCard(), "http_source");
+    const guide = buildRetrievalGuide(scope, LIMIT);
+
+    // Both levels: the array itself, and the record inside it. A guide is
+    // handed to a consumer and must never be a live window onto catalog state.
+    (scope.parameters as ApprovedHttpParameter[]).push({
+      location: "query",
+      name: "smuggled",
+      required: false,
+    });
+    (scope.parameters[0] as { name: string }).name = "renamed";
+
+    expect(guide.kind).toBe("http");
+    if (guide.kind !== "http") {
+      throw new Error("expected an http guide");
+    }
+    expect(guide.parameters).toEqual([
+      { location: "path", name: "paymentId", required: true },
+    ]);
   });
 
   it("does not bound a delegated guide, which we never execute", () => {

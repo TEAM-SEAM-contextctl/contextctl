@@ -63,6 +63,7 @@ const approvedCard: ApprovedCard = {
       kind: "sql_source",
       reference: { scopeId: "scope_ledger", scopeVersion: "scpv_aaaa" },
       connector: "postgres.main",
+      schema: "public",
       table: "payments",
       columns: ["id", "status"],
     },
@@ -72,6 +73,8 @@ const approvedCard: ApprovedCard = {
       connector: "billing.api",
       method: "GET",
       path: "/payments/{id}",
+      operationId: "getPaymentStatus",
+      parameters: [{ location: "path", name: "id", required: true }],
     },
   ],
 };

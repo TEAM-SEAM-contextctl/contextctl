@@ -50,6 +50,7 @@ function sqlGuide(): SqlRetrievalGuide {
     kind: "sql",
     scopeRef: { scopeId: "scope_payments_table", scopeVersion: "scopev_0001" },
     connector: "postgres.main",
+    schema: "public",
     table: "payments",
     columns: ["payment_id"],
     allowedOperations: ["select"],
@@ -63,6 +64,8 @@ function httpGuide(): HttpRetrievalGuide {
     connector: "payments.api",
     method: "GET",
     path: "/payments/{paymentId}",
+    operationId: "getPayment",
+    parameters: [{ location: "path", name: "paymentId", required: true }],
   };
 }
 

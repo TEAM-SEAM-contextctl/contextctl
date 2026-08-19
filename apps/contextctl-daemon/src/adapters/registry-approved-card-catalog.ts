@@ -98,6 +98,7 @@ function toApprovedScope(scope: RetrievalScope): ApprovedScope {
           scopeVersion: scope.reference.scopeVersion,
         },
         connector: scope.connector,
+        schema: scope.schema,
         table: scope.table,
         columns: [...scope.columns],
       };
@@ -111,6 +112,15 @@ function toApprovedScope(scope: RetrievalScope): ApprovedScope {
         connector: scope.connector,
         method: scope.method,
         path: scope.path,
+        operationId: scope.operationId,
+        // Copied element by element like `columns` above. Registry's array is
+        // its own, and a Selection Card holding a live reference into it would
+        // let one domain's later edit reshape another's read model.
+        parameters: scope.parameters.map((parameter) => ({
+          location: parameter.location,
+          name: parameter.name,
+          required: parameter.required,
+        })),
       };
     default: {
       const unreachable: never = scope;

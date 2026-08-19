@@ -31,7 +31,7 @@ const CARD_PROFILE: CardSelectionProfile = {
   dimensions: 4,
   distance: "cosine",
   normalization: "l2",
-  selectionTextSchemaVersion: 1,
+  selectionTextSchemaVersion: 2,
   admissionLimits: DEFAULT_CARD_ADMISSION_LIMITS,
 };
 
