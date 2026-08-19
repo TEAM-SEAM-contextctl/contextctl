@@ -20,6 +20,9 @@ import {
 const q8Directory = process.env.CONTEXTCTL_GRANITE_ASSET_DIRECTORY;
 const fp32Directory = process.env.CONTEXTCTL_GRANITE_FP32_ASSET_DIRECTORY;
 const resultPath = process.env.CONTEXTCTL_EVAL_RESULT_PATH;
+const resourceGateMode = readResourceGateMode(
+  process.env.CONTEXTCTL_EVAL_RESOURCE_GATE_MODE,
+);
 
 const RECALL_AT_5_GATE = 0.9;
 const MRR_AT_10_GATE = 0.75;
@@ -34,6 +37,10 @@ const BATCH_SIZE = 32;
  * It runs against the installed artifacts rather than a stub, so it is skipped
  * where they are absent. A skipped run is not a pass: the release judgement
  * reads the emitted result, and no result means the gate did not run.
+ * The default `release` mode enforces every gate. GitHub-hosted Linux uses the
+ * explicit `hosted_observation` mode because RSS is platform-specific; that
+ * result records the failed resource gate but cannot stand in for release
+ * evidence from the deployment reference machine.
  */
 describe.skipIf(q8Directory === undefined)(
   "document-retrieval-eval-v1",
@@ -45,6 +52,21 @@ describe.skipIf(q8Directory === undefined)(
         const profile = DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
         const provider = createLocalProvider(q8Directory!, profile);
         await provider.ready();
+
+        // Measure the specified batch workload before retaining the evaluation
+        // vectors and latency samples. Those are evaluator bookkeeping, not
+        // part of the production 32-input embedding batch whose RSS is gated.
+        const readyRssBytes = process.memoryUsage().rss;
+        let peakRssBytes = readyRssBytes;
+        for (let offset = 0; offset < corpus.chunks.length; offset += BATCH_SIZE) {
+          await embedAll(
+            provider,
+            profile,
+            corpus.chunks.slice(offset, offset + BATCH_SIZE),
+            BATCH_SIZE,
+          );
+          peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
+        }
 
         const chunkVectors = await embedAll(provider, profile, corpus.chunks);
         const queryVectors = await embedAll(provider, profile, corpus.queries);
@@ -62,17 +84,6 @@ describe.skipIf(q8Directory === undefined)(
           latencies.push(performance.now() - started);
         }
         const warmQueryP95Ms = percentile(latencies, 0.95);
-
-        let peakRssBytes = process.memoryUsage().rss;
-        for (let offset = 0; offset < corpus.chunks.length; offset += BATCH_SIZE) {
-          await embedAll(
-            provider,
-            profile,
-            corpus.chunks.slice(offset, offset + BATCH_SIZE),
-            BATCH_SIZE,
-          );
-          peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
-        }
 
         const baseline = await measureBaseline(corpus, quality);
         const result = {
@@ -93,7 +104,12 @@ describe.skipIf(q8Directory === undefined)(
           recallAt5: quality.recallAt5,
           mrrAt10: quality.mrrAt10,
           warmQueryP95Ms,
+          readyRssMiB: readyRssBytes / 1024 / 1024,
           peakRssMiB: peakRssBytes / 1024 / 1024,
+          batchRssDeltaMiB: (peakRssBytes - readyRssBytes) / 1024 / 1024,
+          resourceGateMode,
+          resourceGatePassed:
+            peakRssBytes / 1024 / 1024 <= PEAK_RSS_MIB_GATE,
           baseline,
           gates: {
             recallAt5: RECALL_AT_5_GATE,
@@ -117,7 +133,9 @@ describe.skipIf(q8Directory === undefined)(
         expect(quality.recallAt5).toBeGreaterThanOrEqual(RECALL_AT_5_GATE);
         expect(quality.mrrAt10).toBeGreaterThanOrEqual(MRR_AT_10_GATE);
         expect(warmQueryP95Ms).toBeLessThanOrEqual(WARM_QUERY_P95_MS_GATE);
-        expect(result.peakRssMiB).toBeLessThanOrEqual(PEAK_RSS_MIB_GATE);
+        if (resourceGateMode === "release") {
+          expect(result.peakRssMiB).toBeLessThanOrEqual(PEAK_RSS_MIB_GATE);
+        }
         if (baseline !== undefined) {
           expect(baseline.recallAt5 - quality.recallAt5).toBeLessThanOrEqual(
             MAX_Q8_RECALL_REGRESSION,
@@ -128,6 +146,16 @@ describe.skipIf(q8Directory === undefined)(
     );
   },
 );
+
+function readResourceGateMode(
+  value: string | undefined,
+): "release" | "hosted_observation" {
+  if (value === undefined || value === "release") return "release";
+  if (value === "hosted_observation") return "hosted_observation";
+  throw new Error(
+    "CONTEXTCTL_EVAL_RESOURCE_GATE_MODE must be release or hosted_observation",
+  );
+}
 
 interface BaselineQuality {
   readonly recallAt5: number;

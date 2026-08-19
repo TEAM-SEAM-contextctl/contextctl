@@ -17,7 +17,10 @@
     "clean": "tsc -b --clean && node scripts/clean-workspace-dist.mjs",
     "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.check.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude packages/ingestion-indexing/test/qdrant-vector-index.integration.test.ts --exclude packages/ingestion-indexing/test/local-embedding-adapter.integration.test.ts --exclude packages/ingestion-indexing/test/document-retrieval-eval.test.ts",
+    "test:integration:qdrant": "node scripts/run-external-test.mjs qdrant",
+    "test:integration:granite": "node scripts/run-external-test.mjs granite",
+    "test:eval:document-retrieval": "node scripts/run-external-test.mjs document-retrieval"
   },
   "dependencies": {
     "@contextctl/daemon": "0.1.0"
