@@ -124,9 +124,11 @@ export class RegistryIntake {
   /**
    * Consumes one Publication and persists a Card Version per Knowledge Unit.
    *
-   * Idempotent by way of `claimPublication`'s checkpoint: a redelivered
-   * `PublicationReady` answers `already_claimed` and writes nothing, so the
-   * append-only history cannot gain the same version twice.
+   * Idempotent by way of the claim record: a redelivered `PublicationReady`
+   * answers `already_claimed` and writes nothing, so the append-only history
+   * cannot gain the same version twice. The record is written here rather than
+   * inside the use case, after the Cards are stored — see the comment at that
+   * call.
    *
    * Registry may also refuse on chain order — `deferred` when a predecessor is
    * missing, `forked` when the chain is not linear. Both are passed through with
@@ -182,6 +184,15 @@ export class RegistryIntake {
         findings,
       });
     }
+
+    // Marked consumed only now, with the cursor `claimPublication` handed back.
+    // Doing it before this loop would count the Publication as consumed while
+    // its Cards did not exist yet, and a crash in between would be unrecoverable
+    // — redelivery answers `already_claimed`. This order fails the other way: a
+    // crash here leaves the Cards stored and the Publication unconsumed, so a
+    // retry re-produces the same Card Versions and an operator sees duplicate
+    // drafts rather than silently missing knowledge.
+    await this.#ports.checkpoints.markProcessed(claimed.cursor);
 
     return { status: "claimed", publicationId, cardVersions: intaken };
   }
