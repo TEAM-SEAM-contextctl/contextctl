@@ -52,6 +52,7 @@ export type CliCommand =
       readonly target?: string;
     }
   | { readonly kind: "doctor"; readonly deep: boolean }
+  | { readonly kind: "paths" }
   | { readonly kind: "serve" }
   | { readonly kind: "help"; readonly topic?: string }
   | { readonly kind: "version" };
@@ -94,6 +95,12 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
     line: "contextctl install-assets [--yes] [--target <dir>] [--source-directory <dir>]",
     summary:
       "질의에 필요한 임베딩 모델을 내려받아 설치한다. 약 415MB를 받으므로 먼저 동의를 묻는다.",
+  },
+  {
+    topic: "paths",
+    line: "contextctl paths",
+    summary:
+      "상태·모델·색인이 놓인 경로를 전부 보여준다. 백업하거나 지울 때 무엇을 지워야 하는지 알려준다.",
   },
   {
     topic: "doctor",
@@ -208,6 +215,8 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
       return parseInstallAssetsCommand(argv.slice(1));
     case "doctor":
       return parseDoctorCommand(argv.slice(1));
+    case "paths":
+      return parsePathsCommand(argv.slice(1));
     case "serve":
       return parseServeCommand(argv.slice(1));
     case "help":
@@ -414,6 +423,24 @@ function parseInstallAssetsCommand(rest: readonly string[]): ParsedArguments {
  * would turn a first-run check into something an operator waits out once and
  * then stops using.
  */
+/**
+ * No options at all, and none planned.
+ *
+ * The command exists so an operator can find what to delete; a flag that
+ * filtered the list would let them delete less than they meant to while
+ * believing they had seen everything.
+ */
+function parsePathsCommand(rest: readonly string[]): ParsedArguments {
+  const outcome = tokenize(rest, {}, "paths");
+  if (outcome.status === "usage_error") {
+    return outcome;
+  }
+  if (outcome.positionals.length > 0) {
+    return usageError("paths 는 피연산자를 받지 않습니다.", "paths");
+  }
+  return ok({ kind: "paths" });
+}
+
 function parseDoctorCommand(rest: readonly string[]): ParsedArguments {
   const outcome = tokenize(rest, { deep: { type: "boolean" } }, "doctor");
   if (outcome.status === "usage_error") {

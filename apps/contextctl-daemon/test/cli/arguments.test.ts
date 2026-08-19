@@ -272,3 +272,20 @@ describe("usageText", () => {
     );
   });
 });
+
+describe("paths", () => {
+  it("takes no options and no operands", () => {
+    expect(parseCliArguments(["paths"])).toEqual({
+      status: "ok",
+      command: { kind: "paths" },
+    });
+    expect(parseCliArguments(["paths", "extra"]).status).toBe("usage_error");
+    expect(parseCliArguments(["paths", "--json"]).status).toBe("usage_error");
+  });
+
+  it("is listed in the usage text", () => {
+    // The command exists so an operator can find what to remove. A command that
+    // is not in the help is one they will not find when they need it.
+    expect(usageText()).toContain("contextctl paths");
+  });
+});

@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+#
+# contextctl installer.
+#
+# Downloads the published package tarballs and hands them to npm in one
+# command. It deliberately does very little: npm resolves and links, and
+# `contextctl install-assets` fetches and verifies the embedding model. A shell
+# script that reimplemented either would be a second implementation of something
+# already checked by digest, and it would drift.
+#
+#   curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
+#
+set -euo pipefail
+
+REPO="TEAM-SEAM-contextctl/contextctl"
+RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
+MINIMUM_NODE_MAJOR=24
+
+# Order is irrelevant — every tarball is passed to a single `npm i -g`, which
+# resolves the workspace dependencies among them without consulting a registry.
+PACKAGES=(
+  contextctl-contracts
+  contextctl-selection-delivery
+  contextctl-registry-lifecycle
+  contextctl-ingestion-indexing
+  contextctl-daemon
+)
+
+WORK_DIR=""
+cleanup() {
+  if [ -n "${WORK_DIR}" ] && [ -d "${WORK_DIR}" ]; then
+    rm -rf "${WORK_DIR}"
+  fi
+}
+trap cleanup EXIT
+
+say() { printf '%s\n' "$*"; }
+fail() { printf '%s\n' "$*" >&2; }
+
+# --------------------------------------------------------------------- node
+
+require_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    fail "Node.js 를 찾을 수 없습니다."
+    fail ""
+    fail "contextctl 은 Node.js ${MINIMUM_NODE_MAJOR} 이상이 필요합니다."
+    fail "저장소가 node:sqlite 위에 있고, 그 모듈은 Node ${MINIMUM_NODE_MAJOR} 미만에 없습니다."
+    fail ""
+    fail "설치: https://nodejs.org/en/download"
+    # Deliberately not installed for you. A version manager rewrites shell
+    # startup files and changes which Node every other project on this machine
+    # sees; that is a decision for whoever owns the machine, not for an
+    # installer they piped into bash.
+    exit 1
+  fi
+
+  local version major
+  version="$(node --version)"
+  major="${version#v}"
+  major="${major%%.*}"
+
+  if [ "${major}" -lt "${MINIMUM_NODE_MAJOR}" ]; then
+    fail "Node.js ${version} 이 활성 상태입니다. ${MINIMUM_NODE_MAJOR} 이상이 필요합니다."
+    fail ""
+    fail "contextctl 의 Registry·Ingestion 저장소는 node:sqlite 를 씁니다."
+    fail "그 모듈은 Node ${MINIMUM_NODE_MAJOR} 에서 처음 제공되므로 낮은 버전에서는 기동조차 하지 못합니다."
+    fail ""
+    fail "Node ${MINIMUM_NODE_MAJOR} 이상으로 전환한 뒤 다시 실행하십시오: https://nodejs.org/en/download"
+    exit 1
+  fi
+
+  say "Node.js ${version} 을 씁니다."
+}
+
+require_npm() {
+  if ! command -v npm >/dev/null 2>&1; then
+    fail "npm 을 찾을 수 없습니다. Node.js 설치에 npm 이 포함돼 있어야 합니다."
+    exit 1
+  fi
+}
+
+# ----------------------------------------------------------------- download
+
+download_packages() {
+  WORK_DIR="$(mktemp -d)"
+  say "패키지를 내려받습니다..."
+  local name url
+  for name in "${PACKAGES[@]}"; do
+    url="${RELEASE_BASE}/${name}.tgz"
+    if ! curl -fsSL --retry 2 --connect-timeout 20 -o "${WORK_DIR}/${name}.tgz" "${url}"; then
+      fail "내려받기에 실패했습니다: ${url}"
+      fail ""
+      fail "릴리스가 아직 게시되지 않았거나 네트워크가 막혀 있을 수 있습니다."
+      fail "릴리스 목록: https://github.com/${REPO}/releases"
+      exit 1
+    fi
+    say "  ${name}.tgz"
+  done
+}
+
+# ------------------------------------------------------------------ install
+
+install_packages() {
+  say "설치합니다..."
+  local tarballs=()
+  local name
+  for name in "${PACKAGES[@]}"; do
+    tarballs+=("${WORK_DIR}/${name}.tgz")
+  done
+
+  # One command, all five. Installed separately, npm would try to resolve each
+  # package's `@contextctl/*` dependencies from the registry, where they do not
+  # exist.
+  if ! npm install -g "${tarballs[@]}"; then
+    fail "npm 설치에 실패했습니다."
+    exit 1
+  fi
+}
+
+# ------------------------------------------------------- reachability on PATH
+
+# Where npm actually put the command, for when the shell cannot find it.
+global_bin_dir() {
+  local prefix
+  if prefix="$(npm prefix -g 2>/dev/null)"; then
+    printf '%s\n' "${prefix}/bin"
+  fi
+}
+
+# A version manager keeps one bin directory per installed Node, so a command
+# installed under the active version is invisible from every other one — and
+# from a login shell that activates a different default. This is the failure
+# this check exists for; it has been hit on a real machine.
+version_manager_hint() {
+  local node_path
+  node_path="$(command -v node)"
+  case "${node_path}:${FNM_DIR-}:${NVM_DIR-}:${ASDF_DIR-}${ASDF_DATA_DIR-}" in
+    *fnm*) printf 'fnm\n' ;;
+    *nvm*) printf 'nvm\n' ;;
+    *asdf*) printf 'asdf\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+
+verify_reachable() {
+  if command -v contextctl >/dev/null 2>&1; then
+    say ""
+    say "설치를 마쳤습니다: $(command -v contextctl)"
+    return 0
+  fi
+
+  local bin_dir manager
+  bin_dir="$(global_bin_dir)"
+  manager="$(version_manager_hint)"
+
+  fail ""
+  fail "설치는 끝났지만 셸이 contextctl 을 찾지 못합니다."
+  if [ -n "${bin_dir}" ]; then
+    fail "설치된 위치: ${bin_dir}/contextctl"
+  fi
+  if [ -n "${manager}" ]; then
+    fail ""
+    fail "${manager} 을(를) 쓰고 계십니다. 버전 매니저는 활성 Node 버전의 bin 에만 설치합니다."
+    fail "즉 지금 활성인 $(node --version) 에만 깔려 있고, 다른 버전으로 전환하면 사라진 것처럼 보입니다."
+    fail "새 셸에서 같은 버전을 활성화하거나, 아래 경로를 PATH 에 추가하십시오."
+  fi
+  if [ -n "${bin_dir}" ]; then
+    fail ""
+    fail "  export PATH=\"${bin_dir}:\$PATH\""
+  fi
+  # Non-zero: the package is on disk, but an installer that cannot produce a
+  # runnable command has not finished the job it was asked to do.
+  return 1
+}
+
+# --------------------------------------------------------------- next steps
+
+next_steps() {
+  say ""
+  say "다음 단계:"
+  say "  1. contextctl install-assets   임베딩 모델 설치 (약 415MB, 동의를 묻습니다)"
+  say "  2. contextctl doctor           설치 상태 점검"
+  say ""
+  say "설치된 경로를 보려면: contextctl paths"
+  # `install-assets` is not run here. It downloads 415MB, and consent obtained
+  # for "install the tool" is not consent for that; the subcommand asks on its
+  # own, which it cannot do from inside a pipe.
+}
+
+main() {
+  require_node
+  require_npm
+  download_packages
+  install_packages
+  verify_reachable
+  next_steps
+}
+
+main "$@"
