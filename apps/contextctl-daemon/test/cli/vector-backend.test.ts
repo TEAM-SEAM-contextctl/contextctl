@@ -137,6 +137,47 @@ describe("ingestVolatilityWarning", () => {
   it("stays quiet for a durable backend", () => {
     expect(ingestVolatilityWarning(qdrantBackend())).toBeUndefined();
   });
+
+  /**
+   * The advice has to be advice that works.
+   *
+   * "Set the variable and ingest again" was the instruction here, and following
+   * it does nothing: the second ingest reports `unchanged` and skips indexing,
+   * because the observation checkpoint tracks the document and nothing checks
+   * whether an index exists. An operator who followed it was left with approved
+   * Cards and no vectors — the state this warning exists to prevent.
+   */
+  it("does not tell an operator to re-ingest an unchanged document", () => {
+    const warning = ingestVolatilityWarning(resolveVectorBackend({}));
+
+    // The correction, stated as the property rather than as a fixed sentence:
+    // whatever the wording, it must say that a second ingest is skipped.
+    expect(warning).toContain("unchanged");
+  });
+
+  it("names the recovery that actually rebuilds the index", () => {
+    const warning = ingestVolatilityWarning(resolveVectorBackend({})) ?? "";
+
+    // `contextctl paths` rather than a filename, because the store can be moved
+    // with CONTEXTCTL_INGESTION_DATABASE.
+    expect(warning).toContain("contextctl paths");
+    // And the fact that makes it runnable: an operator who believes they are
+    // about to lose their approvals will not do it.
+    expect(warning).toContain("승인한 Card");
+  });
+
+  it("gives the same recovery when a query finds an empty index", () => {
+    // The two messages used to carry the same wrong instruction in two places.
+    const diagnosis =
+      emptyResultDiagnosis({
+        backend: resolveVectorBackend({}),
+        approvedCardCount: 3,
+        itemCount: 0,
+      }) ?? "";
+
+    expect(diagnosis).toContain("contextctl paths");
+    expect(diagnosis).toContain("unchanged");
+  });
 });
 
 describe("emptyResultDiagnosis", () => {

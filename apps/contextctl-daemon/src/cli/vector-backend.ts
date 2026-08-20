@@ -123,6 +123,13 @@ function readTimeoutMs(
  * The moment matters more than the wording. Said at ingest time it is a warning
  * about a future command; said at query time it would be an explanation of a
  * result the operator has already misread.
+ *
+ * What it must not say is "set the variable and ingest again". That was the
+ * advice here, and it does not work: the second ingest reports `unchanged` and
+ * skips chunking, embedding and index publication, because the observation
+ * checkpoint tracks the *document* and nothing looks at whether an index exists.
+ * Following it leaves an operator with approved Cards and no vectors, which is
+ * the exact state this warning exists to prevent.
  */
 export function ingestVolatilityWarning(
   backend: VectorBackend,
@@ -131,8 +138,37 @@ export function ingestVolatilityWarning(
   return [
     "경고: 방금 만든 색인은 in-memory 라 이 프로세스가 끝나면 함께 사라진다.",
     "다음 `contextctl query` 는 새 프로세스에서 빈 색인을 읽고, 오류 없이 빈 결과로 성공한다.",
-    `질의하려면 \`${QDRANT_URL_VARIABLE}\` 을 설정하고 ingest 를 다시 하거나, \`contextctl serve\` 로 한 프로세스를 유지하라.`,
+    ...indexRecoveryGuidance(),
   ].join("\n");
+}
+
+/**
+ * How to get a durable index, and how to rebuild one that is already gone.
+ *
+ * Shared by the two places that used to give the same wrong instruction. The
+ * order is deliberate: configuring the backend before the first ingest is the
+ * only path that costs nothing, and it is what an operator reading this at ingest
+ * time can still do.
+ *
+ * The rebuild names the Ingestion store because deleting it is the only recovery
+ * the CLI currently offers, and it is safe in a way that is not obvious — a
+ * Publication id is derived from the document's content, so re-publishing the
+ * same document produces the same id and Registry answers `already_claimed`.
+ * Cards, approvals and the audit trail live in the Registry store and are never
+ * touched. Saying so is the point: an operator who thinks they are about to lose
+ * their approvals will not run it.
+ *
+ * `contextctl paths` rather than a literal filename, because
+ * `CONTEXTCTL_INGESTION_DATABASE` can move it and a hard-coded path would be
+ * wrong for exactly the operator who configured one.
+ */
+function indexRecoveryGuidance(): readonly string[] {
+  return [
+    `가장 간단한 방법은 처음부터 \`${QDRANT_URL_VARIABLE}\` 을 설정한 뒤 ingest 하는 것이다.`,
+    "이미 수집한 문서는 `ingest` 를 다시 해도 `unchanged` 로 건너뛴다 — 문서가 바뀌지 않았기 때문이다.",
+    "색인만 다시 만들려면 `contextctl paths` 가 알려주는 Ingestion 저장소 파일을 지우고 ingest 하라. 승인한 Card 는 Registry 저장소에 있으므로 유지된다.",
+    "또는 `contextctl serve` 로 ingest 와 query 를 한 프로세스에서 실행하라.",
+  ];
 }
 
 /**
@@ -169,7 +205,7 @@ export function emptyResultDiagnosis(input: {
     return [
       `승인된 Card 는 ${String(input.approvedCardCount)}개 있는데 읽을 색인이 없다 — 이 프로세스는 방금 시작했고 in-memory 색인은 비어 있다.`,
       "앞서 `contextctl ingest` 가 쓴 색인은 그 프로세스와 함께 사라졌다.",
-      `\`${QDRANT_URL_VARIABLE}\` 을 설정하고 ingest 를 다시 하거나, \`contextctl serve\` 로 ingest 와 query 를 한 프로세스에서 실행하라.`,
+      ...indexRecoveryGuidance(),
     ].join("\n");
   }
 

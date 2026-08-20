@@ -168,6 +168,35 @@ contextctl query "반차는 어떻게 써?"
 | `CONTEXTCTL_QDRANT_API_KEY` | 선택 |
 | `CONTEXTCTL_QDRANT_TIMEOUT_MS` | 선택 |
 
+#### 색인이 비었을 때 — 다시 만드는 방법
+
+Qdrant 없이 `ingest` 한 뒤에 나중에 Qdrant 를 붙이면 이 상태가 됩니다. **승인된 Card 는 있는데
+검색할 벡터가 없습니다.**
+
+`ingest` 를 다시 해도 풀리지 않습니다.
+
+```bash
+contextctl ingest
+# source.leave: unchanged      ← 문서가 안 바뀌었으므로 건너뜁니다
+```
+
+`ingest` 는 **문서가 바뀌었는지**만 봅니다. 색인이 존재하는지는 보지 않습니다. 안 바뀐 문서를
+매번 다시 임베딩하지 않는 것이 이 제품의 설계이고, `source remove` 후 다시 `add` 해도
+같은 판단이 나옵니다.
+
+색인만 다시 만들려면 **Ingestion 저장소를 지우고** 수집합니다.
+
+```bash
+contextctl paths                    # Ingestion 저장소 위치 확인
+rm ~/.contextctl/ingestion.db       # 기본 경로일 때
+contextctl ingest
+```
+
+**승인은 유지됩니다.** Publication ID 가 문서 내용에서 계산되므로 같은 문서는 같은 ID 를 만들고,
+Registry 는 `already_claimed` 로 받습니다. Card·승인·이력은 `registry.db` 에 있고 건드리지 않습니다.
+
+> ★ `registry.db` 는 지우지 마십시오. 그쪽을 지우면 승인이 사라져 다시 승인해야 합니다.
+
 ### ★ Card 의미 생성기 — 설정을 권장합니다
 
 ```bash
@@ -414,6 +443,7 @@ rm ~/.contextctl/sources.json     # 등록한 문서 목록
 ```
 
 되돌릴 수 없습니다. 셋은 따로 지울 수 있습니다 — Card 는 두고 수집만 초기화할 수 있습니다.
+색인만 다시 만들려는 것이라면 [색인이 비었을 때](#색인이-비었을-때--다시-만드는-방법)를 보십시오.
 
 ### ④ Qdrant 컬렉션 — ★ contextctl 이 띄운 서버가 아닙니다
 
