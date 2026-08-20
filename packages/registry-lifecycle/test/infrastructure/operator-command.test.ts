@@ -328,12 +328,22 @@ describe("runOperatorCommand", () => {
       const consumed = {
         publicationId: "pub_first",
         sourceId: "src_payments",
-        producedAt: "2026-08-18T22:00:00.000Z",
+        producedAt: "2026-08-09T20:00:00.000Z",
+        knowledgeUnits: [],
       };
       const newest = {
         publicationId: "pub_latest",
         sourceId: "src_payments",
-        producedAt: "2026-08-19T00:00:00.000Z",
+        // Two hours before the clock this suite runs at, so the Scope it carries
+        // is well past the five minutes the operating standard allows.
+        producedAt: "2026-08-09T22:00:00.000Z",
+        knowledgeUnits: [
+          {
+            publishedScopes: [
+              { scopeId: "scope_waiting", scopeVersion: "scpv_waiting" },
+            ],
+          },
+        ],
       };
 
       function withFeed(latest: typeof newest | undefined): OperatorCommandPorts {
@@ -365,6 +375,20 @@ describe("runOperatorCommand", () => {
         expect(result.output).toContain("pub_first -> pub_latest");
         // Two hours, printed as an operator reads it rather than in millis.
         expect(result.output).toContain("lag 2h 0m");
+      });
+
+      it("marks the registry lane degraded when a Scope waited too long", async () => {
+        // The judgement was unreachable before: no Scope could be
+        // `pending_registry`, so the five-minute rule never fired. This is the
+        // whole rule working end to end — an unconsumed Publication produces the
+        // state, and the state produces the verdict.
+        await approveSolo();
+
+        const result = await runOperatorCommand(withFeed(newest), ["reachability"]);
+
+        expect(result.output).toContain("pending_registry over 5m");
+        expect(result.output).toContain("registry lane is degraded");
+        expect(result.output).toContain("scope_waiting@scpv_waiting");
       });
 
       it("says nothing about a Source that is current", async () => {

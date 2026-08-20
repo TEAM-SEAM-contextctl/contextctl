@@ -158,6 +158,19 @@ describe("stalePendingRegistryScopes", () => {
     expect(stalePendingRegistryScopes(report(others, past.toISOString()))).toEqual([]);
   });
 
+  it("dates a waiting Scope from when its Publication became ready", () => {
+    // The one state with no lifecycle event to date it from. `readySince` is what
+    // the judgement uses, and the standard measures the wait from the moment
+    // Ingestion made the Publication available — not from when Registry looked.
+    const past = new Date(Date.parse(TEN) + STALE_PENDING_REGISTRY_MS + 1_000);
+
+    expect(
+      stalePendingRegistryScopes(
+        report([scope({ stateSince: TEN })], past.toISOString()),
+      ),
+    ).toHaveLength(1);
+  });
+
   it("does not assume a Scope with no recorded time is stale", () => {
     // The timestamp comes from the audit trail, so its absence means nothing has
     // been recorded yet. Reporting a lane degraded on a missing value would be
