@@ -44,6 +44,16 @@ export const EXIT_CODES = {
    * the same place and a person has to decide which one the Source follows.
    */
   chainForked: 5,
+  /**
+   * An execution lane cannot do its work at all — `not_ready` in `status`.
+   *
+   * Distinct from every code above because it reports on the process rather than
+   * on a request: nothing was asked of Registry and nothing was refused. A
+   * `degraded` lane deliberately exits `ok`, since the Cards already approved
+   * keep serving and a monitor that alerted on a delay would alert on the normal
+   * state of a system that is catching up.
+   */
+  laneNotReady: 6,
 } as const;
 
 export type ExitCode = (typeof EXIT_CODES)[keyof typeof EXIT_CODES];

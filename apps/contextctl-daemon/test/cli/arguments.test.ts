@@ -223,6 +223,23 @@ describe("reachability", () => {
   });
 });
 
+describe("status", () => {
+  it("parses the report a person reads", () => {
+    expect(commandOf(["status"])).toEqual({ kind: "status", json: false });
+  });
+
+  it("parses the report a monitor reads", () => {
+    expect(commandOf(["status", "--json"])).toEqual({ kind: "status", json: true });
+  });
+
+  it("takes no positional argument", () => {
+    // No `status resolve`. A status surface exists to show what an operator did
+    // not think to ask about, so narrowing it to one lane would hide the
+    // `not_ready` somewhere else.
+    expect(statusOf(["status", "resolve"])).toBe("usage_error");
+  });
+});
+
 describe("query", () => {
   it("rejects a query with no question", () => {
     expect(statusOf(["query"])).toBe("usage_error");
