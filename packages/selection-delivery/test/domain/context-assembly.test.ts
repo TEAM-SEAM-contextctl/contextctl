@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { ContextBudgetInvariantError } from "../../src/domain/errors.js";
+import {
+  ContextBudgetInvariantError,
+  ManagedResolutionInvariantError,
+} from "../../src/domain/errors.js";
 import {
   assembleDocumentContext,
   RRF_RANK_CONSTANT,
@@ -169,24 +172,51 @@ describe("rrf-v1 fusion", () => {
     expect(evidence.omitted[0]?.reason).toBe("duplicate_chunk_revision");
   });
 
-  it("breaks a rank tie between two items on itemKey, not on input order", () => {
+  it("breaks a rank tie between two reads on targetKey, not on input order", () => {
     const forward = assembleDocumentContext(
-      [
-        candidate("rev_shared", 1, { itemKey: ITEM_B }),
-        candidate("rev_shared", 1, { itemKey: ITEM_A }),
-      ],
+      [candidate("rev_shared", 1, fromB()), candidate("rev_shared", 1)],
       roomy,
     );
     const reversed = assembleDocumentContext(
+      [candidate("rev_shared", 1), candidate("rev_shared", 1, fromB())],
+      roomy,
+    );
+
+    // SOT L1536: lowest rank, then `targetKey` ascending. TARGET_A < TARGET_B,
+    // so the copy from read A survives whichever was listed first.
+    expect(forward.chunks[0]?.targetKey).toBe(TARGET_A);
+    expect(reversed.chunks[0]?.targetKey).toBe(TARGET_A);
+  });
+
+  it("breaks a rank tie on targetKey even when itemKey would choose otherwise", () => {
+    const evidence = assembleDocumentContext(
       [
-        candidate("rev_shared", 1, { itemKey: ITEM_A }),
-        candidate("rev_shared", 1, { itemKey: ITEM_B }),
+        // Read A planned by the item whose key sorts *later*; read B by the one
+        // that sorts earlier. The tie-break used to be on `itemKey` and would
+        // have picked B. The read decides, not the item that planned it.
+        candidate("rev_shared", 1, { itemKey: ITEM_B, targetKey: TARGET_A }),
+        candidate("rev_shared", 1, { itemKey: ITEM_A, targetKey: TARGET_B }),
       ],
       roomy,
     );
 
-    expect(forward.chunks[0]?.itemKey).toBe(ITEM_A);
-    expect(reversed.chunks[0]?.itemKey).toBe(ITEM_A);
+    expect(evidence.chunks[0]?.targetKey).toBe(TARGET_A);
+    expect(evidence.chunks[0]?.itemKey).toBe(ITEM_B);
+    expect(evidence.omitted[0]?.chunk.itemKey).toBe(ITEM_A);
+  });
+
+  it("falls back to itemKey only for two items planned over one read", () => {
+    const evidence = assembleDocumentContext(
+      [
+        candidate("rev_shared", 1, { itemKey: ITEM_B, targetKey: TARGET_A }),
+        candidate("rev_shared", 1, { itemKey: ITEM_A, targetKey: TARGET_A }),
+      ],
+      roomy,
+    );
+
+    // Same read, same rank: the SOT's two keys tie, and the item is the only
+    // thing left to order on.
+    expect(evidence.chunks[0]?.itemKey).toBe(ITEM_A);
   });
 
   it("orders equal scores by ascending revision id", () => {
@@ -198,35 +228,34 @@ describe("rrf-v1 fusion", () => {
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_a", "rev_b"]);
   });
 
-  it("contributes nothing for a rank below one rather than clamping it", () => {
-    const evidence = assembleDocumentContext(
-      [candidate("rev_broken", 0), candidate("rev_last", 12)],
-      roomy,
-    );
-
-    // A zero rank breaks the 1-based contract, so it earns no score at all —
-    // guessing it meant first place would let a malformed answer win.
-    expect(evidence.chunks[0]?.chunkRevisionId).toBe("rev_last");
-    expect(evidence.chunks[1]?.score).toBe(0);
+  it("refuses a rank below one instead of scoring it zero", () => {
+    // A zero rank breaks the 1-based contract. It used to earn no score and
+    // travel anyway; SOT L1639 has the read that reported it fail instead, and
+    // `assembleContext` applies that per target before fusion. Here, with no
+    // application layer in front, the domain states the precondition itself.
+    expect(() =>
+      assembleDocumentContext(
+        [candidate("rev_broken", 0), candidate("rev_last", 12)],
+        roomy,
+      ),
+    ).toThrow(ManagedResolutionInvariantError);
   });
 
-  it("sinks a non-finite rank below every usable one without throwing", () => {
-    const evidence = assembleDocumentContext(
-      [
-        candidate("rev_nan", Number.NaN),
-        candidate("rev_ok", 40),
-        candidate("rev_inf", Number.POSITIVE_INFINITY),
-      ],
-      roomy,
-    );
+  it("refuses a non-finite rank instead of sinking it", () => {
+    for (const rank of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        assembleDocumentContext(
+          [candidate("rev_bad", rank), candidate("rev_ok", 40)],
+          roomy,
+        ),
+      ).toThrow(ManagedResolutionInvariantError);
+    }
+  });
 
-    expect(revisionsOf(evidence.chunks)[0]).toBe("rev_ok");
-    // The two unusable ones score zero and are then ordered by revision id.
-    expect(revisionsOf(evidence.chunks)).toEqual([
-      "rev_ok",
-      "rev_inf",
-      "rev_nan",
-    ]);
+  it("refuses a fractional rank", () => {
+    expect(() =>
+      assembleDocumentContext([candidate("rev_half", 1.5)], roomy),
+    ).toThrow(ManagedResolutionInvariantError);
   });
 });
 

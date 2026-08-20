@@ -1,5 +1,8 @@
 import type { ApprovedScopeReference } from "./card-catalog.js";
-import { ContextBudgetInvariantError } from "./errors.js";
+import {
+  ContextBudgetInvariantError,
+  ManagedResolutionInvariantError,
+} from "./errors.js";
 
 /** Identifies the assembly rules an evidence record was produced under. */
 export const CONTEXT_ASSEMBLY_POLICY_VERSION = "context-assembly-v2" as const;
@@ -323,7 +326,11 @@ function groupBy<T>(
  * The surviving occurrence is the one whose target ranked it best, so the
  * chunk is attributed to the item that found it most relevant rather than to
  * whichever target happened to be executed first. A tie on rank falls back to
- * `itemKey`, which is a digest and therefore stable across machines and runs.
+ * `targetKey` ascending — the rule SOT L1536 states ("가장 낮은 순위, 그다음
+ * `targetKey` 오름차순") — and only then to `itemKey`, for the one case the SOT
+ * leaves open: two items planned over the same read, which share a `targetKey`
+ * and can only be told apart by the item. All three keys are digests, so the
+ * order is the same on every machine and every run.
  *
  * The other occurrences become `duplicate_chunk_revision` omissions on their
  * own items. They are recorded rather than discarded because an item that
@@ -372,17 +379,22 @@ function fuseByChunkRevision(
 }
 
 /**
- * `1 / (60 + rank)`, and 0 for a rank that is not a usable position.
+ * `1 / (60 + rank)`, for a rank that is a usable position.
  *
- * A non-finite or non-positive rank contributes nothing rather than being
- * clamped to first place: an executor that reported one has broken the 1-based
- * contract, and guessing what it meant would let a malformed answer outrank a
- * well-formed one. The occurrence still travels — it may be the only copy of a
- * chunk, and evidence a consumer can read is worth more than an aborted answer.
+ * A rank that is not a positive integer is refused, not scored. It used to
+ * contribute zero and travel anyway, on the theory that a readable chunk beats
+ * an aborted answer; but a rank outside `1..N` means the executor broke the
+ * 1-based contract for that whole read, and SOT L1639 has that read fail as
+ * `resolution_outcome_invalid` rather than sink. `assembleContext` applies that
+ * rule per target before anything reaches here, so in the pipeline this branch
+ * is unreachable — it stays as the statement of a precondition this function
+ * will not quietly work around if some other caller forgets it.
  */
 function reciprocalRank(rank: number): number {
-  if (!Number.isFinite(rank) || rank < 1) {
-    return 0;
+  if (!Number.isSafeInteger(rank) || rank < 1) {
+    throw new ManagedResolutionInvariantError(
+      `rank ${rank} is not a 1-based position; a read that reports one is not assembled`,
+    );
   }
   return 1 / (RRF_RANK_CONSTANT + rank);
 }
@@ -459,24 +471,27 @@ function applyBudget(
   return admitted;
 }
 
-/** Best rank first, then `itemKey` ascending. Decides which copy survives. */
+/**
+ * Best rank first, then `targetKey` ascending, then `itemKey` ascending.
+ * Decides which copy of a revision survives and which item cites it.
+ *
+ * `targetKey` before `itemKey` because the SOT says so (L1536) and because it
+ * is the key that names the read: a tie between two reads is broken by the
+ * reads' identities, not by the identities of whichever items happened to plan
+ * them. Ranks are known to be positive integers by the time this runs — see
+ * `reciprocalRank` — so the subtraction cannot hand the comparator a NaN.
+ */
 function compareOccurrences(
   left: ContextCandidate,
   right: ContextCandidate,
 ): number {
-  const leftUsable = Number.isFinite(left.rank) && left.rank >= 1;
-  const rightUsable = Number.isFinite(right.rank) && right.rank >= 1;
-
-  // An unusable rank sinks below every usable one. Subtracting a NaN would hand
-  // the comparator a NaN, and a comparator that returns NaN makes the whole
-  // ordering unspecified.
-  if (leftUsable !== rightUsable) {
-    return leftUsable ? -1 : 1;
-  }
-  if (leftUsable && left.rank !== right.rank) {
+  if (left.rank !== right.rank) {
     return left.rank - right.rank;
   }
-  return compareText(left.itemKey, right.itemKey);
+  return (
+    compareText(left.targetKey, right.targetKey) ||
+    compareText(left.itemKey, right.itemKey)
+  );
 }
 
 /**
