@@ -41,6 +41,8 @@ export {
   stalePendingRegistryScopes,
   STALE_PENDING_REGISTRY_MS,
   type SourceConsumptionSighting,
+  type SourceCheckpoint,
+  type SourceFreshnessLag,
   type SourceProcessingLag,
 } from "./domain/processing-lag.js";
 export {

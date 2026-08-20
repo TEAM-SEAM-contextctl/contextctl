@@ -109,6 +109,7 @@ function report(scopes: readonly ScopeReachability[], generatedAt: string): Reac
   return {
     generatedAt,
     sourceCheckpoints: [],
+    sourceFreshnessLags: [],
     counts: {
       pending_registry: scopes.filter((each) => each.state === "pending_registry").length,
       broken: 0,

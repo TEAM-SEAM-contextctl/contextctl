@@ -238,19 +238,26 @@ function formatSummary(report: ReachabilityReport): string {
  * summary above states the total, so silence here is not ambiguous.
  */
 function formatProcessingDelay(report: ReachabilityReport): readonly string[] {
-  const behind = report.sourceCheckpoints.filter((source) => source.behind);
+  const behind = report.sourceFreshnessLags.filter((source) => source.behind);
   const stale = stalePendingRegistryScopes(report);
   if (behind.length === 0 && stale.length === 0) {
     return [];
   }
 
+  // Position and delay are two readings of the same Source, joined here by id
+  // rather than in the model: what an operator reads is one line per Source, and
+  // what the report publishes is two arrays the design keeps apart.
+  const positions = new Map(
+    report.sourceCheckpoints.map((checkpoint) => [checkpoint.sourceId, checkpoint]),
+  );
   const lines = behind.map((source) => {
     const lag =
       source.freshnessLagMs === undefined
         ? "lag unknown"
         : `lag ${formatDuration(source.freshnessLagMs)}`;
-    const processed = source.processedPublicationId ?? "nothing consumed";
-    return `  ${source.sourceId}: ${processed} -> ${source.latestReadyPublicationId ?? "?"} (${lag})`;
+    const position = positions.get(source.sourceId);
+    const processed = position?.processedPublicationId ?? "nothing consumed";
+    return `  ${source.sourceId}: ${processed} -> ${position?.latestReadyPublicationId ?? "?"} (${lag})`;
   });
 
   return [
