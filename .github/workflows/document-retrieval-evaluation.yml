@@ -3,23 +3,63 @@ name: Document Retrieval Hosted Evaluation
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - ".github/workflows/document-retrieval-evaluation.yml"
-      - "apps/contextctl-daemon/src/cli/asset-installation.ts"
-      - "apps/contextctl-daemon/src/cli/asset-directory.ts"
-      - "packages/ingestion-indexing/src/infrastructure/local-embedding-asset-installation.ts"
-      - "packages/ingestion-indexing/src/infrastructure/transformers-js-local-embedding-adapter.ts"
-      - "packages/ingestion-indexing/test/document-retrieval-eval.test.ts"
-      - "packages/ingestion-indexing/test/fixtures/document-retrieval-eval.ts"
-      - "packages/ingestion-indexing/test/fixtures/document-retrieval-eval-v1/**"
-      - "package-lock.json"
-      - "package.json"
 
 permissions:
   contents: read
 
 jobs:
-  document-retrieval-hosted-evaluation:
+  change_detection:
+    name: document-retrieval-change-detection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.scope.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Decide whether hosted evaluation is required
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "relevant=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          set +e
+          git diff --quiet "${BASE_SHA}" "${HEAD_SHA}" -- \
+            .github/workflows/document-retrieval-evaluation.yml \
+            .nvmrc \
+            package.json \
+            package-lock.json \
+            scripts/run-external-test.mjs \
+            apps/contextctl-daemon/package.json \
+            apps/contextctl-daemon/bin/contextctl.mjs \
+            apps/contextctl-daemon/scripts/install-embedding-assets.mjs \
+            apps/contextctl-daemon/src/cli/asset-directory.ts \
+            apps/contextctl-daemon/src/cli/asset-installation.ts \
+            packages/ingestion-indexing/package.json \
+            packages/ingestion-indexing/src \
+            packages/ingestion-indexing/test/document-retrieval-eval.test.ts \
+            packages/ingestion-indexing/test/fixtures/document-retrieval-eval.ts \
+            packages/ingestion-indexing/test/fixtures/document-retrieval-eval-v1
+          status=$?
+          set -e
+
+          case "${status}" in
+            0) echo "relevant=false" >> "${GITHUB_OUTPUT}" ;;
+            1) echo "relevant=true" >> "${GITHUB_OUTPUT}" ;;
+            *) echo "Unable to determine document retrieval changes" >&2; exit "${status}" ;;
+          esac
+
+  hosted_evaluation:
+    name: document-retrieval-hosted-evaluation
+    needs: change_detection
+    if: ${{ needs.change_detection.outputs.relevant == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -67,3 +107,35 @@ jobs:
           path: ${{ runner.temp }}/document-retrieval-eval.json
           if-no-files-found: error
           retention-days: 30
+
+  required_gate:
+    name: document-retrieval-gate
+    needs:
+      - change_detection
+      - hosted_evaluation
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require evaluation when retrieval inputs changed
+        env:
+          CHANGE_DETECTION_RESULT: ${{ needs.change_detection.result }}
+          EVALUATION_REQUIRED: ${{ needs.change_detection.outputs.relevant }}
+          EVALUATION_RESULT: ${{ needs.hosted_evaluation.result }}
+        run: |
+          if [[ "${CHANGE_DETECTION_RESULT}" != "success" ]]; then
+            echo "Document retrieval change detection did not succeed." >&2
+            exit 1
+          fi
+
+          if [[ "${EVALUATION_REQUIRED}" == "true" && "${EVALUATION_RESULT}" != "success" ]]; then
+            echo "Document retrieval inputs changed, but hosted evaluation did not succeed." >&2
+            exit 1
+          fi
+
+          if [[ "${EVALUATION_REQUIRED}" == "false" && "${EVALUATION_RESULT}" != "skipped" ]]; then
+            echo "Hosted evaluation ran unexpectedly for an unrelated change." >&2
+            exit 1
+          fi
+
+          echo "Document retrieval gate passed (required=${EVALUATION_REQUIRED}, result=${EVALUATION_RESULT})."
