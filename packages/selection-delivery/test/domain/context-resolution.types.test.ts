@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type {
   ContextResolutionItem,
+  ManagedFulfillmentFailure,
   RetrievedDocumentChunk,
   RetrievedDocumentContext,
 } from "../../src/domain/context-resolution.js";
-import type { ManagedResolutionFailure } from "../../src/domain/managed-resolution.js";
 import type {
   HttpRetrievalGuide,
   ManagedDocumentGuide,
@@ -69,7 +69,7 @@ function httpGuide(): HttpRetrievalGuide {
   };
 }
 
-function failure(): ManagedResolutionFailure {
+function failure(): ManagedFulfillmentFailure {
   return {
     stage: "managed_search",
     code: "index_binding_unavailable",
@@ -250,7 +250,7 @@ describe("ContextResolutionItem rejects impossible combinations at compile time"
     expect(item.fulfillment.status).toBe("failed");
   });
 
-  it("refuses a stage outside the two that exist", () => {
+  it("refuses a stage outside the three that exist", () => {
     const item: ContextResolutionItem = {
       selectedBy: selectedBy(),
       guide: documentGuide(),
@@ -258,11 +258,104 @@ describe("ContextResolutionItem rejects impossible combinations at compile time"
         status: "failed",
         executor: "contextctl",
         failure: {
-          // @ts-expect-error nothing between selection and assembly can fail in
-          // a third way, and inventing a stage would invent a pipeline step.
+          // @ts-expect-error a read fails in the search, at the deadline or in
+          // assembly; inventing a fourth stage would invent a pipeline step.
           stage: "selection",
           code: "index_binding_unavailable",
           retriable: true,
+        },
+      },
+    };
+
+    expect(item.fulfillment.status).toBe("failed");
+  });
+
+  it("accepts an assembly failure under the one code assembly owns", () => {
+    const item: ContextResolutionItem = {
+      selectedBy: selectedBy(),
+      guide: documentGuide(),
+      fulfillment: {
+        status: "failed",
+        executor: "contextctl",
+        failure: {
+          stage: "assembly",
+          code: "resolution_outcome_invalid",
+          retriable: false,
+        },
+      },
+    };
+
+    expect(item.fulfillment.status).toBe("failed");
+  });
+
+  it("refuses an assembly failure under an executor's code", () => {
+    const item: ContextResolutionItem = {
+      selectedBy: selectedBy(),
+      guide: documentGuide(),
+      fulfillment: {
+        status: "failed",
+        executor: "contextctl",
+        // @ts-expect-error assembly reports one thing — the answer does not
+        // hold together — and may not borrow a search's vocabulary to say it.
+        failure: {
+          stage: "assembly",
+          code: "index_binding_unavailable",
+          retriable: false,
+        },
+      },
+    };
+
+    expect(item.fulfillment.status).toBe("failed");
+  });
+
+  it("refuses a retriable assembly failure", () => {
+    const item: ContextResolutionItem = {
+      selectedBy: selectedBy(),
+      guide: documentGuide(),
+      fulfillment: {
+        status: "failed",
+        executor: "contextctl",
+        // @ts-expect-error retrying does not change what was already answered.
+        failure: {
+          stage: "assembly",
+          code: "resolution_outcome_invalid",
+          retriable: true,
+        },
+      },
+    };
+
+    expect(item.fulfillment.status).toBe("failed");
+  });
+
+  it("refuses a deadline under any code but deadline_exceeded", () => {
+    const item: ContextResolutionItem = {
+      selectedBy: selectedBy(),
+      guide: documentGuide(),
+      fulfillment: {
+        status: "failed",
+        executor: "contextctl",
+        // @ts-expect-error a deadline is one fact with one name; a search code
+        // on it would claim the search answered when it never did.
+        failure: { stage: "deadline", code: "cancelled", retriable: true },
+      },
+    };
+
+    expect(item.fulfillment.status).toBe("failed");
+  });
+
+  it("refuses a deadline that is not retriable", () => {
+    const item: ContextResolutionItem = {
+      selectedBy: selectedBy(),
+      guide: documentGuide(),
+      fulfillment: {
+        status: "failed",
+        executor: "contextctl",
+        // @ts-expect-error a target that merely ran out of time is always
+        // worth asking again.
+        failure: {
+          stage: "deadline",
+          code: "deadline_exceeded",
+          retriable: false,
         },
       },
     };
