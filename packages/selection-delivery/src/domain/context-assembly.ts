@@ -38,6 +38,14 @@ export const RRF_RANK_CONSTANT = 60;
 export interface ContextCandidate {
   /** The planned item this occurrence was retrieved for. */
   readonly itemKey: string;
+  /**
+   * The read this occurrence came out of. Several items can share one read —
+   * two Cards that authorise the same Scope under the same bound — so this is
+   * not derivable from `itemKey`, and it is the unit a conflict is charged to:
+   * when two reads disagree about a chunk, it is the reads that are not
+   * trusted, not the items that happened to plan them.
+   */
+  readonly targetKey: string;
   readonly scopeRef: ApprovedScopeReference;
   readonly rank: number;
   readonly chunkId: string;
@@ -127,6 +135,16 @@ export interface OmittedChunk {
 export interface AssembledContext {
   readonly chunks: readonly ContextChunk[];
   readonly omitted: readonly OmittedChunk[];
+  /**
+   * The reads whose answers contradicted one another and were set aside whole.
+   *
+   * Not omissions. An omission is a chunk that lost fairly — to a better-ranked
+   * copy, to a repeat, to the budget — and the item that lost it still stands.
+   * A conflicted target has no standing at all: none of its chunks entered
+   * fusion, and the item it was planned for reports a failure rather than a
+   * context. Sorted, so two runs name the same set in the same order.
+   */
+  readonly failedTargetKeys: readonly string[];
 }
 
 /** Projects an attributed omission into the record a consumer receives. */
@@ -139,12 +157,24 @@ export function toContextOmission(omitted: OmittedChunk): ContextOmission {
 }
 
 /**
- * Fuses per-target ranks into one order, drops repeats, and cuts to the budget.
+ * Quarantines contradicting reads, fuses per-target ranks into one order,
+ * drops repeats, and cuts to the budget.
  *
- * The four steps run in a fixed order and each one is deterministic, so the
- * same candidates and the same budget always produce the same evidence.
+ * The steps run in a fixed order and each one is deterministic, so the same
+ * candidates and the same budget always produce the same evidence.
  *
- * Fusion comes first because the other three depend on a single order existing.
+ * Quarantine comes before everything (SOT L1534, L1639). Two reads that return
+ * the same `chunkRevisionId` are describing one immutable chunk, so they have
+ * to agree about it — its identifiers, its text, its digest. When they do not,
+ * at least one of them is wrong and nothing in this domain can tell which, so
+ * neither is trusted: every read that took part in the contradiction is set
+ * aside whole, and fusion runs over what is left as if those reads had never
+ * answered. A chunk the sound reads also returned therefore keeps only the
+ * sound reads' reciprocals. Scoring first and quarantining after would let a
+ * corrupted read's rank leak into the order of chunks it never legitimately
+ * placed.
+ *
+ * Fusion comes next because the other two depend on a single order existing.
  * Each target answers with its own 1-based ranking and nothing else — a
  * provider's similarity is not comparable across indexes, profiles or model
  * versions, so there is no shared scale to sort on. `rrf-v1` builds one:
@@ -169,14 +199,122 @@ export function assembleDocumentContext(
 ): AssembledContext {
   assertUsableBudget(budget);
 
+  const { sound, failedTargetKeys } = quarantineConflicts(candidates);
   const omitted: OmittedChunk[] = [];
   // The caller's array is never reordered: fusion is an observation, not a
   // mutation of the input.
-  const fused = fuseByChunkRevision(candidates, omitted).sort(compareChunks);
+  const fused = fuseByChunkRevision(sound, omitted).sort(compareChunks);
   const distinct = dropRepeatedContent(fused, omitted);
   const admitted = applyBudget(distinct, budget, omitted);
 
-  return { chunks: admitted, omitted };
+  return { chunks: admitted, omitted, failedTargetKeys };
+}
+
+/**
+ * Sets aside every read that took part in a contradiction, and repeats until
+ * the reads that remain agree with one another.
+ *
+ * Two contradictions are looked for, both from SOT L1639. Occurrences of one
+ * `chunkRevisionId` must carry the same `chunkId`, `documentId`,
+ * `semanticUnitId`, `text` and `contentDigest` — a revision is immutable, so two
+ * descriptions of it that differ cannot both be descriptions of it. And
+ * occurrences of one `contentDigest` must carry the same `text` — a digest
+ * names exactly one byte sequence, so two texts under it mean one of them is
+ * not what the digest says it is. In either case "어느 사본도 신뢰하지 않는다":
+ * every target that contributed to the disagreement is failed, not just the
+ * one that looks wrong, because which one looks wrong depends on which one was
+ * read first.
+ *
+ * The loop exists so that the set being judged is always the set that will be
+ * fused. Removing the reads that contradict each other never introduces a new
+ * contradiction — it only removes occurrences — so the loop terminates, and in
+ * practice it runs once; it is written as a loop rather than a pass so the
+ * property "the survivors agree" is established by construction and not by an
+ * argument about ordering.
+ */
+function quarantineConflicts(candidates: readonly ContextCandidate[]): {
+  readonly sound: readonly ContextCandidate[];
+  readonly failedTargetKeys: readonly string[];
+} {
+  const failed = new Set<string>();
+  let remaining = candidates;
+
+  for (;;) {
+    const conflicting = findConflictingTargets(remaining);
+    if (conflicting.size === 0) {
+      break;
+    }
+    for (const targetKey of conflicting) {
+      failed.add(targetKey);
+    }
+    remaining = remaining.filter((candidate) => !failed.has(candidate.targetKey));
+  }
+
+  return {
+    sound: remaining,
+    failedTargetKeys: [...failed].sort(compareText),
+  };
+}
+
+/** Every target with an occurrence that contradicts another occurrence. */
+function findConflictingTargets(
+  candidates: readonly ContextCandidate[],
+): ReadonlySet<string> {
+  const conflicting = new Set<string>();
+
+  const byRevision = groupBy(candidates, (candidate) => candidate.chunkRevisionId);
+  for (const group of byRevision.values()) {
+    if (!group.every((occurrence) => describesSameRevision(occurrence, group[0]))) {
+      for (const occurrence of group) {
+        conflicting.add(occurrence.targetKey);
+      }
+    }
+  }
+
+  const byDigest = groupBy(candidates, (candidate) => candidate.contentDigest);
+  for (const group of byDigest.values()) {
+    if (!group.every((occurrence) => occurrence.text === group[0]?.text)) {
+      for (const occurrence of group) {
+        conflicting.add(occurrence.targetKey);
+      }
+    }
+  }
+
+  return conflicting;
+}
+
+/** The five fields two descriptions of one immutable revision have to share. */
+function describesSameRevision(
+  left: ContextCandidate,
+  right: ContextCandidate | undefined,
+): boolean {
+  return (
+    right !== undefined &&
+    left.chunkId === right.chunkId &&
+    left.documentId === right.documentId &&
+    left.semanticUnitId === right.semanticUnitId &&
+    left.text === right.text &&
+    left.contentDigest === right.contentDigest
+  );
+}
+
+function groupBy<T>(
+  values: readonly T[],
+  keyOf: (value: T) => string,
+): ReadonlyMap<string, readonly T[]> {
+  const grouped = new Map<string, T[]>();
+
+  for (const value of values) {
+    const key = keyOf(value);
+    const bucket = grouped.get(key);
+    if (bucket === undefined) {
+      grouped.set(key, [value]);
+    } else {
+      bucket.push(value);
+    }
+  }
+
+  return grouped;
 }
 
 /**

@@ -717,6 +717,114 @@ describe("assembleContext", () => {
     });
   });
 
+  describe("fails the reads that contradict one another and keeps the rest", () => {
+    it("fails both items when two reads disagree about one chunk revision", async () => {
+      const plan = await planFor([
+        ...createDemoCardSet(),
+        secondDocumentCard(),
+      ]);
+      const [first, second] = plan.managedTargets;
+      if (first === undefined || second === undefined) {
+        throw new Error("expected two managed targets");
+      }
+      const resolution = assembleContext(plan, [
+        { targetKey: first.targetKey, status: "fulfilled", chunks: chunksWithRanks() },
+        {
+          targetKey: second.targetKey,
+          status: "fulfilled",
+          chunks: chunksWithRanks().map((chunk, index) =>
+            index === 0 ? { ...chunk, text: `${chunk.text} — but reworded` } : chunk,
+          ),
+        },
+      ]);
+
+      const managed = resolution.items.filter(
+        (item) => item.guide.kind === "managed_document",
+      );
+      const delegated = resolution.items.filter(
+        (item) => item.guide.kind !== "managed_document",
+      );
+      expect(managed).toHaveLength(2);
+      for (const item of managed) {
+        expect(item.fulfillment).toEqual({
+          status: "failed",
+          executor: "contextctl",
+          failure: ASSEMBLY_FAILURE,
+        });
+      }
+      // The SQL and HTTP items never touched the contradiction.
+      expect(delegated).toHaveLength(2);
+      expect(delegated.every((item) => item.fulfillment.status === "delegated")).toBe(
+        true,
+      );
+    });
+
+    it("keeps a third read that agreed with nobody's contradiction", async () => {
+      const third: ApprovedCard = {
+        ...secondDocumentCard(),
+        cardId: "card_third_document",
+        versionId: "cardv_third_document",
+        scopes: secondDocumentCard().scopes.map((scope) =>
+          scope.kind === "managed_document"
+            ? {
+                ...scope,
+                reference: { scopeId: "scope_third_document", scopeVersion: "scopev_0001" },
+              }
+            : scope,
+        ),
+      };
+      const plan = await planFor([createRefundPolicyCard(), secondDocumentCard(), third]);
+      const targetFor = (scopeId: string): string => {
+        const target = plan.managedTargets.find((candidate) => candidate.scopeRef.scopeId === scopeId);
+        if (target === undefined) {
+          throw new Error(`no target for ${scopeId}`);
+        }
+        return target.targetKey;
+      };
+      const resolution = assembleContext(plan, [
+        {
+          targetKey: targetFor("scope_refund_policy_doc"),
+          status: "fulfilled",
+          chunks: chunksWithRanks(),
+        },
+        {
+          targetKey: targetFor("scope_second_document"),
+          status: "fulfilled",
+          chunks: chunksWithRanks().map((chunk, index) =>
+            index === 0 ? { ...chunk, contentDigest: "digest_forged" } : chunk,
+          ),
+        },
+        {
+          targetKey: targetFor("scope_third_document"),
+          status: "fulfilled",
+          chunks: chunksWithRanks().map((chunk) => ({
+            ...chunk,
+            chunkId: `${chunk.chunkId}_third`,
+            chunkRevisionId: `${chunk.chunkRevisionId}_third`,
+            contentDigest: `${chunk.contentDigest}_third`,
+          })),
+        },
+      ]);
+
+      const statuses = new Map(
+        resolution.items.map((item) => [item.guide.scopeRef.scopeId, item.fulfillment.status]),
+      );
+      expect(statuses.get("scope_refund_policy_doc")).toBe("failed");
+      expect(statuses.get("scope_second_document")).toBe("failed");
+      expect(statuses.get("scope_third_document")).toBe("fulfilled");
+
+      const survivor = itemFor(resolution.items, "scope_third_document");
+      if (survivor.fulfillment.status !== "fulfilled") {
+        throw new Error("expected the third item to be fulfilled");
+      }
+      // Numbered 1..3 over the whole response: the failed reads contributed no
+      // chunk to the order, so nothing of theirs occupies a rank.
+      expect(survivor.fulfillment.context.chunks.map((chunk) => chunk.contextRank)).toEqual([
+        1, 2, 3,
+      ]);
+    });
+  });
+
   describe("projects the executor's failure into the consumer's", () => {
     it("reports a deadline under the one code and flag the SOT fixes", async () => {
       const plan = await planFor([createRefundPolicyCard()]);

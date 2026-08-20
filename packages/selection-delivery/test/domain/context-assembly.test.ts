@@ -15,6 +15,15 @@ import {
 /** The item every candidate belongs to unless a test says otherwise. */
 const ITEM_A = "sha256:aaaa";
 const ITEM_B = "sha256:bbbb";
+/** The read every candidate came out of unless a test says otherwise. */
+const TARGET_A = "sha256:tttt_a";
+const TARGET_B = "sha256:tttt_b";
+const TARGET_C = "sha256:tttt_c";
+
+/** One occurrence from a second read, for tests about two reads disagreeing. */
+function fromB(overrides: Partial<ContextCandidate> = {}): Partial<ContextCandidate> {
+  return { itemKey: ITEM_B, targetKey: TARGET_B, ...overrides };
+}
 
 /**
  * Builds one candidate with distinct identity by default, so a test only states
@@ -28,6 +37,7 @@ function candidate(
 ): ContextCandidate {
   return {
     itemKey: ITEM_A,
+    targetKey: TARGET_A,
     scopeRef: {
       scopeId: "scope_refund_policy_doc",
       scopeVersion: "scopev_0001",
@@ -104,8 +114,8 @@ describe("rrf-v1 fusion", () => {
   it("sums the reciprocals of every target that returned one chunk", () => {
     const evidence = assembleDocumentContext(
       [
-        candidate("rev_shared", 3, { itemKey: ITEM_A }),
-        candidate("rev_shared", 4, { itemKey: ITEM_B }),
+        candidate("rev_shared", 3),
+        candidate("rev_shared", 4, fromB()),
       ],
       roomy,
     );
@@ -117,9 +127,9 @@ describe("rrf-v1 fusion", () => {
   it("ranks agreement between two targets above one target's first place", () => {
     const evidence = assembleDocumentContext(
       [
-        candidate("rev_alone", 1, { itemKey: ITEM_A }),
-        candidate("rev_shared", 2, { itemKey: ITEM_A }),
-        candidate("rev_shared", 2, { itemKey: ITEM_B }),
+        candidate("rev_alone", 1),
+        candidate("rev_shared", 2),
+        candidate("rev_shared", 2, fromB()),
       ],
       roomy,
     );
@@ -133,8 +143,8 @@ describe("rrf-v1 fusion", () => {
   it("attributes a fused chunk to the item whose target ranked it best", () => {
     const evidence = assembleDocumentContext(
       [
-        candidate("rev_shared", 5, { itemKey: ITEM_A }),
-        candidate("rev_shared", 2, { itemKey: ITEM_B }),
+        candidate("rev_shared", 5),
+        candidate("rev_shared", 2, fromB()),
       ],
       roomy,
     );
@@ -148,8 +158,8 @@ describe("rrf-v1 fusion", () => {
   it("records the losing occurrence against its own item, not the winner's", () => {
     const evidence = assembleDocumentContext(
       [
-        candidate("rev_shared", 5, { itemKey: ITEM_A }),
-        candidate("rev_shared", 2, { itemKey: ITEM_B }),
+        candidate("rev_shared", 5),
+        candidate("rev_shared", 2, fromB()),
       ],
       roomy,
     );
@@ -217,6 +227,158 @@ describe("rrf-v1 fusion", () => {
       "rev_inf",
       "rev_nan",
     ]);
+  });
+});
+
+describe("cross-target integrity", () => {
+  it("fails every read that disagrees about one chunk revision", () => {
+    const evidence = assembleDocumentContext(
+      [
+        candidate("rev_x", 1, { text: "one wording" }),
+        candidate("rev_x", 1, fromB({ text: "another wording" })),
+      ],
+      roomy,
+    );
+
+    // A revision is immutable, so two descriptions of it that differ cannot
+    // both be right — and nothing here can tell which is wrong. Neither copy
+    // is trusted and neither read is.
+    expect(evidence.failedTargetKeys).toEqual([TARGET_A, TARGET_B].sort());
+    expect(evidence.chunks).toEqual([]);
+    expect(evidence.omitted).toEqual([]);
+  });
+
+  it.each([
+    ["chunkId", { chunkId: "chunk_other" }],
+    ["documentId", { documentId: "doc_other" }],
+    ["semanticUnitId", { semanticUnitId: "unit_other" }],
+    ["contentDigest", { contentDigest: "digest_other" }],
+  ] as const)("treats a differing %s as a contradiction", (_field, difference) => {
+    const evidence = assembleDocumentContext(
+      [candidate("rev_x", 1), candidate("rev_x", 2, fromB(difference))],
+      roomy,
+    );
+
+    expect(evidence.failedTargetKeys).toHaveLength(2);
+    expect(evidence.chunks).toEqual([]);
+  });
+
+  it("keeps a read that the contradiction did not touch", () => {
+    const evidence = assembleDocumentContext(
+      [
+        candidate("rev_x", 1, { text: "one wording" }),
+        candidate("rev_x", 1, fromB({ text: "another wording" })),
+        candidate("rev_y", 1, { itemKey: "sha256:cccc", targetKey: TARGET_C }),
+      ],
+      roomy,
+    );
+
+    // One item failing must not cost the answer: the read that only returned
+    // `rev_y` said nothing contradictory and its evidence stands.
+    expect(evidence.failedTargetKeys).toEqual([TARGET_A, TARGET_B].sort());
+    expect(revisionsOf(evidence.chunks)).toEqual(["rev_y"]);
+    expect(evidence.chunks[0]?.targetKey).toBe(TARGET_C);
+  });
+
+  it("recomputes fusion without the reciprocals of a failed read", () => {
+    const evidence = assembleDocumentContext(
+      [
+        // Target A placed the shared chunk first — and also contradicts B.
+        candidate("rev_shared", 1),
+        candidate("rev_x", 2, { text: "one wording" }),
+        candidate("rev_x", 1, fromB({ text: "another wording" })),
+        // Target C placed the shared chunk third and contradicts nobody.
+        candidate("rev_shared", 3, { itemKey: "sha256:cccc", targetKey: TARGET_C }),
+      ],
+      roomy,
+    );
+
+    // Had A's first place leaked into the fusion, `rev_shared` would score
+    // 1/61 + 1/63. It scores 1/63: the ranking is recomputed over the sound
+    // reads alone, as if A had never answered (SOT L1534).
+    expect(revisionsOf(evidence.chunks)).toEqual(["rev_shared"]);
+    expect(evidence.chunks[0]?.score).toBe(reciprocal(3));
+    expect(evidence.chunks[0]?.targetKey).toBe(TARGET_C);
+    expect(evidence.chunks[0]?.rank).toBe(3);
+    // No `duplicate_chunk_revision` for A's copy either: a read that was set
+    // aside did not lose a chunk, it never entered.
+    expect(evidence.omitted).toEqual([]);
+  });
+
+  it("fails every read whose chunks share a digest but not a text", () => {
+    const evidence = assembleDocumentContext(
+      [
+        candidate("rev_a", 1, { contentDigest: "digest_shared", text: "alpha" }),
+        candidate("rev_b", 1, fromB({ contentDigest: "digest_shared", text: "beta" })),
+      ],
+      roomy,
+    );
+
+    // A digest names one byte sequence. Two texts under it mean one of them is
+    // not what the digest says it is, and that is a contradiction, not a
+    // repeat to deduplicate.
+    expect(evidence.failedTargetKeys).toEqual([TARGET_A, TARGET_B].sort());
+    expect(evidence.chunks).toEqual([]);
+  });
+
+  it("still deduplicates a repeated digest whose texts agree", () => {
+    const evidence = assembleDocumentContext(
+      [
+        candidate("rev_a", 1, { contentDigest: "digest_shared", text: "same" }),
+        candidate("rev_b", 1, fromB({ contentDigest: "digest_shared", text: "same" })),
+      ],
+      roomy,
+    );
+
+    expect(evidence.failedTargetKeys).toEqual([]);
+    expect(revisionsOf(evidence.chunks)).toEqual(["rev_a"]);
+    expect(omissionsOf(evidence).map((omission) => omission.reason)).toEqual([
+      "duplicate_content",
+    ]);
+  });
+
+  it("does not treat identical copies of one revision as a contradiction", () => {
+    const evidence = assembleDocumentContext(
+      [candidate("rev_shared", 2), candidate("rev_shared", 5, fromB())],
+      roomy,
+    );
+
+    expect(evidence.failedTargetKeys).toEqual([]);
+    expect(evidence.chunks).toHaveLength(1);
+  });
+
+  it("fails a read whose own chunks repeat a digest with different texts", () => {
+    const evidence = assembleDocumentContext(
+      [
+        candidate("rev_a", 1, { contentDigest: "digest_shared", text: "alpha" }),
+        candidate("rev_b", 2, { contentDigest: "digest_shared", text: "beta" }),
+      ],
+      roomy,
+    );
+
+    // Same rule within one read: the contradiction is in the data, and which
+    // target produced it does not change what can be trusted.
+    expect(evidence.failedTargetKeys).toEqual([TARGET_A]);
+    expect(evidence.chunks).toEqual([]);
+  });
+
+  it("names the failed reads in one order regardless of input order", () => {
+    const forward = assembleDocumentContext(
+      [
+        candidate("rev_x", 1, { text: "a" }),
+        candidate("rev_x", 1, fromB({ text: "b" })),
+      ],
+      roomy,
+    );
+    const reversed = assembleDocumentContext(
+      [
+        candidate("rev_x", 1, fromB({ text: "b" })),
+        candidate("rev_x", 1, { text: "a" }),
+      ],
+      roomy,
+    );
+
+    expect(forward.failedTargetKeys).toEqual(reversed.failedTargetKeys);
   });
 });
 
@@ -397,6 +559,7 @@ describe("assembleDocumentContext", () => {
 
     expect(evidence.chunks).toEqual([]);
     expect(evidence.omitted).toEqual([]);
+    expect(evidence.failedTargetKeys).toEqual([]);
     expect(truncatedOf(evidence)).toBe(false);
   });
 
