@@ -74,8 +74,12 @@ process.stdout.write(
     modelReadyRssDeltaMiB: Math.max(0, readyRssMiB - processStartRssMiB),
     modelLoadPeakRssMiB,
     batchEndRssMiB,
-    peakRssMiB: batchPeakRssMiB,
-    batchRssDeltaMiB: Math.max(0, batchPeakRssMiB - readyRssMiB),
+    observedBatchPeakRssMiB: batchPeakRssMiB,
+    peakRssMiB: lifetimePeakAfterBatchRssMiB,
+    batchRssDeltaMiB: Math.max(
+      0,
+      lifetimePeakAfterBatchRssMiB - modelLoadPeakRssMiB,
+    ),
     lifetimePeakRssMiB: lifetimePeakAfterBatchRssMiB,
   })}\n`,
 );

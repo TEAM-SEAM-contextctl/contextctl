@@ -119,6 +119,7 @@ describe.skipIf(assetDirectory === undefined)(
           modelReadyRssDeltaMiB: resources.modelReadyRssDeltaMiB,
           modelLoadPeakRssMiB: resources.modelLoadPeakRssMiB,
           batchEndRssMiB: resources.batchEndRssMiB,
+          observedBatchPeakRssMiB: resources.observedBatchPeakRssMiB,
           peakRssMiB: resources.peakRssMiB,
           batchRssDeltaMiB: resources.batchRssDeltaMiB,
           lifetimePeakRssMiB: resources.lifetimePeakRssMiB,
@@ -182,6 +183,7 @@ interface IsolatedResourceMeasurement {
   readonly modelReadyRssDeltaMiB: number;
   readonly modelLoadPeakRssMiB: number;
   readonly batchEndRssMiB: number;
+  readonly observedBatchPeakRssMiB: number;
   readonly peakRssMiB: number;
   readonly batchRssDeltaMiB: number;
   readonly lifetimePeakRssMiB: number;
@@ -218,6 +220,7 @@ async function measureIsolatedResources(
     parsed.modelReadyRssDeltaMiB,
     parsed.modelLoadPeakRssMiB,
     parsed.batchEndRssMiB,
+    parsed.observedBatchPeakRssMiB,
     parsed.peakRssMiB,
     parsed.batchRssDeltaMiB,
     parsed.lifetimePeakRssMiB,
