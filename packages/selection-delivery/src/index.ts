@@ -69,6 +69,7 @@ export type {
   ContextResolutionItem,
   DelegatedFulfillment,
   ManagedFulfillment,
+  ManagedFulfillmentFailure,
   ResolutionPolicy,
   RetrievedDocumentChunk,
   RetrievedDocumentContext,

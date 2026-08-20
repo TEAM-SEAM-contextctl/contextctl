@@ -1,5 +1,4 @@
 import type { ContextBudget, ContextOmission } from "./context-assembly.js";
-import type { ManagedResolutionFailure } from "./managed-resolution.js";
 import type {
   HttpRetrievalGuide,
   ManagedDocumentGuide,
@@ -164,6 +163,42 @@ export type ContextResolutionItem =
       readonly fulfillment: DelegatedFulfillment;
     };
 
+/**
+ * Why a managed read produced no context, as a consumer receives it.
+ *
+ * Declared here rather than reusing `ManagedResolutionFailure` from
+ * `managed-resolution.ts`, and the two are different things. That type is the
+ * executor's report — two stages and an opaque code — and it is an *input* to
+ * assembly. This type is assembly's *output*, and assembly can fail in a way no
+ * executor reports: the read answered, and what it answered with does not hold
+ * together (SOT §10 L1639, §11 L2453-2466). Letting the input DTO carry an
+ * `assembly` stage would let an executor claim a failure it is in no position
+ * to diagnose; declaring the third stage only on the output keeps it ours.
+ *
+ * `deadline` is pinned to one code and one flag by the SOT (L2370, L2463-2466):
+ * a target the search-stage budget ran out on is always `deadline_exceeded` and
+ * always worth retrying, so the type says so instead of every projection having
+ * to. `managed_search` keeps an opaque code — the executor's vocabulary is the
+ * executor's to version, see `assertOpaqueFailure`. `assembly` is the one code
+ * this package owns.
+ */
+export type ManagedFulfillmentFailure =
+  | {
+      readonly stage: "managed_search";
+      readonly code: string;
+      readonly retriable: boolean;
+    }
+  | {
+      readonly stage: "assembly";
+      readonly code: "resolution_outcome_invalid";
+      readonly retriable: false;
+    }
+  | {
+      readonly stage: "deadline";
+      readonly code: "deadline_exceeded";
+      readonly retriable: true;
+    };
+
 /** What became of a read this process performed. */
 export type ManagedFulfillment =
   | {
@@ -188,10 +223,10 @@ export type ManagedFulfillment =
        *
        * Never a `ResolveContextError`. That channel reports a query that could
        * not be planned or ran out of time as a whole; this one reports one
-       * granted coordinate that could not be read while the rest of the answer
-       * stands.
+       * granted coordinate that could not be read — or whose answer could not
+       * be trusted — while the rest of the answer stands.
        */
-      readonly failure: ManagedResolutionFailure;
+      readonly failure: ManagedFulfillmentFailure;
     };
 
 /** One coordinate handed to the consumer. Nothing of ours executed it. */

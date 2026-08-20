@@ -12,13 +12,16 @@ import {
 import type {
   ContextResolution,
   ContextResolutionItem,
+  ManagedFulfillmentFailure,
   RetrievedDocumentChunk,
   RetrievedDocumentContext,
   SelectionCounts,
   SelectionSummary,
 } from "../domain/context-resolution.js";
+import { ManagedResolutionInvariantError } from "../domain/errors.js";
 import {
   assertOpaqueFailure,
+  type ManagedResolutionFailure,
   type ManagedResolutionOutcome,
 } from "../domain/managed-resolution.js";
 import {
@@ -31,6 +34,7 @@ import {
   isManagedPlannedItem,
   SELECTION_PLANNING_POLICY_VERSION,
   type ApprovedCardReference,
+  type PlannedManagedItem,
   type PlannedResolutionItem,
   type SelectionPlan,
 } from "../domain/selection-plan.js";
@@ -287,15 +291,7 @@ function buildItem(
 
   const outcome = byTargetKey.get(item.execution.targetKey);
   if (outcome?.status === "failed") {
-    return {
-      selectedBy: item.selectedBy,
-      guide: item.guide,
-      fulfillment: {
-        status: "failed",
-        executor: "contextctl",
-        failure: outcome.failure,
-      },
-    };
+    return failedItem(item, toFulfillmentFailure(outcome.failure));
   }
 
   // A target with no outcome at all resolves to an empty context rather than
@@ -316,6 +312,58 @@ function buildItem(
       ),
     },
   };
+}
+
+/**
+ * One managed item that produced no context, with the reason attached.
+ *
+ * The one constructor for a `failed` item, so every failure — the executor's,
+ * the deadline's and assembly's own — leaves through the same door and carries
+ * the same shape. An item fails on its own: nothing here touches any other
+ * item, which is what lets one broken read leave the rest of the answer
+ * standing (SOT L1639).
+ */
+function failedItem(
+  item: PlannedManagedItem,
+  failure: ManagedFulfillmentFailure,
+): ContextResolutionItem {
+  return {
+    selectedBy: item.selectedBy,
+    guide: item.guide,
+    fulfillment: { status: "failed", executor: "contextctl", failure },
+  };
+}
+
+/**
+ * Projects the executor's failure into the one a consumer receives.
+ *
+ * `managed_search` crosses as stated — code and flag untouched, for the reason
+ * `assertOpaqueFailure` gives. `deadline` is checked rather than copied: the
+ * SOT fixes a deadline to `deadline_exceeded` and `retriable: true` (L2370),
+ * so an executor reporting a deadline under any other code has confused two
+ * different facts, and projecting its wording would put that confusion in
+ * front of a consumer. That is our translation step's bug, not a failure mode
+ * of the read, which is why it is refused as an invariant rather than reported
+ * as an item.
+ */
+function toFulfillmentFailure(
+  failure: ManagedResolutionFailure,
+): ManagedFulfillmentFailure {
+  switch (failure.stage) {
+    case "managed_search":
+      return {
+        stage: "managed_search",
+        code: failure.code,
+        retriable: failure.retriable,
+      };
+    case "deadline":
+      if (failure.code !== "deadline_exceeded" || failure.retriable !== true) {
+        throw new ManagedResolutionInvariantError(
+          `a deadline failure must be deadline_exceeded and retriable, received ${failure.code} with retriable ${String(failure.retriable)}`,
+        );
+      }
+      return { stage: "deadline", code: "deadline_exceeded", retriable: true };
+  }
 }
 
 /**
