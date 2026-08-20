@@ -9,7 +9,7 @@ import {
 import { resolveCardMeaningBackend } from "../../src/cli/meaning-generator.js";
 import { resolveContextctlPaths } from "../../src/cli/paths.js";
 import { cliRuntimeOptions } from "../../src/cli/runtime.js";
-import { resolveVectorBackend } from "../../src/cli/vector-backend.js";
+import { resolveVectorBackend } from "../../src/vector-backend.js";
 
 /**
  * What the CLI composition decides, asserted without assembling it.
@@ -41,7 +41,14 @@ function ingestionDatabase(): DatabaseSync {
 }
 
 function build(environment: Readonly<Partial<Record<string, string>>>) {
-  const paths = resolveContextctlPaths(environment, "/tmp/contextctl-test-cwd");
+  const configuredEnvironment = {
+    CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
+    ...environment,
+  };
+  const paths = resolveContextctlPaths(
+    configuredEnvironment,
+    "/tmp/contextctl-test-cwd",
+  );
   return {
     paths,
     options: cliRuntimeOptions({
@@ -52,9 +59,9 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
       // pointer. Passing `paths.embeddingAssetDirectory` here would restate the
       // bug these options exist to prevent.
       embeddingArtifactDirectory: "/tmp/contextctl-test-assets/revisions/abc",
-      vectorBackend: resolveVectorBackend(environment),
+      vectorBackend: resolveVectorBackend(configuredEnvironment),
       meaningBackend: resolveCardMeaningBackend({
-        environment,
+        environment: configuredEnvironment,
         onFallback: () => {},
       }),
     }),
@@ -113,15 +120,13 @@ describe("CLI runtime options", () => {
   });
 
   it("carries the configured vector backend into the graph", () => {
-    const withoutQdrant = build({});
-    const withQdrant = build({ CONTEXTCTL_QDRANT_URL: "http://localhost:6333" });
+    const { options } = build({
+      CONTEXTCTL_QDRANT_URL: "http://localhost:7444",
+    });
 
-    expect(withoutQdrant.options.vectorIndex).toBeDefined();
-    expect(withQdrant.options.vectorIndex).toBeDefined();
-    // Two different backends must not resolve to the same instance, or the
-    // Qdrant setting would be decorative.
-    expect(withQdrant.options.vectorIndex).not.toBe(
-      withoutQdrant.options.vectorIndex,
+    expect(options.vectorIndex).toBeDefined();
+    expect(() => resolveVectorBackend({})).toThrow(
+      "CONTEXTCTL_QDRANT_URL이 필요합니다",
     );
   });
 

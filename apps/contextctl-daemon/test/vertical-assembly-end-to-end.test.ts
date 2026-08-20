@@ -2,7 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { PublishMarkdownSourceResult } from "@contextctl/ingestion-indexing";
+import {
+  InMemoryVectorIndexAdapter,
+  type PublishMarkdownSourceResult,
+} from "@contextctl/ingestion-indexing";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -87,6 +90,7 @@ async function buildRuntime(): Promise<DaemonRuntime> {
   const path = await writeFixture();
   const runtime = createDaemonRuntime({
     embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
+    vectorIndex: new InMemoryVectorIndexAdapter(),
     sourceConfigurations: { [SOURCE_REFERENCE]: { path } },
   });
   runtimes.push(runtime);

@@ -42,7 +42,6 @@ import { InMemoryMarkdownPublicationCheckpointStore } from "./in-memory-markdown
 import { InMemoryMarkdownPublicationEventSink } from "./in-memory-markdown-publication-event-sink.js";
 import { InMemoryPublicationReadyNotifier } from "./in-memory-publication-ready-notifier.js";
 import { InMemorySourceObservationStore } from "./in-memory-source-observation-store.js";
-import { InMemoryVectorIndexAdapter } from "./in-memory-vector-index-adapter.js";
 import { MarkdownFileSourceAdapter } from "./markdown-file-source-adapter.js";
 import { RemarkMarkdownParser } from "./remark-markdown-parser.js";
 import { SourceAdapterRegistry } from "./source-adapter-registry.js";
@@ -61,7 +60,8 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly securityDomain: string;
   /** Explicit provider bound to the exact document and query profile. */
   readonly embeddingProvider: EmbeddingPort;
-  readonly vectorIndex?: VectorIndexPort;
+  /** Explicit vector index; tests may inject the in-memory adapter deliberately. */
+  readonly vectorIndex: VectorIndexPort;
   readonly readyNotifier?: PublicationReadyNotifier;
   readonly checkpoints?: MarkdownPublicationCheckpointStore;
   readonly publications?: IngestionPublicationStore;
@@ -96,14 +96,19 @@ export interface LocalMarkdownPublicationRuntime {
 }
 
 /**
- * Network-free composition that defaults to in-memory adapters and accepts
- * durable adapter instances from a production composition root.
+ * Local composition whose external adapters are explicit at the production
+ * boundary. Stores may remain in-memory for a single-process fixture, but the
+ * vector index is required so a missing durable backend cannot become a silent
+ * production fallback.
  */
 export function createLocalMarkdownPublicationRuntime(
   options: LocalMarkdownPublicationRuntimeOptions,
 ): LocalMarkdownPublicationRuntime {
   if (options.embeddingProvider === undefined) {
     throw new TypeError("an explicit embedding provider is required");
+  }
+  if (options.vectorIndex === undefined) {
+    throw new TypeError("an explicit vector index is required");
   }
   if (isDocumentRetrievalEmbeddingProfile(options.embeddingProfile)) {
     assertProductionEmbeddingProvider(
@@ -136,7 +141,7 @@ export function createLocalMarkdownPublicationRuntime(
     clock,
   });
   const embeddingProvider = options.embeddingProvider;
-  const vectorIndex = options.vectorIndex ?? new InMemoryVectorIndexAdapter();
+  const vectorIndex = options.vectorIndex;
   const checkpoints =
     options.checkpoints ?? new InMemoryMarkdownPublicationCheckpointStore();
   const publications =

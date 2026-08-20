@@ -41,7 +41,7 @@ import { resolveActiveAssetDirectory } from "./asset-directory.js";
 import { resolveContextctlPaths } from "./paths.js";
 import { readSourcesFile, SourcesFileError, toSourceConfigurations } from "./sources-file.js";
 import { resolveCardMeaningBackend } from "./meaning-generator.js";
-import { resolveVectorBackend } from "./vector-backend.js";
+import { resolveVectorBackend } from "../vector-backend.js";
 
 /**
  * The command line entry point.
@@ -69,11 +69,7 @@ export const INSTALL_ASSETS_HINT = [
  * would block an operator at the first step they take.
  */
 function needsRuntime(command: CliCommand): boolean {
-  return (
-    command.kind === "ingest" ||
-    command.kind === "cards_list" ||
-    command.kind === "query"
-  );
+  return command.kind === "ingest" || command.kind === "query";
 }
 
 /*
@@ -115,8 +111,13 @@ export async function runCli(input: {
     // this point, and the options it receives are the CLI's own — file-backed
     // Registry, durable Ingestion stores, the configured vector backend — so a
     // `serve` process and a `query` process see the same state.
-    await runServe(input.environment, input.workingDirectory ?? process.cwd());
-    return 0;
+    try {
+      await runServe(input.environment, input.workingDirectory ?? process.cwd());
+      return 0;
+    } catch (error: unknown) {
+      input.stderr(describeFailure(error));
+      return 1;
+    }
   }
 
   const paths = resolveContextctlPaths(input.environment, input.workingDirectory);
@@ -160,6 +161,7 @@ export async function runCli(input: {
   try {
     if (
       command.kind === "cards_decision" ||
+      command.kind === "cards_list" ||
       command.kind === "reachability" ||
       command.kind === "status"
     ) {
@@ -219,7 +221,7 @@ async function runRegistryOnlyCommand(
   registry: RegistryOnlyRuntime,
   command: Extract<
     CliCommand,
-    { kind: "cards_decision" | "reachability" | "status" }
+    { kind: "cards_decision" | "cards_list" | "reachability" | "status" }
   >,
   context: {
     readonly environment: Readonly<Partial<Record<string, string>>>;
@@ -229,6 +231,8 @@ async function runRegistryOnlyCommand(
   switch (command.kind) {
     case "cards_decision":
       return runCardsDecision(registry, command);
+    case "cards_list":
+      return runCardsList(registry, command.json);
     case "reachability":
       return runReachability(registry, command);
     case "status":
@@ -264,8 +268,6 @@ async function runWithRuntime(
   switch (command.kind) {
     case "ingest":
       return runIngest(cli, command.reference);
-    case "cards_list":
-      return runCardsList(cli, command.json);
     case "query":
       return runQuery(cli, command);
     default:
@@ -316,6 +318,10 @@ async function runServe(
   environment: Readonly<Partial<Record<string, string>>>,
   workingDirectory: string,
 ): Promise<void> {
+  // Resolve the required durable index before opening either database. A bad
+  // production composition must leave no checkpoint that can later make an
+  // ingest look complete while its vectors never existed.
+  const vectorBackend = resolveVectorBackend(environment);
   const paths = resolveContextctlPaths(environment, workingDirectory);
   const sources = await readSourcesFile(paths.sourcesFile);
   const ingestionDatabase = openIngestionDatabase({
@@ -336,7 +342,7 @@ async function runServe(
     embeddingArtifactDirectory: assets.directory,
     sourceConfigurations: toSourceConfigurations(sources),
     ingestionDatabase,
-    vectorBackend: resolveVectorBackend(environment),
+    vectorBackend,
     meaningBackend: resolveCardMeaningBackend({
       environment,
       // stdout belongs to JSON-RPC from here on, so every notice goes to stderr.

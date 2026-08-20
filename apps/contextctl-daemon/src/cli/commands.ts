@@ -31,6 +31,7 @@ import {
   type IngestionObservation,
   type RegistryObservation,
   type StatusObservation,
+  type VectorIndexObservation,
 } from "./status.js";
 import { buildPathsReport, renderPathsReport } from "./paths-report.js";
 import {
@@ -40,6 +41,7 @@ import {
   type CardListing,
 } from "./render.js";
 import type { RegistryIntakeResult } from "../registry-intake.js";
+import { resolveVectorBackend } from "../vector-backend.js";
 
 /** A Source that Registry refused, with the diagnostic that says why. */
 type IngestRefusal = Extract<
@@ -54,7 +56,6 @@ import {
   removeSource,
   writeSourcesFile,
 } from "./sources-file.js";
-import { emptyResultDiagnosis, ingestVolatilityWarning } from "./vector-backend.js";
 
 /**
  * What a command produced, before anything is written anywhere.
@@ -236,9 +237,6 @@ export async function runIngest(
       : `Card 버전 ${claimedVersions}개가 승인을 기다린다. 다음: contextctl cards list`,
   );
 
-  const warning = ingestVolatilityWarning(cli.vectorBackend);
-  const stderr = warning === undefined ? [] : [warning];
-
   // A refused Source means the run did not do what it was asked, so it cannot
   // exit 0: a script or a scheduled job would read a stopped Source as a
   // successful ingest. Fork outranks gap when both happened, because a gap
@@ -247,7 +245,7 @@ export async function runIngest(
   if (forked !== undefined) {
     return {
       stdout: lines.join("\n"),
-      stderr: [...stderr, refusalSummary(forked, "체인이 갈라져 소비를 멈췄습니다")],
+      stderr: [refusalSummary(forked, "체인이 갈라져 소비를 멈췄습니다")],
       exitCode: EXIT_CODES.chainForked,
     };
   }
@@ -255,14 +253,11 @@ export async function runIngest(
   if (deferred !== undefined) {
     return {
       stdout: lines.join("\n"),
-      stderr: [
-        ...stderr,
-        refusalSummary(deferred, "선행 Publication을 아직 소비하지 않아 보류했습니다"),
-      ],
+      stderr: [refusalSummary(deferred, "선행 Publication을 아직 소비하지 않아 보류했습니다")],
       exitCode: EXIT_CODES.chainDeferred,
     };
   }
-  return ok(lines.join("\n"), stderr);
+  return ok(lines.join("\n"));
 }
 
 /** One line naming the Source, the code and what an operator should read next. */
@@ -287,10 +282,10 @@ function refusalSummary(refusal: IngestRefusal, headline: string): string {
  * of SQL.
  */
 export async function runCardsList(
-  cli: CliRuntime,
+  cli: RegistryOnlyRuntime,
   json: boolean,
 ): Promise<CommandOutcome> {
-  const rows = cli.runtime.database
+  const rows = cli.database
     .prepare("SELECT card_id FROM cards ORDER BY rowid")
     .all();
 
@@ -305,7 +300,7 @@ export async function runCardsList(
     if (typeof cardId !== "string") {
       continue;
     }
-    const card = await cli.runtime.cards.findCard(cardId);
+    const card = await cli.cards.findCard(cardId);
     if (card === undefined) {
       continue;
     }
@@ -489,6 +484,7 @@ export async function runStatus(
     assets: await observeAssets(paths.embeddingAssetDirectory),
     registry,
     ingestion: await observeIngestion(cli, registry),
+    vectorIndex: observeVectorIndex(context.environment),
   };
   const report = judgeLanes(observation);
   const stdout = command.json
@@ -512,6 +508,17 @@ export async function runStatus(
     ],
     exitCode: EXIT_CODES.laneNotReady,
   };
+}
+
+function observeVectorIndex(
+  environment: Readonly<Partial<Record<string, string>>>,
+): VectorIndexObservation {
+  try {
+    const backend = resolveVectorBackend(environment);
+    return { status: "configured", endpoint: backend.endpoint };
+  } catch (error) {
+    return { status: "unavailable", detail: describeError(error) };
+  }
 }
 
 async function observeAssets(directory: string): Promise<AssetObservation> {
@@ -726,18 +733,7 @@ export async function runQuery(
     ? JSON.stringify(resolution, undefined, 2)
     : renderResolution(resolution);
 
-  // Counted through the catalog rather than from the response, because the
-  // response deliberately names no Card it did not admit: an answer with zero
-  // items and an empty catalog is a different situation from one with a full
-  // catalog, and only the first is the operator's next step.
-  const approved = await cli.runtime.catalog.listApprovedCards();
-  const diagnosis = emptyResultDiagnosis({
-    backend: cli.vectorBackend,
-    approvedCardCount: approved.length,
-    itemCount: resolution.items.length,
-  });
-
-  return ok(stdout, diagnosis === undefined ? [] : [diagnosis]);
+  return ok(stdout);
 }
 
 

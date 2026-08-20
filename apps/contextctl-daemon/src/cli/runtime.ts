@@ -34,22 +34,21 @@ import {
 } from "./meaning-generator.js";
 import { resolveContextctlPaths, type ContextctlPaths } from "./paths.js";
 import { readSourcesFile, toSourceConfigurations } from "./sources-file.js";
-import { resolveVectorBackend, type VectorBackend } from "./vector-backend.js";
+import { resolveVectorBackend, type VectorBackend } from "../vector-backend.js";
 
 /**
  * The runtime one CLI invocation runs against, plus what an operator has to be
  * told about how it was assembled.
  *
- * The two backends travel beside the runtime rather than inside it because they
- * are diagnostics, not wiring: `DaemonRuntime` already holds the ports it built,
- * and what the CLI additionally needs to know is *which* of several legal
- * compositions it got — a question the graph itself cannot answer, since an
- * in-memory vector index and a Qdrant one are the same `VectorIndexPort`.
+ * Backend diagnostics travel beside the runtime rather than inside it because
+ * `DaemonRuntime` already holds the ports it built. The production vector
+ * backend is deliberately absent here: CLI composition accepts Qdrant only, so
+ * carrying a second discriminant would imply a runtime choice that does not
+ * exist.
  */
 export interface CliRuntime {
   readonly runtime: DaemonRuntime;
   readonly paths: ContextctlPaths;
-  readonly vectorBackend: VectorBackend;
   readonly meaningBackend: CardMeaningBackend;
   /** Registered Source references, in the order the file declares them. */
   readonly sourceReferences: readonly string[];
@@ -140,13 +139,11 @@ export interface BuildCliRuntimeInput {
 /**
  * Assembles the runtime a command runs against, from durable state only.
  *
- * Every store here is file-backed except the vector index, and that exception is
- * the whole reason `vectorBackend` is reported rather than assumed: Ingestion
- * ships no durable vector adapter other than Qdrant, so an operator who has not
- * started one gets a composition that ingests successfully and then, in the next
- * process, searches an empty index. That failure produces no error anywhere —
- * which is exactly why the CLI says it out loud instead of letting a query
- * return an empty success.
+ * Every stateful dependency here is durable. Ingestion ships no durable vector
+ * adapter other than Qdrant, so resolving it is the first composition step. A
+ * missing endpoint therefore fails before any database opens; it can never
+ * leave a checkpoint that says an index was published when no durable vectors
+ * survived the process.
  *
  * The embedding profile is deliberately not stated. Omitting it selects
  * `DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE`, the pinned granite artifact,
@@ -215,7 +212,6 @@ export async function buildCliRuntime(
   return {
     runtime,
     paths,
-    vectorBackend,
     meaningBackend,
     sourceReferences: Object.keys(sources.sources),
     close(): void {

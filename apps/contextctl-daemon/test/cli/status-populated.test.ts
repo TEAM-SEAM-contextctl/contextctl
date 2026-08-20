@@ -174,7 +174,11 @@ async function statusIn(
 ): Promise<{ readonly stdout: string; readonly code: number }> {
   try {
     const result = await execFileAsync(INSTALLED_COMMAND, ["status", "--json"], {
-      env: { ...process.env, CONTEXTCTL_HOME: home },
+      env: {
+        ...process.env,
+        CONTEXTCTL_HOME: home,
+        CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
+      },
       cwd: home,
     });
     return { stdout: result.stdout, code: 0 };

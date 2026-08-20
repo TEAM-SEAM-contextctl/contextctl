@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   DeterministicEmbeddingAdapter,
+  InMemoryVectorIndexAdapter,
   InMemoryMarkdownPublicationCheckpointStore,
   PublicationReadyReconciler,
   createLocalMarkdownPublicationRuntime,
@@ -50,6 +51,19 @@ afterEach(async () => {
 });
 
 describe("MarkdownPublicationWorkflow", () => {
+  it("requires the vector index at the composition boundary", () => {
+    expect(() =>
+      createLocalMarkdownPublicationRuntime({
+        configurations: {},
+        embeddingProfile: profile,
+        embeddingProvider: new DeterministicEmbeddingAdapter(),
+        connectorId: "vector.local",
+        stateNamespaceId: "state_test",
+        securityDomain: "tenant-a",
+      } as unknown as Parameters<typeof createLocalMarkdownPublicationRuntime>[0]),
+    ).toThrow("an explicit vector index is required");
+  });
+
   it("runs a real Markdown Source through ready Publication and managed search", async () => {
     const embeddings = new RecordingEmbeddingPort();
     const runtime = createLocalMarkdownPublicationRuntime({
@@ -61,6 +75,7 @@ describe("MarkdownPublicationWorkflow", () => {
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       clock: () => NOW,
     });
 
@@ -163,6 +178,7 @@ describe("MarkdownPublicationWorkflow", () => {
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       clock: () => NOW,
     });
     const first = await runtime.workflow.publish(command());
@@ -230,6 +246,7 @@ describe("MarkdownPublicationWorkflow", () => {
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       clock: () => NOW,
     });
 
@@ -288,6 +305,7 @@ describe("MarkdownPublicationWorkflow", () => {
       configurations: { "source.fixture": { path: fixture.path } },
       embeddingProfile: profile,
       embeddingProvider: new DeterministicEmbeddingAdapter(),
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       connectorId: "vector.local",
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
@@ -324,6 +342,7 @@ describe("MarkdownPublicationWorkflow", () => {
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       clock: () => NOW,
     });
 
@@ -370,6 +389,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       embeddingProvider: new DeterministicEmbeddingAdapter(),
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       connectorId: "vector.local",
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
@@ -413,6 +433,7 @@ describe("MarkdownPublicationWorkflow", () => {
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       clock: () => NOW,
     });
 
@@ -445,6 +466,7 @@ describe("MarkdownPublicationWorkflow", () => {
       },
       embeddingProfile: profile,
       embeddingProvider: new DeterministicEmbeddingAdapter(),
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       connectorId: "vector.local",
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
@@ -505,6 +527,7 @@ describe("MarkdownPublicationWorkflow", () => {
       stateNamespaceId: "state_test",
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
+      vectorIndex: new InMemoryVectorIndexAdapter(),
       checkpoints,
       clock: () => NOW,
     });

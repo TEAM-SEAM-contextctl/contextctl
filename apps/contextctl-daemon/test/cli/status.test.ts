@@ -23,6 +23,10 @@ import {
 function healthy(overrides: Partial<StatusObservation> = {}): StatusObservation {
   return {
     assets: { status: "installed", directory: "/home/.contextctl/assets/rev_a" },
+    vectorIndex: {
+      status: "configured",
+      endpoint: "http://localhost:6333/",
+    },
     registry: {
       status: "read",
       behindSources: [],
@@ -174,6 +178,23 @@ describe("judgeLanes", () => {
     // embeds through the same profile, but this command reads durable state
     // rather than exercising it, so folding the two would be a guess.
     expect(statusOf(report, "registry")).toBe("ready");
+  });
+
+  it("cannot publish or resolve without a durable vector index", () => {
+    const report = judgeLanes(
+      healthy({
+        vectorIndex: {
+          status: "unavailable",
+          detail: "CONTEXTCTL_QDRANT_URL이 필요합니다",
+        },
+      }),
+    );
+
+    expect(statusOf(report, "resolve")).toBe("not_ready");
+    expect(statusOf(report, "ingestion")).toBe("not_ready");
+    expect(statusOf(report, "registry")).toBe("ready");
+    expect(statusOf(report, "selection_assets")).toBe("ready");
+    expect(report.serviceable).toBe(false);
   });
 
   it("tells an operator to install rather than only that a lane is down", () => {

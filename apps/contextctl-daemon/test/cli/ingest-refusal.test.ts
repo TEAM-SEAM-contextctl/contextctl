@@ -59,7 +59,6 @@ async function cliThatClaims(result: RegistryIntakeResult): Promise<CliRuntime> 
   const sourcesFile = await sourcesFileWith("source.payment");
   return {
     paths: { sourcesFile },
-    vectorBackend: { kind: "memory" },
     runtime: {
       connectorId: "vector.local",
       securityDomain: "local",
