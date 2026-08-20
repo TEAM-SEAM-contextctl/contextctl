@@ -100,27 +100,31 @@ export function openRegistryOnlyRuntime(input: {
   // write for the same reason.
   mkdirSync(dirname(paths.registryDatabase), { recursive: true });
   const database = openRegistryDatabase(paths.registryDatabase);
-  let ingestionDatabase: DatabaseSync;
-  try {
-    mkdirSync(dirname(paths.ingestionDatabase), { recursive: true });
-    ingestionDatabase = openIngestionDatabase({
-      location: paths.ingestionDatabase,
-      stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-      securityDomain: DEFAULT_SECURITY_DOMAIN,
-    });
-  } catch (error: unknown) {
-    // The Registry database is already open at this point, and leaving it open
-    // would leak a file handle for every failed invocation.
-    database.close();
-    throw error;
-  }
+
+  // Opened on first use, not up front. Only the reachability report reads
+  // Ingestion; a Card decision never does, and eagerly opening the second
+  // database made `contextctl cards approve` create an `ingestion.db` it would
+  // never read — a file an operator then has to wonder about.
+  let ingestionDatabase: DatabaseSync | undefined;
+  let publications: SqliteIngestionPublicationStore | undefined;
 
   return {
     database,
     cards: new SqliteCardStore(database),
-    publications: new SqliteIngestionPublicationStore(ingestionDatabase),
+    get publications(): SqliteIngestionPublicationStore {
+      if (publications === undefined) {
+        mkdirSync(dirname(paths.ingestionDatabase), { recursive: true });
+        ingestionDatabase = openIngestionDatabase({
+          location: paths.ingestionDatabase,
+          stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+          securityDomain: DEFAULT_SECURITY_DOMAIN,
+        });
+        publications = new SqliteIngestionPublicationStore(ingestionDatabase);
+      }
+      return publications;
+    },
     close: () => {
-      ingestionDatabase.close();
+      ingestionDatabase?.close();
       database.close();
     },
   };
