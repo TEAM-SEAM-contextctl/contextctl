@@ -429,7 +429,14 @@ npm ci
 npm run typecheck
 npm run build
 npm test
+npm run test:operational
 ```
+
+`test:operational` 은 임베딩·Qdrant 호출 한도와 재시도, 마지막 정상 색인 보존,
+게시 복구 의도, Registry 지연 격리, 자격 증명 비노출과 외부 문서 지시문 비해석을
+한 명령으로 다시 검증하는 출시 전 회귀 검사입니다. 실제 Qdrant와 Granite 자산은
+일반 테스트와 분리되어 있으므로 각각 `test:integration:qdrant`,
+`test:integration:granite`로 확인합니다.
 
 개발에는 Node **24.18.0** 과 npm **11.16.0** 을 정확히 씁니다 — `.nvmrc` 와 CI 가 그렇게 고정합니다.
 배포되는 패키지는 하한(`>=24.0.0`)만 선언합니다. 정확한 핀은 빌드를 재현하기 위한 것이지

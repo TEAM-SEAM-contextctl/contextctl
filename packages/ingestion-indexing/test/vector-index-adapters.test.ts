@@ -448,6 +448,23 @@ describe("Qdrant vector index adapter", () => {
     });
   });
 
+  it("retries transient idempotent reads within a fixed call budget", async () => {
+    const client = new FakeQdrantClient();
+    const adapter = qdrant(client);
+    const prepared = await adapter.prepare(compatibility);
+    client.transientQueryFailures = 2;
+
+    await expect(search(adapter, prepared.accessHandle)).resolves.toEqual([]);
+    expect(client.queryCalls).toBe(3);
+
+    client.transientQueryFailures = 4;
+    await expect(search(adapter, prepared.accessHandle)).rejects.toMatchObject({
+      code: "storage_unavailable",
+      retriable: true,
+    });
+    expect(client.queryCalls).toBe(6);
+  });
+
   it("rejects a collection whose compatibility ownership marker changed", async () => {
     const client = new FakeQdrantClient();
     const prepared = await qdrant(client).prepare(compatibility);
@@ -496,6 +513,25 @@ describe("Qdrant vector index adapter", () => {
     expect(
       () => new QdrantVectorIndexAdapter({ url: "http://127.0.0.1:6333" }),
     ).not.toThrow();
+  });
+
+  it("rejects an unbounded or malformed retry policy", () => {
+    for (const maxAttempts of [0, 6, 1.5]) {
+      expect(
+        () =>
+          new QdrantVectorIndexAdapter({
+            url: "http://127.0.0.1:6333",
+            maxAttempts,
+          }),
+      ).toThrow(RangeError);
+    }
+    expect(
+      () =>
+        new QdrantVectorIndexAdapter({
+          url: "http://127.0.0.1:6333",
+          retryDelayMs: -1,
+        }),
+    ).toThrow(RangeError);
   });
 });
 
@@ -554,6 +590,7 @@ function qdrant(client: FakeQdrantClient): QdrantVectorIndexAdapter {
   return new QdrantVectorIndexAdapter({
     url: "http://127.0.0.1:6333",
     client,
+    retryDelayMs: 0,
   });
 }
 
@@ -574,6 +611,8 @@ class FakeQdrantClient {
   scrollResult: unknown = { points: [], next_page_offset: null };
   blockQueryUntilAbort = false;
   lastQuerySignal: AbortSignal | undefined;
+  queryCalls = 0;
+  transientQueryFailures = 0;
 
   async collectionExists() {
     this.raise();
@@ -628,6 +667,11 @@ class FakeQdrantClient {
   }
 
   async query(_name: string, request: object, signal?: AbortSignal) {
+    this.queryCalls += 1;
+    if (this.transientQueryFailures > 0) {
+      this.transientQueryFailures -= 1;
+      throw { status: 503 };
+    }
     this.raise();
     this.lastQuerySignal = signal;
     this.lastFilter = (request as { filter: unknown }).filter;

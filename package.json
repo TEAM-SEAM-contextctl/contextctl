@@ -18,12 +18,20 @@
     "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.check.json --noEmit",
     "test": "vitest run --exclude packages/ingestion-indexing/test/qdrant-vector-index.integration.test.ts --exclude packages/ingestion-indexing/test/local-embedding-adapter.integration.test.ts --exclude packages/ingestion-indexing/test/document-retrieval-eval.test.ts",
+    "test:operational": "vitest run packages/ingestion-indexing/test/embedding-pipeline.test.ts packages/ingestion-indexing/test/vector-index-adapters.test.ts packages/ingestion-indexing/test/incremental-reindex-publication.test.ts packages/ingestion-indexing/test/publication-ready-outbox.test.ts packages/ingestion-indexing/test/publication-recovery-intent.test.ts packages/ingestion-indexing/test/durable-index-catalog.test.ts packages/ingestion-indexing/test/markdown-publication-workflow.test.ts apps/contextctl-daemon/test/cli/vector-backend.test.ts apps/contextctl-daemon/test/cli/meaning-generator.test.ts apps/contextctl-daemon/test/vertical-assembly-end-to-end.test.ts packages/registry-lifecycle/test/domain/fact-grounding.test.ts packages/registry-lifecycle/test/infrastructure/openai-compatible-card-meaning-generator.test.ts",
     "test:integration:qdrant": "node scripts/run-external-test.mjs qdrant",
     "test:integration:granite": "node scripts/run-external-test.mjs granite",
     "test:eval:document-retrieval": "node scripts/run-external-test.mjs document-retrieval"
   },
   "dependencies": {
-    "@contextctl/daemon": "0.1.0"
+    "@contextctl/daemon": "0.1.0",
+    "@huggingface/transformers": "4.2.0",
+    "onnxruntime-node": "1.24.3"
+  },
+  "overrides": {
+    "adm-zip": "0.6.0",
+    "nanoid": "3.3.18",
+    "sharp": "0.35.3"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

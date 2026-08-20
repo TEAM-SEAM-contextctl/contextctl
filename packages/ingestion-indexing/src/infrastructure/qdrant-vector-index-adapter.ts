@@ -52,6 +52,9 @@ const REQUIRED_PAYLOAD_INDEXES = {
   payloadSchemaVersion: "integer",
 } as const;
 const DEFAULT_OPERATION_SIGNAL = new AbortController().signal;
+const DEFAULT_QDRANT_MAX_ATTEMPTS = 3;
+const DEFAULT_QDRANT_RETRY_DELAY_MS = 100;
+const MAX_QDRANT_MAX_ATTEMPTS = 5;
 
 interface QdrantClientApi {
   collectionExists(name: string, signal?: AbortSignal): Promise<{ exists: boolean }>;
@@ -69,6 +72,9 @@ export interface QdrantVectorIndexAdapterOptions {
   readonly url: string;
   readonly apiKey?: string;
   readonly timeoutMs?: number;
+  readonly maxAttempts?: number;
+  readonly retryDelayMs?: number;
+  readonly delay?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   readonly client?: QdrantClientApi;
 }
 
@@ -94,12 +100,32 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
   readonly #delete: QdrantOperation;
   readonly #profiles = new Map<string, EmbeddingProfile>();
   readonly #versionOperations = new Map<string, Promise<void>>();
+  readonly #maxAttempts: number;
+  readonly #retryDelayMs: number;
+  readonly #delay: (
+    milliseconds: number,
+    signal: AbortSignal,
+  ) => Promise<void>;
 
   constructor(options: QdrantVectorIndexAdapterOptions) {
     assertSafeEndpoint(options.url);
     const timeoutMs = options.timeoutMs ?? 30_000;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
       throw new RangeError("Qdrant timeout must be a positive integer");
+    }
+    this.#maxAttempts =
+      options.maxAttempts ?? DEFAULT_QDRANT_MAX_ATTEMPTS;
+    this.#retryDelayMs =
+      options.retryDelayMs ?? DEFAULT_QDRANT_RETRY_DELAY_MS;
+    this.#delay = options.delay ?? abortableDelay;
+    if (
+      !Number.isSafeInteger(this.#maxAttempts) ||
+      this.#maxAttempts <= 0 ||
+      this.#maxAttempts > MAX_QDRANT_MAX_ATTEMPTS ||
+      !Number.isSafeInteger(this.#retryDelayMs) ||
+      this.#retryDelayMs < 0
+    ) {
+      throw new RangeError("Qdrant retry policy is invalid");
     }
     if (options.client !== undefined) {
       this.#collectionExists = (name, signal) => {
@@ -191,7 +217,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     const collection = collectionName(compatibility);
     const handle = `qdrant:v1:${compatibilityDigest(compatibility).slice(0, 32)}`;
     try {
-      const existence = await this.#collectionExists(collection, signal);
+      const existence = await this.#retryTransient(
+        () => this.#collectionExists(collection, signal),
+        signal,
+      );
       signal.throwIfAborted();
       if (!existence.exists) {
         await this.#createCollection(collection, {
@@ -205,14 +234,21 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
         }, signal);
       } else {
         assertCollectionCompatibility(
-          await this.#getCollection(collection, signal),
+          await this.#retryTransient(
+            () => this.#getCollection(collection, signal),
+            signal,
+          ),
           compatibility,
         );
       }
       for (const [fieldName, fieldSchema] of Object.entries(REQUIRED_PAYLOAD_INDEXES)) {
         signal.throwIfAborted();
         await ensurePayloadIndex(
-          this.#getCollection,
+          (name, operationSignal) =>
+            this.#retryTransient(
+              () => this.#getCollection(name, operationSignal),
+              operationSignal,
+            ),
           this.#createPayloadIndex,
           collection,
           fieldName,
@@ -221,7 +257,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
         );
       }
       signal.throwIfAborted();
-      const info = await this.#getCollection(collection, signal);
+      const info = await this.#retryTransient(
+        () => this.#getCollection(collection, signal),
+        signal,
+      );
       assertRequiredPayloadIndexes(info);
     } catch (error) {
       if (signal.aborted) signal.throwIfAborted();
@@ -245,11 +284,17 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     const collection = parseAccessHandle(input.accessHandle);
     try {
       signal.throwIfAborted();
-      const existence = await this.#collectionExists(collection, signal);
+      const existence = await this.#retryTransient(
+        () => this.#collectionExists(collection, signal),
+        signal,
+      );
       if (!existence.exists) {
         throw new VectorIndexFault("index_unavailable", false);
       }
-      const info = await this.#getCollection(collection, signal);
+      const info = await this.#retryTransient(
+        () => this.#getCollection(collection, signal),
+        signal,
+      );
       signal.throwIfAborted();
       assertCollectionCompatibility(info, input.compatibility);
       assertRequiredPayloadIndexes(info);
@@ -278,20 +323,24 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       assertKnownProfile(this.#profiles, input.accessHandle, input.embeddingProfile);
     });
     try {
-      await this.#upsert(collection, {
-        wait: true,
-        ordering: "strong",
-        points: input.records.map((record) => ({
-          id: qdrantPointId(record.recordId),
-          vector: [...record.embedding],
-          payload: {
-            recordKind: "chunk",
-            recordId: record.recordId,
-            retrievalText: record.retrievalText,
-            ...record.metadata,
-          },
-        })),
-      }, signal);
+      await this.#retryTransient(
+        () =>
+          this.#upsert(collection, {
+            wait: true,
+            ordering: "strong",
+            points: input.records.map((record) => ({
+              id: qdrantPointId(record.recordId),
+              vector: [...record.embedding],
+              payload: {
+                recordKind: "chunk",
+                recordId: record.recordId,
+                retrievalText: record.retrievalText,
+                ...record.metadata,
+              },
+            })),
+          }, signal),
+        signal,
+      );
       signal.throwIfAborted();
     } catch (error) {
       if (signal.aborted) signal.throwIfAborted();
@@ -325,13 +374,17 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       throw new VectorIndexFault("invalid_request", false);
     }
     try {
-      const result = await this.#query(collection, {
-        query: [...input.queryVector],
-        filter: scopeFilter(input.scope),
-        limit: input.limit,
-        with_payload: true,
-        with_vector: false,
-      }, signal);
+      const result = await this.#retryTransient(
+        () =>
+          this.#query(collection, {
+            query: [...input.queryVector],
+            filter: scopeFilter(input.scope),
+            limit: input.limit,
+            with_payload: true,
+            with_vector: false,
+          }, signal),
+        signal,
+      );
       signal.throwIfAborted();
       return parseSearchHits(result, input.scope);
     } catch (error) {
@@ -359,18 +412,22 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     try {
       do {
         signal.throwIfAborted();
-        const result = await this.#scroll(collection, {
-          filter: {
-            must: [
-              keyword("recordKind", "chunk"),
-              ...versionMust(input.documentIndexId, input.indexVersion),
-            ],
-          },
-          limit: 256,
-          ...(offset === undefined ? {} : { offset }),
-          with_payload: true,
-          with_vector: false,
-        }, signal);
+        const result = await this.#retryTransient(
+          () =>
+            this.#scroll(collection, {
+              filter: {
+                must: [
+                  keyword("recordKind", "chunk"),
+                  ...versionMust(input.documentIndexId, input.indexVersion),
+                ],
+              },
+              limit: 256,
+              ...(offset === undefined ? {} : { offset }),
+              with_payload: true,
+              with_vector: false,
+            }, signal),
+          signal,
+        );
         const page = parseScrollPage(result, input);
         records.push(...page.records);
         offset = page.nextOffset;
@@ -409,21 +466,25 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       throw new VectorIndexFault("index_unavailable", false);
     }
     try {
-      const result = await this.#query(collection, {
-        filter: {
-          must: [
-            keyword("recordKind", "chunk"),
-            ...versionMust(input.documentIndexId, input.indexVersion),
-            {
-              key: "chunkRevisionId",
-              match: { any: [...input.chunkRevisionIds] },
+      const result = await this.#retryTransient(
+        () =>
+          this.#query(collection, {
+            filter: {
+              must: [
+                keyword("recordKind", "chunk"),
+                ...versionMust(input.documentIndexId, input.indexVersion),
+                {
+                  key: "chunkRevisionId",
+                  match: { any: [...input.chunkRevisionIds] },
+                },
+              ],
             },
-          ],
-        },
-        limit: input.chunkRevisionIds.length,
-        with_payload: true,
-        with_vector: true,
-      }, signal);
+            limit: input.chunkRevisionIds.length,
+            with_payload: true,
+            with_vector: true,
+          }, signal),
+        signal,
+      );
       signal.throwIfAborted();
       return parseStoredVectors(result, input, profile.dimensions);
     } catch (error) {
@@ -448,17 +509,21 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     await this.#serializeVersion(input.accessHandle, input.lease, async () => {
       try {
         signal.throwIfAborted();
-        await this.#upsert(collection, {
-          wait: true,
-          ordering: "strong",
-          points: [
-            {
-              id: qdrantPointId(`lease:${input.lease.leaseId}`),
-              vector: Array.from({ length: profile.dimensions }, () => 0),
-              payload: { recordKind: "retention_lease", ...input.lease },
-            },
-          ],
-        }, signal);
+        await this.#retryTransient(
+          () =>
+            this.#upsert(collection, {
+              wait: true,
+              ordering: "strong",
+              points: [
+                {
+                  id: qdrantPointId(`lease:${input.lease.leaseId}`),
+                  vector: Array.from({ length: profile.dimensions }, () => 0),
+                  payload: { recordKind: "retention_lease", ...input.lease },
+                },
+              ],
+            }, signal),
+          signal,
+        );
       } catch (error) {
         if (signal.aborted) signal.throwIfAborted();
         throw translateQdrantFault(error);
@@ -476,11 +541,15 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     const collection = parseAccessHandle(input.accessHandle);
     assertInput(() => assertValidLeaseId(input.leaseId));
     try {
-      await this.#delete(collection, {
-        wait: true,
-        ordering: "strong",
-        points: [qdrantPointId(`lease:${input.leaseId}`)],
-      }, signal);
+      await this.#retryTransient(
+        () =>
+          this.#delete(collection, {
+            wait: true,
+            ordering: "strong",
+            points: [qdrantPointId(`lease:${input.leaseId}`)],
+          }, signal),
+        signal,
+      );
     } catch (error) {
       if (signal.aborted) signal.throwIfAborted();
       throw translateQdrantFault(error);
@@ -502,25 +571,33 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
     await this.#serializeVersion(input.accessHandle, input, async () => {
       try {
         signal.throwIfAborted();
-        const leases = await this.#count(collection, {
-          exact: true,
-          filter: {
-            must: [
-              keyword("recordKind", "retention_lease"),
-              ...identity,
-              { key: "expiresAt", range: { gt: input.now } },
-            ],
-          },
-        }, signal);
+        const leases = await this.#retryTransient(
+          () =>
+            this.#count(collection, {
+              exact: true,
+              filter: {
+                must: [
+                  keyword("recordKind", "retention_lease"),
+                  ...identity,
+                  { key: "expiresAt", range: { gt: input.now } },
+                ],
+              },
+            }, signal),
+          signal,
+        );
         if (countValue(leases) > 0) {
           throw new VectorIndexFault("index_version_retained", false);
         }
         signal.throwIfAborted();
-        await this.#delete(collection, {
-          wait: true,
-          ordering: "strong",
-          filter: { must: identity },
-        }, signal);
+        await this.#retryTransient(
+          () =>
+            this.#delete(collection, {
+              wait: true,
+              ordering: "strong",
+              filter: { must: identity },
+            }, signal),
+          signal,
+        );
       } catch (error) {
         if (signal.aborted) signal.throwIfAborted();
         if (error instanceof VectorIndexFault) throw error;
@@ -547,6 +624,34 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
       unlock();
       if (this.#versionOperations.get(key) === tail) this.#versionOperations.delete(key);
     }
+  }
+
+  /**
+   * Retries only operations whose requested end state is idempotent.
+   *
+   * Collection and payload-index creation deliberately do not use this helper:
+   * a response can be lost after Qdrant committed the create, and retrying the
+   * create would turn that success into a conflict. Re-running `prepare` first
+   * reads the server state and is the safe recovery path for those operations.
+   */
+  async #retryTransient<T>(
+    operation: () => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
+      signal.throwIfAborted();
+      try {
+        return await operation();
+      } catch (error) {
+        if (signal.aborted) signal.throwIfAborted();
+        const fault = translateQdrantFault(error);
+        if (!fault.retriable || attempt === this.#maxAttempts) {
+          throw error;
+        }
+        await this.#delay(this.#retryDelayMs, signal);
+      }
+    }
+    throw new VectorIndexFault("storage_unavailable", true);
   }
 }
 
@@ -593,6 +698,27 @@ async function rawQdrantResult(
 
 function operationSignal(signal: AbortSignal | undefined): AbortSignal {
   return signal ?? DEFAULT_OPERATION_SIGNAL;
+}
+
+function abortableDelay(
+  milliseconds: number,
+  signal: AbortSignal,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    signal.throwIfAborted();
+    const timeout = setTimeout(finish, milliseconds);
+    signal.addEventListener("abort", cancel, { once: true });
+
+    function finish(): void {
+      signal.removeEventListener("abort", cancel);
+      resolve();
+    }
+
+    function cancel(): void {
+      clearTimeout(timeout);
+      reject(signal.reason);
+    }
+  });
 }
 
 function collectionName(compatibility: VectorIndexCompatibility): string {
