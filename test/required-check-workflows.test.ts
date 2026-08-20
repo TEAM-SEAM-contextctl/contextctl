@@ -7,6 +7,16 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("required external check workflows", () => {
+  it("does not download optional ONNX CUDA assets on CPU-only runners", () => {
+    for (const name of ["ci.yml", "document-retrieval-evaluation.yml"]) {
+      const workflow = readWorkflow(name);
+
+      expect(workflow).toMatch(
+        /\nenv:\n(?: {2}#.*\n)* {2}ONNXRUNTIME_NODE_INSTALL: skip\n\njobs:\n/,
+      );
+    }
+  });
+
   it("keeps Qdrant and Granite integration checks addressable by stable names", () => {
     const workflow = readWorkflow("ci.yml");
 

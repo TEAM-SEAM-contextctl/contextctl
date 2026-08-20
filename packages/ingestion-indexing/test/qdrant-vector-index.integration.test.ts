@@ -10,6 +10,7 @@ import {
 
 const qdrantUrl = process.env.CONTEXTCTL_QDRANT_URL;
 const integration = qdrantUrl === undefined ? describe.skip : describe;
+const integrationTestTimeoutMs = 30_000;
 const stateNamespaceId = `state-integration-${String(Date.now())}`;
 const securityDomain = `integration-${String(Date.now())}`;
 
@@ -149,7 +150,7 @@ integration("QdrantVectorIndexAdapter integration", () => {
         limit: 10,
       }),
     ).toHaveLength(1);
-  });
+  }, integrationTestTimeoutMs);
 });
 
 function requiredUrl(): string {
