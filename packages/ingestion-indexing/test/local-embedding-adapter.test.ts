@@ -210,31 +210,6 @@ describe("Transformers.js local embedding adapter", () => {
     expect(factory.loads).toHaveLength(1);
   });
 
-  it("bounds native inference slices while preserving a larger request", async () => {
-    const fixture = await createAssetFixture();
-    const factory = new RecordingRuntimeFactory();
-    const adapter = new TransformersJsLocalEmbeddingAdapter({
-      artifactDirectory: fixture.artifactDirectory,
-      profile: fixture.profile,
-      runtimeFactory: factory,
-    });
-    const inputs = Array.from({ length: 18 }, (_, index) => ({
-      key: `entry-${index}`,
-      text: `text-${index}`,
-    }));
-
-    const result = await adapter.embed({
-      profile: fixture.profile,
-      inputs,
-      signal: new AbortController().signal,
-    });
-
-    expect(factory.runtime.texts.map((batch) => batch.length)).toEqual([8, 8, 2]);
-    expect(result.map((output) => output.key)).toEqual(
-      inputs.map((input) => input.key),
-    );
-  });
-
   it("fails closed for a missing, changed, or escaping asset", async () => {
     const missing = await createAssetFixture();
     await rm(join(missing.artifactDirectory, "model_quantized.onnx"));

@@ -218,13 +218,6 @@ export interface TransformersJsLocalEmbeddingAdapterOptions {
   readonly runtimeFactory?: LocalFeatureExtractionRuntimeFactory;
 }
 
-/**
- * Bounds native ONNX scratch memory without changing the public provider
- * request. Callers may submit a larger batch; the adapter preserves order and
- * returns one combined result after running fixed-size inference slices.
- */
-const LOCAL_RUNTIME_BATCH_SIZE = 8;
-
 /** Offline-only production adapter backed by a verified Transformers.js ONNX model. */
 export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
   readonly providerKind = "local" as const;
@@ -282,40 +275,21 @@ export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
     if (pooling === "provider_defined") {
       throw new EmbeddingProviderFault("invalid_request", false);
     }
-    const outputs: EmbeddingProviderOutput[] = [];
-    for (
-      let offset = 0;
-      offset < request.inputs.length;
-      offset += LOCAL_RUNTIME_BATCH_SIZE
-    ) {
-      request.signal.throwIfAborted();
-      const inputs = request.inputs.slice(
-        offset,
-        offset + LOCAL_RUNTIME_BATCH_SIZE,
-      );
-      let tensor;
-      try {
-        tensor = await withAbort(
-          runtime.embed(
-            inputs.map((input) => input.text),
-            { pooling, normalize: true },
-          ),
-          request.signal,
-        );
-      } catch (error) {
-        if (request.signal.aborted) throw error;
-        if (error instanceof EmbeddingProviderFault) throw error;
-        throw new EmbeddingProviderFault("provider_unavailable", true);
-      }
-      outputs.push(
-        ...outputsFromTensor(
-          { ...request, inputs },
-          tensor,
-          this.#profile.dimensions,
+    let tensor;
+    try {
+      tensor = await withAbort(
+        runtime.embed(
+          request.inputs.map((input) => input.text),
+          { pooling, normalize: true },
         ),
+        request.signal,
       );
+    } catch (error) {
+      if (request.signal.aborted) throw error;
+      if (error instanceof EmbeddingProviderFault) throw error;
+      throw new EmbeddingProviderFault("provider_unavailable", true);
     }
-    return outputs;
+    return outputsFromTensor(request, tensor, this.#profile.dimensions);
   }
 
   #getRuntime(): Promise<LocalFeatureExtractionRuntime> {
@@ -435,17 +409,6 @@ class TransformersJsRuntimeFactory
         dtype: input.execution.precision,
         subfolder: dirname(input.execution.artifactPath),
         model_file_name: modelFileName(input.execution),
-        ...(input.execution.precision === "q4"
-          ? {
-              session_options: {
-                enableCpuMemArena: false,
-                enableMemPattern: false,
-                executionMode: "sequential" as const,
-                intraOpNumThreads: 1,
-                interOpNumThreads: 1,
-              },
-            }
-          : {}),
       },
     );
     return {
