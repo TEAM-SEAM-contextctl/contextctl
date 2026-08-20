@@ -435,6 +435,17 @@ class TransformersJsRuntimeFactory
         dtype: input.execution.precision,
         subfolder: dirname(input.execution.artifactPath),
         model_file_name: modelFileName(input.execution),
+        ...(input.execution.precision === "q4"
+          ? {
+              session_options: {
+                enableCpuMemArena: false,
+                enableMemPattern: false,
+                executionMode: "sequential" as const,
+                intraOpNumThreads: 1,
+                interOpNumThreads: 1,
+              },
+            }
+          : {}),
       },
     );
     return {
