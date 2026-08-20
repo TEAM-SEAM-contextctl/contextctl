@@ -1,4 +1,4 @@
-import type { PublicationId } from "@contextctl/contracts";
+import type { PublicationId, SourceId } from "@contextctl/contracts";
 
 import type { SourceProcessingLag } from "./processing-lag.js";
 import type {
@@ -63,6 +63,8 @@ export interface ScopeCarrier {
  */
 export interface ScopeDecision {
   readonly kind: "promoted" | "refused" | "withdrawn";
+  /** The audit entry this came from, so a verdict can name its evidence. */
+  readonly eventId: string;
   readonly cardId: CardId;
   /** The Card Version the decision landed on, where the event names one. */
   readonly versionId: CardVersionId | undefined;
@@ -103,12 +105,24 @@ export interface ScopeObservation {
    * ready, not since Registry noticed.
    */
   readonly readySince?: string | undefined;
+  /** Which Source published it, when the caller could resolve that. */
+  readonly sourceId?: SourceId | undefined;
   readonly carriers: readonly ScopeCarrier[];
   readonly decisions: readonly ScopeDecision[];
 }
 
 export interface ScopeReachability {
   readonly reference: RetrievalScopeReference;
+  /**
+   * Which Source published this Scope.
+   *
+   * Optional only because it is read from the Publication, which a composition
+   * without a publication reader cannot fetch — the design has it as required.
+   * Absent means "not resolved", never "no Source": an operator choosing between
+   * creating a Card, approving one and marking a Scope unexposed needs to know
+   * which Source it came from, and a list of bare Scope ids does not tell them.
+   */
+  readonly sourceId?: SourceId | undefined;
   readonly introducedByPublicationId: PublicationId;
   readonly lastSeenPublicationId: PublicationId;
   readonly state: ScopeReachabilityState;
@@ -116,6 +130,14 @@ export interface ScopeReachability {
   readonly stateSince: string | undefined;
   /** The Card Versions that took part in the verdict, not every Card seen. */
   readonly cardVersionIds: readonly CardVersionId[];
+  /**
+   * The audit entry the verdict rests on, where one decided it.
+   *
+   * `stateSince` says when, and on its own it leaves an operator to search the
+   * trail for what happened at that moment. Absent for the states no decision
+   * produced — a Scope waiting to be processed, or one nobody has touched.
+   */
+  readonly lifecycleEventId?: string | undefined;
   /** Always present for `intentionally_unexposed`, absent otherwise. */
   readonly reason: string | undefined;
 }
@@ -154,6 +176,7 @@ export function toScopeDecisions(
 function toDecision(
   kind: ScopeDecision["kind"],
   event: {
+    readonly id: string;
     readonly cardId: CardId;
     readonly occurredAt: string;
     readonly note: string | undefined;
@@ -162,6 +185,7 @@ function toDecision(
 ): ScopeDecision {
   return {
     kind,
+    eventId: event.id,
     cardId: event.cardId,
     versionId,
     occurredAt: event.occurredAt,
@@ -422,12 +446,14 @@ export function judgeScopeReachability(
       return verdict(observation, "broken", undefined, serving, undefined);
     }
 
+    const promotion = latestDecision(decisions, "promoted", serving);
     return verdict(
       observation,
       "reachable",
-      latestDecisionAt(decisions, "promoted", serving),
+      promotion?.occurredAt ?? earliestCreatedAt(serving),
       serving,
       undefined,
+      promotion?.eventId,
     );
   }
 
@@ -463,15 +489,18 @@ export function judgeScopeReachability(
       explained.occurredAt,
       carriers,
       explained.note,
+      explained.eventId,
     );
   }
 
+  const unexplained = latestUnexplainedDecision(decisions);
   return verdict(
     observation,
     "orphaned",
-    latestUnexplainedDecisionAt(decisions),
+    unexplained?.occurredAt,
     carriers,
     undefined,
+    unexplained?.eventId,
   );
 }
 
@@ -481,14 +510,19 @@ function verdict(
   stateSince: string | undefined,
   deciding: readonly ScopeCarrier[],
   reason: string | undefined,
+  lifecycleEventId?: string | undefined,
 ): ScopeReachability {
   return {
     reference: observation.reference,
+    ...(observation.sourceId === undefined
+      ? {}
+      : { sourceId: observation.sourceId }),
     introducedByPublicationId: observation.introducedByPublicationId,
     lastSeenPublicationId: observation.lastSeenPublicationId,
     state,
     stateSince,
     cardVersionIds: deciding.map((carrier) => carrier.versionId),
+    ...(lifecycleEventId === undefined ? {} : { lifecycleEventId }),
     reason,
   };
 }
@@ -559,18 +593,28 @@ function scopeShape(scope: RetrievalScope): string {
   ].join("|");
 }
 
-function latestDecisionAt(
+/**
+ * The most recent decision of one kind that touched these Cards.
+ *
+ * Returns the decision rather than its timestamp so a verdict can name the audit
+ * entry it rests on. `stateSince` alone leaves an operator searching the trail
+ * for what happened at that moment.
+ */
+function latestDecision(
   decisions: readonly ScopeDecision[],
   kind: ScopeDecision["kind"],
   carriers: readonly ScopeCarrier[],
-): string | undefined {
+): ScopeDecision | undefined {
   const cardIds = new Set(carriers.map((carrier) => carrier.cardId));
-  const times = decisions
-    .filter(
-      (decision) => decision.kind === kind && cardIds.has(decision.cardId),
-    )
-    .map((decision) => decision.occurredAt);
-  return maximum(times) ?? earliestCreatedAt(carriers);
+  return decisions
+    .filter((decision) => decision.kind === kind && cardIds.has(decision.cardId))
+    .reduce<ScopeDecision | undefined>(
+      (latest, decision) =>
+        latest === undefined || decision.occurredAt > latest.occurredAt
+          ? decision
+          : latest,
+      undefined,
+    );
 }
 
 function earliestCreatedAt(
@@ -583,8 +627,8 @@ function earliestCreatedAt(
 /** The most recent refusal or withdrawal that recorded a reason. */
 function explainedDecision(
   decisions: readonly ScopeDecision[],
-): { occurredAt: string; note: string } | undefined {
-  let latest: { occurredAt: string; note: string } | undefined;
+): { occurredAt: string; note: string; eventId: string } | undefined {
+  let latest: { occurredAt: string; note: string; eventId: string } | undefined;
   for (const decision of decisions) {
     if (decision.kind === "promoted") {
       continue;
@@ -594,22 +638,23 @@ function explainedDecision(
       continue;
     }
     if (latest === undefined || decision.occurredAt > latest.occurredAt) {
-      latest = { occurredAt: decision.occurredAt, note };
+      latest = { occurredAt: decision.occurredAt, note, eventId: decision.eventId };
     }
   }
   return latest;
 }
 
-function latestUnexplainedDecisionAt(
+function latestUnexplainedDecision(
   decisions: readonly ScopeDecision[],
-): string | undefined {
-  return maximum(
-    decisions
-      .filter((decision) => decision.kind !== "promoted")
-      .map((decision) => decision.occurredAt),
-  );
+): ScopeDecision | undefined {
+  return decisions
+    .filter((decision) => decision.kind !== "promoted")
+    .reduce<ScopeDecision | undefined>(
+      (latest, decision) =>
+        latest === undefined || decision.occurredAt > latest.occurredAt
+          ? decision
+          : latest,
+      undefined,
+    );
 }
 
-function maximum(values: readonly string[]): string | undefined {
-  return [...values].sort().at(-1);
-}

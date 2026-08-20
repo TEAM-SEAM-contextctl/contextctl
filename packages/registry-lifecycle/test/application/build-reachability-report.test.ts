@@ -376,10 +376,20 @@ describe("scope provenance and source checkpoints", () => {
           sourceId === "src_payments"
             ? (latest as unknown as undefined)
             : undefined,
+        // Answers for the Publication the cursor names and for the one the
+        // fixture's Card Version came from — the second is how a Scope observed
+        // through a Card learns which Source published it.
         findById: async (publicationId: string) =>
           publicationId === consumed.publicationId
             ? (consumed as unknown as undefined)
-            : undefined,
+            : publicationId === "pub_initial"
+              ? ({
+                  publicationId: "pub_initial",
+                  sourceId: "src_payments",
+                  producedAt: "2026-08-01T00:00:00.000Z",
+                  knowledgeUnits: [],
+                } as unknown as undefined)
+              : undefined,
       };
     }
 
@@ -488,6 +498,49 @@ describe("scope provenance and source checkpoints", () => {
       // age is whatever the Card-derived Scope contributes — never negative, and
       // present because at least one Scope carries a timestamp.
       expect(report.oldestStateAgeMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("names the Source an observed Scope came from", async () => {
+      // Registry's own tables have no `source_id`: a Card Version records the
+      // Publication, and the Source is the Publication's. Without this an
+      // operator reading `--state orphaned` gets Scope ids and no way to act.
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting()]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed(newest),
+      });
+
+      const observed = report.scopes.find(
+        (scope) => scope.reference.scopeId !== "scope_waiting",
+      );
+      expect(observed?.sourceId).toBe("src_payments");
+    });
+
+    it("names the Source of a Scope that is still waiting", async () => {
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting()]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed(newest),
+      });
+
+      const waiting = report.scopes.find(
+        (scope) => scope.reference.scopeId === "scope_waiting",
+      );
+      // Known without a second read: the Scope was found by asking that Source
+      // for its newest Publication.
+      expect(waiting?.sourceId).toBe("src_payments");
+    });
+
+    it("leaves the Source absent rather than guessing when it cannot be read", async () => {
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting()]),
+        checkpoints: oneCursor,
+        clock,
+      });
+
+      expect(report.scopes[0]?.sourceId).toBeUndefined();
     });
 
     it("reports a Source that consumed the newest Publication as current", async () => {
