@@ -276,6 +276,12 @@ function summarizeSelection(plan: SelectionPlan): SelectionSummary {
  * assembly that quietly discards that evidence is an assembly that cannot tell
  * a stray answer from a misrouted one. There is no item it could be charged to,
  * so it is refused at request level.
+ *
+ * A target answered twice is refused for the same reason (SOT L1637: "중복
+ * 대상 … 조립 실패"). `Map.set` used to let the later answer overwrite the
+ * earlier one, which made "which of two answers did the consumer get" depend on
+ * the executor's array order — and an executor that answers one read twice has
+ * lost track of which read it performed, so neither copy is the one to keep.
  */
 function indexOutcomes(
   plan: SelectionPlan,
@@ -296,6 +302,11 @@ function indexOutcomes(
     if (!planned.has(outcome.targetKey)) {
       throw new ManagedResolutionInvariantError(
         `outcome for target ${outcome.targetKey} matches no planned read`,
+      );
+    }
+    if (byTargetKey.has(outcome.targetKey)) {
+      throw new ManagedResolutionInvariantError(
+        `target ${outcome.targetKey} was answered more than once`,
       );
     }
     byTargetKey.set(outcome.targetKey, outcome);

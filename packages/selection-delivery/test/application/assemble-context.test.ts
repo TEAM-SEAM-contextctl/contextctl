@@ -262,6 +262,40 @@ describe("assembleContext", () => {
     ).toThrow(ManagedResolutionInvariantError);
   });
 
+  it("refuses a target that was answered twice, whichever copy came first", async () => {
+    const plan = await planFor([createRefundPolicyCard()]);
+    const targetKey = soleTargetKey(plan);
+    const [first, ...rest] = chunksWithRanks();
+    if (first === undefined) {
+      throw new Error("expected chunks");
+    }
+    const fuller = { targetKey, status: "fulfilled" as const, chunks: [first, ...rest] };
+    const emptier = { targetKey, status: "fulfilled" as const, chunks: [] };
+
+    // `Map.set` used to keep whichever answer came last, so the consumer's
+    // evidence depended on the executor's array order. Neither copy is the one
+    // to keep: an executor answering one read twice has lost track of the read.
+    expect(() => assembleContext(plan, [fuller, emptier])).toThrow(
+      ManagedResolutionInvariantError,
+    );
+    expect(() => assembleContext(plan, [emptier, fuller])).toThrow(
+      ManagedResolutionInvariantError,
+    );
+  });
+
+  it("refuses a target answered twice even when both copies agree", async () => {
+    const plan = await planFor([createRefundPolicyCard()]);
+    const outcome = {
+      targetKey: soleTargetKey(plan),
+      status: "fulfilled" as const,
+      chunks: chunksWithRanks(),
+    };
+
+    expect(() => assembleContext(plan, [outcome, outcome])).toThrow(
+      ManagedResolutionInvariantError,
+    );
+  });
+
   it("delegates a SQL or HTTP Scope and attaches no outcome to it", async () => {
     const plan = await planFor(createDemoCardSet());
     const resolution = assembleContext(plan, []);
