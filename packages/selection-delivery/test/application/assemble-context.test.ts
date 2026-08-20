@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import { assembleContext } from "../../src/application/assemble-context.js";
 import {
   selectContext,
+  type SelectContextOptions,
   type SelectContextPorts,
 } from "../../src/application/select-context.js";
 import type { ApprovedCard } from "../../src/domain/card-catalog.js";
-import type { ContextResolutionItem } from "../../src/domain/context-resolution.js";
+import type {
+  ContextResolution,
+  ContextResolutionItem,
+} from "../../src/domain/context-resolution.js";
 import { ManagedResolutionInvariantError } from "../../src/domain/errors.js";
 import {
   CONTEXT_ASSEMBLY_POLICY_VERSION,
@@ -35,8 +39,28 @@ function portsFor(cards: readonly ApprovedCard[]): SelectContextPorts {
   return { catalog: new InMemoryCardCatalog(cards) };
 }
 
-function planFor(cards: readonly ApprovedCard[]): Promise<SelectionPlan> {
-  return selectContext(portsFor(cards), DEMO_QUERY);
+function planFor(
+  cards: readonly ApprovedCard[],
+  options: SelectContextOptions = {},
+): Promise<SelectionPlan> {
+  return selectContext(portsFor(cards), DEMO_QUERY, options);
+}
+
+/** The failure assembly itself reports, restated from the SOT rather than imported. */
+const ASSEMBLY_FAILURE = {
+  stage: "assembly",
+  code: "resolution_outcome_invalid",
+  retriable: false,
+} as const;
+
+/** The one managed item of a single-document plan, whatever became of it. */
+function managedItem(resolution: ContextResolution): ContextResolutionItem {
+  const found = resolution.items.find((item) => item.guide.kind === "managed_document");
+
+  if (found === undefined) {
+    throw new Error("expected one managed item");
+  }
+  return found;
 }
 
 /** The one target a single-document plan names. */
@@ -54,6 +78,39 @@ function chunksWithRanks(): ResolvedDocumentChunk[] {
     ...chunk,
     rank: index + 1,
   }));
+}
+
+/**
+ * A second Card over a second managed Scope, so a plan names two targets.
+ *
+ * Same document shape as the refund policy Card, different Scope and index
+ * identity: the two reads are distinct, and whether their answers overlap is
+ * up to the test that uses them.
+ */
+function secondDocumentCard(): ApprovedCard {
+  const first = createRefundPolicyCard();
+
+  return {
+    ...first,
+    cardId: "card_second_document",
+    versionId: "cardv_second_document",
+    scopes: first.scopes.map((scope) =>
+      scope.kind === "managed_document"
+        ? {
+            ...scope,
+            reference: {
+              scopeId: "scope_second_document",
+              scopeVersion: "scopev_0001",
+            },
+            documentIndex: {
+              ...scope.documentIndex,
+              documentIndexId: "docidx_second",
+              documentId: "doc_second",
+            },
+          }
+        : scope,
+    ),
+  };
 }
 
 function itemFor(
@@ -131,18 +188,21 @@ describe("assembleContext", () => {
     });
   });
 
-  it("reports a target the executor never answered for as an empty fulfilment", async () => {
+  it("fails a target the executor never answered for in assembly, and keeps the item", async () => {
     const plan = await planFor([createRefundPolicyCard()]);
     const resolution = assembleContext(plan, []);
     const [item] = resolution.items;
 
-    // Our own bookkeeping slipping, not an upstream failure. The item stays
-    // visible rather than the whole answer being dropped over it.
-    expect(item?.fulfillment.status).toBe("fulfilled");
-    if (item?.fulfillment.status !== "fulfilled") {
-      throw new Error("expected a fulfilled item");
+    // Nobody looked, so "the index answered and had nothing to say" would be a
+    // claim about the document that no read supports. The item stays visible
+    // — a consumer comparing the answer against the Cards that produced it
+    // still finds the Scope — but it says the read did not happen.
+    expect(resolution.items).toHaveLength(1);
+    expect(item?.fulfillment.status).toBe("failed");
+    if (item?.fulfillment.status !== "failed") {
+      throw new Error("expected a failed item");
     }
-    expect(item.fulfillment.context.chunks).toEqual([]);
+    expect(item.fulfillment.failure).toEqual(ASSEMBLY_FAILURE);
   });
 
   it("refuses an outcome whose failure code is not an opaque token", async () => {
@@ -179,27 +239,27 @@ describe("assembleContext", () => {
     ).toThrow(ManagedResolutionInvariantError);
   });
 
-  it("ignores a fulfilled outcome for a target the plan did not name", async () => {
+  it("refuses a fulfilled outcome for a target the plan did not name", async () => {
     const plan = await planFor([createRefundPolicyCard()]);
-    const resolution = assembleContext(plan, [
-      {
-        targetKey: soleTargetKey(plan),
-        status: "fulfilled",
-        chunks: chunksWithRanks(),
-      },
-      {
-        targetKey: "sha256:someone-elses-target",
-        status: "fulfilled",
-        chunks: chunksWithRanks(),
-      },
-    ]);
 
-    expect(resolution.items).toHaveLength(1);
-    const [item] = resolution.items;
-    if (item?.fulfillment.status !== "fulfilled") {
-      throw new Error("expected a fulfilled item");
-    }
-    expect(item.fulfillment.context.chunks).toHaveLength(3);
+    // An answer nobody asked for is evidence that the executor and assembly
+    // disagree about which reads happened. There is no item it could be charged
+    // to, so it is refused at request level rather than quietly dropped — and
+    // the well-formed outcome beside it does not buy it a pass.
+    expect(() =>
+      assembleContext(plan, [
+        {
+          targetKey: soleTargetKey(plan),
+          status: "fulfilled",
+          chunks: chunksWithRanks(),
+        },
+        {
+          targetKey: "sha256:someone-elses-target",
+          status: "fulfilled",
+          chunks: chunksWithRanks(),
+        },
+      ]),
+    ).toThrow(ManagedResolutionInvariantError);
   });
 
   it("delegates a SQL or HTTP Scope and attaches no outcome to it", async () => {
@@ -420,29 +480,7 @@ describe("assembleContext", () => {
     // Two Cards, two distinct managed Scopes, both answered. Per-item numbering
     // would give each item a chunk called 1, and the two chunks would then have
     // no order relative to one another — which is the whole point of the field.
-    const first = createRefundPolicyCard();
-    const second: ApprovedCard = {
-      ...first,
-      cardId: "card_second_document",
-      versionId: "cardv_second_document",
-      scopes: first.scopes.map((scope) =>
-        scope.kind === "managed_document"
-          ? {
-              ...scope,
-              reference: {
-                scopeId: "scope_second_document",
-                scopeVersion: "scopev_0001",
-              },
-              documentIndex: {
-                ...scope.documentIndex,
-                documentIndexId: "docidx_second",
-                documentId: "doc_second",
-              },
-            }
-          : scope,
-      ),
-    };
-    const plan = await planFor([first, second]);
+    const plan = await planFor([createRefundPolicyCard(), secondDocumentCard()]);
 
     expect(plan.managedTargets).toHaveLength(2);
     const resolution = assembleContext(
@@ -474,34 +512,229 @@ describe("assembleContext", () => {
   });
 
   it("marks an item clipped for the budget but never for a repeat", async () => {
-    // Two Cards on the same Scope merge into one item, so the duplicate chunk
-    // revisions land as omissions on that item without any budget being spent.
-    const plan = await planFor([createRefundPolicyCard()]);
-    const targetKey = soleTargetKey(plan);
-    const chunks = chunksWithRanks();
-    const resolution = assembleContext(plan, [
-      {
-        targetKey,
-        status: "fulfilled",
-        // The same three chunks under two different content digests would be
-        // deduplicated as content; repeating one revision is what produces a
-        // `duplicate_chunk_revision` without touching the budget.
-        chunks: [...chunks, ...chunks.map((chunk) => ({ ...chunk, rank: 9 }))],
-      },
-    ]);
-    const [item] = resolution.items;
+    // Two distinct Scopes over the same document both return the same three
+    // revisions. One target cannot list a revision twice any more — that is an
+    // invalid outcome — so the repeat has to come from a second target, which
+    // is also the case fusion exists for. The losing item records three
+    // `duplicate_chunk_revision` omissions without any budget being spent.
+    const plan = await planFor([createRefundPolicyCard(), secondDocumentCard()]);
+    expect(plan.managedTargets).toHaveLength(2);
 
-    if (item?.fulfillment.status !== "fulfilled") {
-      throw new Error("expected a fulfilled item");
-    }
-    expect(
-      item.fulfillment.context.omitted.map((omission) => omission.reason),
-    ).toEqual([
+    const resolution = assembleContext(
+      plan,
+      plan.managedTargets.map((target) => ({
+        targetKey: target.targetKey,
+        status: "fulfilled" as const,
+        chunks: chunksWithRanks(),
+      })),
+    );
+
+    const reasons = resolution.items.flatMap((item) =>
+      item.fulfillment.status === "fulfilled"
+        ? item.fulfillment.context.omitted.map((omission) => omission.reason)
+        : [],
+    );
+    expect(reasons).toEqual([
       "duplicate_chunk_revision",
       "duplicate_chunk_revision",
       "duplicate_chunk_revision",
     ]);
-    expect(item.fulfillment.context.truncated).toBe(false);
+    for (const item of resolution.items) {
+      if (item.fulfillment.status !== "fulfilled") {
+        throw new Error("expected every item to be fulfilled");
+      }
+      expect(item.fulfillment.context.truncated).toBe(false);
+    }
+  });
+
+  describe("holds a fulfilled outcome against the plan before fusing it", () => {
+    /** The three demo chunks under the ranks a test states. */
+    function chunksRanked(ranks: readonly number[]) {
+      return createRefundPolicyChunks()
+        .slice(0, ranks.length)
+        .map((chunk, index) => ({ ...chunk, rank: ranks[index] ?? 0 }));
+    }
+
+    async function assembleWith(
+      chunks: readonly ResolvedDocumentChunk[],
+      options: SelectContextOptions = {},
+    ): Promise<ContextResolutionItem> {
+      const plan = await planFor([createRefundPolicyCard()], options);
+      return managedItem(
+        assembleContext(plan, [
+          { targetKey: soleTargetKey(plan), status: "fulfilled", chunks },
+        ]),
+      );
+    }
+
+    it("fails a read that returned more hits than its bound", async () => {
+      // The bound travelled on the guide and on the target alike; an executor
+      // that returned past it has read more than the plan authorised.
+      const item = await assembleWith(chunksWithRanks(), { chunkLimitPerScope: 2 });
+
+      expect(item.fulfillment.status).toBe("failed");
+      if (item.fulfillment.status !== "failed") {
+        throw new Error("expected a failed item");
+      }
+      expect(item.fulfillment.failure).toEqual(ASSEMBLY_FAILURE);
+    });
+
+    it("accepts a read that returned exactly its bound", async () => {
+      const item = await assembleWith(chunksWithRanks(), { chunkLimitPerScope: 3 });
+
+      expect(item.fulfillment.status).toBe("fulfilled");
+    });
+
+    it("fails ranks with a gap in them", async () => {
+      const item = await assembleWith(chunksRanked([1, 2, 4]));
+
+      expect(item.fulfillment.status).toBe("failed");
+    });
+
+    it("fails a rank that appears twice", async () => {
+      const item = await assembleWith(chunksRanked([1, 2, 2]));
+
+      expect(item.fulfillment.status).toBe("failed");
+    });
+
+    it("fails a rank below one instead of scoring it zero", async () => {
+      // A zero rank breaks the 1-based contract. It used to sink to a score of
+      // zero and still travel; now the target that reported it is not trusted.
+      const item = await assembleWith(chunksRanked([0, 1, 2]));
+
+      expect(item.fulfillment.status).toBe("failed");
+    });
+
+    it("fails a rank that is not an integer", async () => {
+      const item = await assembleWith(chunksRanked([1, 1.5, 2]));
+
+      expect(item.fulfillment.status).toBe("failed");
+    });
+
+    it("fails a non-finite rank instead of sinking it", async () => {
+      const item = await assembleWith(chunksRanked([1, Number.NaN, 3]));
+
+      expect(item.fulfillment.status).toBe("failed");
+    });
+
+    it("accepts ranks that are 1..N in any order", async () => {
+      const item = await assembleWith(chunksRanked([3, 1, 2]));
+
+      expect(item.fulfillment.status).toBe("fulfilled");
+    });
+
+    it("fails a target that lists one chunk revision twice", async () => {
+      const [first, second] = chunksWithRanks();
+      if (first === undefined || second === undefined) {
+        throw new Error("expected two chunks");
+      }
+      const item = await assembleWith([
+        first,
+        { ...second, chunkRevisionId: first.chunkRevisionId },
+      ]);
+
+      // One revision is one chunk; a target naming it twice reports one read as
+      // two, and fusing that would count the same evidence twice.
+      expect(item.fulfillment.status).toBe("failed");
+    });
+
+    it.each([
+      "chunkId",
+      "chunkRevisionId",
+      "semanticUnitId",
+      "documentId",
+      "text",
+      "contentDigest",
+    ] as const)("fails a chunk whose %s is empty", async (field) => {
+      const chunks = chunksWithRanks().map((chunk, index) =>
+        index === 1 ? { ...chunk, [field]: "" } : chunk,
+      );
+      const item = await assembleWith(chunks);
+
+      // An empty citation cannot be checked against anything and an empty text
+      // cannot be evidence; either way the whole target is not trusted, not
+      // just the one chunk.
+      expect(item.fulfillment.status).toBe("failed");
+      if (item.fulfillment.status !== "failed") {
+        throw new Error("expected a failed item");
+      }
+      expect(item.fulfillment.failure).toEqual(ASSEMBLY_FAILURE);
+    });
+
+    it("lets an assembly failure cost one item and no other", async () => {
+      const plan = await planFor(createDemoCardSet(), { chunkLimitPerScope: 2 });
+      const resolution = assembleContext(plan, [
+        {
+          targetKey: soleTargetKey(plan),
+          status: "fulfilled",
+          chunks: chunksWithRanks(),
+        },
+      ]);
+
+      expect(resolution.items).toHaveLength(3);
+      expect(
+        resolution.items.map((item) => item.fulfillment.status).sort(),
+      ).toEqual(["delegated", "delegated", "failed"]);
+      expect(managedItem(resolution).fulfillment).toEqual({
+        status: "failed",
+        executor: "contextctl",
+        failure: ASSEMBLY_FAILURE,
+      });
+    });
+  });
+
+  describe("projects the executor's failure into the consumer's", () => {
+    it("reports a deadline under the one code and flag the SOT fixes", async () => {
+      const plan = await planFor([createRefundPolicyCard()]);
+      const item = managedItem(
+        assembleContext(plan, [
+          {
+            targetKey: soleTargetKey(plan),
+            status: "failed",
+            failure: { stage: "deadline", code: "deadline_exceeded", retriable: true },
+          },
+        ]),
+      );
+
+      if (item.fulfillment.status !== "failed") {
+        throw new Error("expected a failed item");
+      }
+      expect(item.fulfillment.failure).toEqual({
+        stage: "deadline",
+        code: "deadline_exceeded",
+        retriable: true,
+      });
+    });
+
+    it("refuses a deadline reported under a search's code", async () => {
+      const plan = await planFor([createRefundPolicyCard()]);
+
+      // A deadline means the search never answered; a search code on it would
+      // claim it did. That confusion is ours, not a failure mode of the read.
+      expect(() =>
+        assembleContext(plan, [
+          {
+            targetKey: soleTargetKey(plan),
+            status: "failed",
+            failure: { stage: "deadline", code: "cancelled", retriable: true },
+          },
+        ]),
+      ).toThrow(ManagedResolutionInvariantError);
+    });
+
+    it("refuses a deadline marked not retriable", async () => {
+      const plan = await planFor([createRefundPolicyCard()]);
+
+      expect(() =>
+        assembleContext(plan, [
+          {
+            targetKey: soleTargetKey(plan),
+            status: "failed",
+            failure: { stage: "deadline", code: "deadline_exceeded", retriable: false },
+          },
+        ]),
+      ).toThrow(ManagedResolutionInvariantError);
+    });
   });
 
   it("assembles the same resolution for the same plan and outcomes twice", async () => {

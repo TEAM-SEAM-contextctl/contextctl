@@ -23,6 +23,7 @@ import {
   assertOpaqueFailure,
   type ManagedResolutionFailure,
   type ManagedResolutionOutcome,
+  type ResolvedDocumentChunk,
 } from "../domain/managed-resolution.js";
 import {
   assertSelectionScoringPairing,
@@ -84,9 +85,17 @@ function selectionScoringFor(mode: SelectionMode): SelectionScoringPolicyVersion
  * `ContextResolution`, or it throws and a surface reports a `ResolveContextError`
  * instead of a payload.
  *
- * An outcome for a target no item planned is ignored rather than refused. The
- * executor may legitimately answer for targets it was given in one batch across
- * several plans, and an answer nobody asked for costs nothing to drop.
+ * Before anything is fused, every outcome is held against the plan that asked
+ * for it (SOT L1534, L1637, L1639). Two kinds of defect are told apart by where
+ * they are reported. An outcome that cannot be matched to the plan at all — a
+ * target nobody planned, a target answered twice — is a fault in the
+ * bookkeeping between Selection, the executor and this step, and it refuses the
+ * whole assembly, because there is no item it could honestly be charged to. An
+ * outcome that matches its item but does not hold together — too many hits,
+ * ranks with gaps, an empty text — fails *that item* as
+ * `resolution_outcome_invalid` and leaves every other item standing. The second
+ * rule is the one a consumer feels: one broken read costs one Scope, never the
+ * answer.
  */
 export function assembleContext(
   plan: SelectionPlan,
@@ -94,18 +103,20 @@ export function assembleContext(
   options: AssembleContextOptions = {},
 ): ContextResolution {
   const budget = options.budget ?? DEFAULT_CONTEXT_BUDGET;
-  const byTargetKey = indexOutcomes(outcomes);
+  const byTargetKey = indexOutcomes(plan, outcomes);
 
+  const verdicts = new Map<string, ItemVerdict>();
   const candidates: ContextCandidate[] = [];
   for (const item of plan.items) {
     if (!isManagedPlannedItem(item)) {
       continue;
     }
-    const outcome = byTargetKey.get(item.execution.targetKey);
-    if (outcome?.status !== "fulfilled") {
+    const verdict = judgeOutcome(item, byTargetKey.get(item.execution.targetKey));
+    verdicts.set(item.itemKey, verdict);
+    if (verdict.kind !== "fulfilled") {
       continue;
     }
-    for (const chunk of outcome.chunks) {
+    for (const chunk of verdict.chunks) {
       candidates.push({
         // Stamped on here because an executor answers per target and cannot
         // know which item the target was planned for. Assembly and the split
@@ -159,7 +170,7 @@ export function assembleContext(
     },
     selection: summarizeSelection(plan),
     items: plan.items.map((item) =>
-      buildItem(item, byTargetKey, chunksByItem, omissionsByItem),
+      buildItem(item, verdicts, chunksByItem, omissionsByItem),
     ),
   };
 }
@@ -251,20 +262,41 @@ function summarizeSelection(plan: SelectionPlan): SelectionSummary {
 }
 
 /**
- * Indexes the outcomes and checks each failure is one Delivery may repeat.
+ * Indexes the outcomes by target and refuses any the plan cannot account for.
  *
  * Validation happens once here rather than at the point each item is built, so
- * a malformed outcome for a target no item ended up using cannot slip through
- * on the strength of nobody having read it.
+ * a malformed outcome for a target nobody ended up reading cannot slip through
+ * on the strength of nobody having looked at it.
+ *
+ * An outcome for a target the plan never named is refused, not dropped (SOT
+ * L1637: "알 수 없는 결과 … 조립 실패로 처리하며 다른 Guide에 귀속시키지
+ * 않는다"). It used to be ignored on the theory that an executor might answer
+ * for several plans in one batch; but an answer nobody asked for is evidence
+ * that the executor and this step disagree about which reads happened, and an
+ * assembly that quietly discards that evidence is an assembly that cannot tell
+ * a stray answer from a misrouted one. There is no item it could be charged to,
+ * so it is refused at request level.
  */
 function indexOutcomes(
+  plan: SelectionPlan,
   outcomes: readonly ManagedResolutionOutcome[],
 ): ReadonlyMap<string, ManagedResolutionOutcome> {
-  const byTargetKey = new Map<string, ManagedResolutionOutcome>();
+  const planned = new Set<string>();
+  for (const item of plan.items) {
+    if (isManagedPlannedItem(item)) {
+      planned.add(item.execution.targetKey);
+    }
+  }
 
+  const byTargetKey = new Map<string, ManagedResolutionOutcome>();
   for (const outcome of outcomes) {
     if (outcome.status === "failed") {
       assertOpaqueFailure(outcome.failure);
+    }
+    if (!planned.has(outcome.targetKey)) {
+      throw new ManagedResolutionInvariantError(
+        `outcome for target ${outcome.targetKey} matches no planned read`,
+      );
     }
     byTargetKey.set(outcome.targetKey, outcome);
   }
@@ -272,9 +304,102 @@ function indexOutcomes(
   return byTargetKey;
 }
 
+/**
+ * What one managed item's outcome amounts to, once it has been held against the
+ * plan: either chunks assembly may fuse, or a failure the item reports as-is.
+ */
+type ItemVerdict =
+  | { readonly kind: "fulfilled"; readonly chunks: readonly ResolvedDocumentChunk[] }
+  | { readonly kind: "failed"; readonly failure: ManagedFulfillmentFailure };
+
+/**
+ * Decides, for one planned read, whether its outcome may enter assembly.
+ *
+ * Three outcomes are failures and each says why. A read the executor never
+ * answered for is not "a document with nothing in it" — nobody looked — so it
+ * fails in assembly rather than reporting an empty context (SOT L1534: "Plan↔
+ * 결과 1:1 대응"). A read the executor failed is reported in the executor's own
+ * words. A read the executor fulfilled is checked against the plan's bound and
+ * against its own internal consistency before a single chunk of it is trusted
+ * (SOT L1639), and fails as `resolution_outcome_invalid` if it does not hold.
+ */
+function judgeOutcome(
+  item: PlannedManagedItem,
+  outcome: ManagedResolutionOutcome | undefined,
+): ItemVerdict {
+  if (outcome === undefined) {
+    return { kind: "failed", failure: ASSEMBLY_FAILURE };
+  }
+  if (outcome.status === "failed") {
+    return { kind: "failed", failure: toFulfillmentFailure(outcome.failure) };
+  }
+  if (!outcomeHoldsTogether(item.guide.limit, outcome.chunks)) {
+    return { kind: "failed", failure: ASSEMBLY_FAILURE };
+  }
+  return { kind: "fulfilled", chunks: outcome.chunks };
+}
+
+/**
+ * The checks SOT L1639 names for a fulfilled outcome, and nothing beyond them.
+ *
+ * - at most `limit` hits: the bound travelled on the guide and the target
+ *   alike, and an executor that returned more has read past what was planned;
+ * - `rank` is exactly the integers `1..N` with no gap and no repeat: a rank is a
+ *   position in this target's own answer, and an answer with two third places
+ *   or none has no order to fuse;
+ * - `chunkRevisionId` is unique within the target: one revision is one chunk,
+ *   and a target listing it twice is reporting one read as two;
+ * - every identifier, the text and the digest are non-empty: an empty citation
+ *   cannot be checked against anything, and an empty text cannot be evidence.
+ *
+ * A boolean rather than a reason, on purpose. The reason is operator-facing
+ * diagnosis and the SOT keeps that off the consumer response; what the item
+ * reports is the one code that says "do not trust this", and that is enough.
+ */
+function outcomeHoldsTogether(
+  limit: number,
+  chunks: readonly ResolvedDocumentChunk[],
+): boolean {
+  if (chunks.length > limit) {
+    return false;
+  }
+
+  const ranks = new Set<number>();
+  const revisions = new Set<string>();
+  for (const chunk of chunks) {
+    if (
+      !Number.isSafeInteger(chunk.rank) ||
+      chunk.rank < 1 ||
+      chunk.rank > chunks.length ||
+      ranks.has(chunk.rank)
+    ) {
+      return false;
+    }
+    ranks.add(chunk.rank);
+
+    if (revisions.has(chunk.chunkRevisionId)) {
+      return false;
+    }
+    revisions.add(chunk.chunkRevisionId);
+
+    if (
+      chunk.chunkId.length === 0 ||
+      chunk.chunkRevisionId.length === 0 ||
+      chunk.semanticUnitId.length === 0 ||
+      chunk.documentId.length === 0 ||
+      chunk.text.length === 0 ||
+      chunk.contentDigest.length === 0
+    ) {
+      return false;
+    }
+  }
+  // N distinct ranks all inside [1, N] is exactly 1..N.
+  return true;
+}
+
 function buildItem(
   item: PlannedResolutionItem,
-  byTargetKey: ReadonlyMap<string, ManagedResolutionOutcome>,
+  verdicts: ReadonlyMap<string, ItemVerdict>,
   chunksByItem: ReadonlyMap<string, readonly RankedContextChunk[]>,
   omissionsByItem: ReadonlyMap<
     string,
@@ -289,17 +414,19 @@ function buildItem(
     };
   }
 
-  const outcome = byTargetKey.get(item.execution.targetKey);
-  if (outcome?.status === "failed") {
-    return failedItem(item, toFulfillmentFailure(outcome.failure));
+  const verdict = verdicts.get(item.itemKey);
+  if (verdict === undefined) {
+    // Unreachable: every managed item was judged above. Refused rather than
+    // defaulted, because a default here would be a fourth way to produce an
+    // item that nobody decided on.
+    throw new ManagedResolutionInvariantError(
+      `planned item ${item.itemKey} was never judged`,
+    );
+  }
+  if (verdict.kind === "failed") {
+    return failedItem(item, verdict.failure);
   }
 
-  // A target with no outcome at all resolves to an empty context rather than
-  // throwing. It means the executor answered for fewer targets than the plan
-  // named, which is our own bookkeeping slipping; dropping the whole answer
-  // over it would be a worse outcome than an item that honestly reports
-  // nothing, and the item is still visibly present for anyone comparing the
-  // response against the Cards that produced it.
   return {
     selectedBy: item.selectedBy,
     guide: item.guide,
@@ -333,6 +460,21 @@ function failedItem(
     fulfillment: { status: "failed", executor: "contextctl", failure },
   };
 }
+
+/**
+ * The failure assembly itself reports, for a read whose answer cannot be
+ * trusted as it stands.
+ *
+ * One code and one flag, fixed. `resolution_outcome_invalid` is not retriable
+ * because nothing about retrying changes what was already answered: the
+ * executor would have to answer differently, and a consumer cannot make it.
+ * The SOT names this exact pair (L1639, L2457-2461).
+ */
+const ASSEMBLY_FAILURE: ManagedFulfillmentFailure = {
+  stage: "assembly",
+  code: "resolution_outcome_invalid",
+  retriable: false,
+};
 
 /**
  * Projects the executor's failure into the one a consumer receives.
