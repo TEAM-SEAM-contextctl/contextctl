@@ -12,7 +12,6 @@ import {
   InMemoryIndexPublicationStore,
   InMemoryIndexStagingAttemptStore,
   InMemoryIngestionPublicationStore,
-  InMemoryVectorIndexAdapter,
   isDocumentRetrievalEmbeddingProfile,
   ManagedDocumentSearch,
   StaticQueryEmbeddingProviderRegistry,
@@ -63,7 +62,10 @@ import { DaemonContextApplication } from "./context-application.js";
 import { IngestionPublicationRepository } from "./adapters/ingestion-publication-repository.js";
 import { LocalCardEmbeddingAdapter } from "./adapters/local-card-embedding-adapter.js";
 import { RegistryApprovedCardCatalog } from "./adapters/registry-approved-card-catalog.js";
+import { resolveVectorBackend } from "./vector-backend.js";
 import { RegistryIntake } from "./registry-intake.js";
+
+export { VectorBackendConfigurationError } from "./vector-backend.js";
 
 /**
  * The Composition Root.
@@ -249,14 +251,12 @@ export interface DaemonRuntimeOptions {
    * The physical vector index every published document chunk is written to and
    * every managed search reads from.
    *
-   * Defaulted to the network-free in-memory adapter, which is what makes an
-   * unconfigured composition assemble at all. It is also why a composition that
-   * outlives one process has to state this: the in-memory adapter's records die
-   * with the process, so a runtime that published in one process and searched in
-   * another would answer every query with an empty, *successful* result. The
-   * caller that knows it spans processes is the caller that binds a durable one.
+   * Required rather than defaulted. Tests may inject the network-free in-memory
+   * adapter explicitly, but an operating composition must bind Qdrant before it
+   * can create state. Making absence select a test adapter lets one process
+   * publish vectors that the next process cannot read while both report success.
    */
-  readonly vectorIndex?: VectorIndexPort;
+  readonly vectorIndex: VectorIndexPort;
   /**
    * Ingestion's own durable state, all five stores together or none of them.
    *
@@ -367,8 +367,11 @@ export interface DaemonRuntime {
  * A durable composition swaps those three and changes nothing else.
  */
 export function createDaemonRuntime(
-  options: DaemonRuntimeOptions = {},
+  options: DaemonRuntimeOptions,
 ): DaemonRuntime {
+  if (options.vectorIndex === undefined) {
+    throw new TypeError("an explicit vector index is required");
+  }
   const securityDomain = options.securityDomain ?? DEFAULT_SECURITY_DOMAIN;
   const connectorId = options.connectorId ?? DEFAULT_CONNECTOR_ID;
   const embeddingProfile =
@@ -392,7 +395,7 @@ export function createDaemonRuntime(
   const cards = new SqliteCardStore(database);
 
   const embeddingProvider = resolveEmbeddingProvider(options, embeddingProfile);
-  const vectorIndex = options.vectorIndex ?? new InMemoryVectorIndexAdapter();
+  const vectorIndex = options.vectorIndex;
   const vectorIndexes = new StaticVectorIndexConnectorRegistry([
     { connectorId, vectorIndex },
   ]);
@@ -623,12 +626,15 @@ export function readDaemonRuntimeOptions(
   // makes `{ key: undefined }` different from an absent key, and an absent key
   // is what selects the default.
   const options: {
+    vectorIndex: VectorIndexPort;
     registryDatabaseLocation?: string;
     securityDomain?: string;
     connectorId?: string;
     stateNamespaceId?: string;
     embeddingArtifactDirectory?: string;
-  } = {};
+  } = {
+    vectorIndex: resolveVectorBackend(environment).vectorIndex,
+  };
   const location = environment.CONTEXTCTL_REGISTRY_DATABASE;
   if (location !== undefined) {
     options.registryDatabaseLocation = location;

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
   EmbeddingProviderFault,
+  InMemoryVectorIndexAdapter,
   type PublishedIndexVersion,
 } from "@contextctl/ingestion-indexing";
 import {
@@ -33,6 +34,7 @@ import {
   DETERMINISTIC_CARD_SELECTION_PROFILE,
   readDaemonRuntimeOptions,
   readHttpPort,
+  VectorBackendConfigurationError,
   type DaemonRuntime,
   type DaemonRuntimeOptions,
 } from "../src/main.js";
@@ -53,10 +55,11 @@ const runtimes: DaemonRuntime[] = [];
  * closed without installed assets, so a test that wants network-free vectors
  * has to say so — which is the point of the guard being there.
  */
-function buildRuntime(options?: DaemonRuntimeOptions): DaemonRuntime {
+function buildRuntime(options: Partial<DaemonRuntimeOptions> = {}): DaemonRuntime {
   const runtime = createDaemonRuntime({
     embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
     embeddingProvider: new DeterministicEmbeddingAdapter(),
+    vectorIndex: new InMemoryVectorIndexAdapter(),
     ...options,
   });
   runtimes.push(runtime);
@@ -365,6 +368,12 @@ function toolPayload(
 
 describe("createDaemonRuntime", () => {
   describe("port binding", () => {
+    it("requires a vector index instead of selecting the test adapter", () => {
+      expect(() =>
+        createDaemonRuntime({} as DaemonRuntimeOptions),
+      ).toThrow("an explicit vector index is required");
+    });
+
     it("binds the catalog and the coordinator this app owns", () => {
       const runtime = buildRuntime();
 
@@ -395,8 +404,9 @@ describe("createDaemonRuntime", () => {
     });
 
     it("refuses to assemble a production profile without installed assets", () => {
-      expect(() => createDaemonRuntime()).toThrow(EmbeddingProviderFault);
-      expect(() => createDaemonRuntime()).toThrowError(
+      const options = { vectorIndex: new InMemoryVectorIndexAdapter() };
+      expect(() => createDaemonRuntime(options)).toThrow(EmbeddingProviderFault);
+      expect(() => createDaemonRuntime(options)).toThrowError(
         expect.objectContaining({ code: "embedding_artifact_unavailable" }),
       );
     });
@@ -404,6 +414,7 @@ describe("createDaemonRuntime", () => {
     it("refuses the deterministic adapter under a production profile", () => {
       expect(() =>
         createDaemonRuntime({
+          vectorIndex: new InMemoryVectorIndexAdapter(),
           embeddingArtifactDirectory: "/nonexistent/assets",
           embeddingProvider: new DeterministicEmbeddingAdapter(),
         }),
@@ -413,6 +424,7 @@ describe("createDaemonRuntime", () => {
     it("binds the local adapter when an artifact directory is configured", () => {
       // Bypasses the deterministic test composition on purpose.
       const runtime = createDaemonRuntime({
+        vectorIndex: new InMemoryVectorIndexAdapter(),
         embeddingArtifactDirectory: "/nonexistent/assets",
       });
       runtimes.push(runtime);
@@ -425,6 +437,7 @@ describe("createDaemonRuntime", () => {
 
     it("binds a Card vector family separate from the document one", () => {
       const runtime = createDaemonRuntime({
+        vectorIndex: new InMemoryVectorIndexAdapter(),
         embeddingArtifactDirectory: "/nonexistent/assets",
       });
       runtimes.push(runtime);
@@ -457,6 +470,7 @@ describe("createDaemonRuntime", () => {
 
     it("serves Card vectors from the session the document path loaded", () => {
       const runtime = createDaemonRuntime({
+        vectorIndex: new InMemoryVectorIndexAdapter(),
         embeddingArtifactDirectory: "/nonexistent/assets",
       });
       runtimes.push(runtime);
@@ -491,6 +505,7 @@ describe("createDaemonRuntime", () => {
     it("refuses the deterministic Card adapter under a production Card profile", () => {
       expect(() =>
         createDaemonRuntime({
+          vectorIndex: new InMemoryVectorIndexAdapter(),
           embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
           embeddingProvider: new DeterministicEmbeddingAdapter(),
           cardSelectionProfile: CARD_SELECTION_EMBEDDING_PROFILE,
@@ -730,42 +745,48 @@ describe("createDaemonRuntime", () => {
 });
 
 describe("readDaemonRuntimeOptions", () => {
-  it("returns no keys at all for an empty environment", () => {
-    // Keys, not equality: `exactOptionalPropertyTypes` makes an absent key
-    // different from an explicit `undefined`, and only an absent key selects
-    // the default.
-    expect(Object.keys(readDaemonRuntimeOptions({}))).toEqual([]);
+  it("refuses an environment without the required Qdrant endpoint", () => {
+    expect(() => readDaemonRuntimeOptions({})).toThrow(
+      VectorBackendConfigurationError,
+    );
   });
 
-  it("reads the database location, security domain and connector", () => {
-    expect(
-      readDaemonRuntimeOptions({
-        CONTEXTCTL_REGISTRY_DATABASE: "/tmp/cards.sqlite",
-        CONTEXTCTL_SECURITY_DOMAIN: "payments",
-        CONTEXTCTL_CONNECTOR_ID: "vector.remote",
-      }),
-    ).toEqual({
+  it("reads Qdrant, the database location, security domain and connector", () => {
+    const options = readDaemonRuntimeOptions({
+      CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
+      CONTEXTCTL_REGISTRY_DATABASE: "/tmp/cards.sqlite",
+      CONTEXTCTL_SECURITY_DOMAIN: "payments",
+      CONTEXTCTL_CONNECTOR_ID: "vector.remote",
+    });
+
+    expect(options).toMatchObject({
       registryDatabaseLocation: "/tmp/cards.sqlite",
       securityDomain: "payments",
       connectorId: "vector.remote",
     });
+    expect(options.vectorIndex).toBeDefined();
   });
 
   it("treats an empty value as a value rather than as an absent setting", () => {
     const options = readDaemonRuntimeOptions({
+      CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
       CONTEXTCTL_SECURITY_DOMAIN: "",
     });
 
-    expect(Object.keys(options)).toEqual(["securityDomain"]);
+    expect(Object.keys(options).sort()).toEqual(["securityDomain", "vectorIndex"]);
     expect(options.securityDomain).toBe("");
   });
 
   it("ignores every other variable in the environment", () => {
     expect(
       Object.keys(
-        readDaemonRuntimeOptions({ PATH: "/usr/bin", HOME: "/root" }),
+        readDaemonRuntimeOptions({
+          CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
+          PATH: "/usr/bin",
+          HOME: "/root",
+        }),
       ),
-    ).toEqual([]);
+    ).toEqual(["vectorIndex"]);
   });
 });
 

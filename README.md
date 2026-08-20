@@ -15,7 +15,7 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 | | |
 |---|---|
 | **Node.js** | **24 이상** — 저장소가 `node:sqlite` 위에 있고, 그 모듈은 Node 24 에서 처음 제공됩니다. 설치 스크립트가 24 미만이면 중단합니다 |
-| **Qdrant** | 사실상 필수입니다. 아래 「왜 Qdrant 가 필요한가」 참조 |
+| **Qdrant** | 필수입니다. `ingest`, `query`, `serve` 는 Qdrant 주소가 없으면 시작하지 않습니다 |
 | **디스크** | 임베딩 모델 **396.1 MiB** |
 
 > ★ **`fnm` · `nvm` · `asdf` 를 쓴다면**: 이들은 **활성 Node 버전의 `bin` 에만** 설치합니다.
@@ -58,11 +58,10 @@ docker run -d -p 6333:6333 qdrant/qdrant
 export CONTEXTCTL_QDRANT_URL=http://localhost:6333
 ```
 
-**왜 필요한가.** 없으면 벡터 색인이 프로세스 메모리에만 있습니다. `ingest` 와 `query` 는
-서로 다른 프로세스이므로, `ingest` 가 만든 색인은 그 프로세스가 끝나며 사라지고
-**`query` 는 빈 결과를 냅니다.** 선택 사항이 아닙니다.
-
-(`contextctl serve` 로 한 프로세스를 유지하면 Qdrant 없이도 동작하지만, CLI 로 쓰려면 필요합니다.)
+**왜 필요한가.** 문서 수집 결과와 검색 벡터는 다음 프로세스에서도 동일하게 보여야 합니다.
+인메모리 색인은 테스트에서만 명시적으로 사용하며 운영 대체 경로가 아닙니다.
+`CONTEXTCTL_QDRANT_URL` 이 없으면 `ingest`, `query`, `serve` 는 데이터베이스를 열기 전에
+`qdrant_endpoint_required`로 실패하므로, 벡터 없이 게시 완료 상태만 남는 일이 없습니다.
 
 ### 2. 임베딩 모델을 설치합니다
 
@@ -164,38 +163,9 @@ contextctl query "반차는 어떻게 써?"
 
 | 변수 | |
 |---|---|
-| `CONTEXTCTL_QDRANT_URL` | 없으면 메모리 색인 (위 참조) |
+| `CONTEXTCTL_QDRANT_URL` | 필수. 없으면 `ingest`, `query`, `serve` 시작 거부 |
 | `CONTEXTCTL_QDRANT_API_KEY` | 선택 |
 | `CONTEXTCTL_QDRANT_TIMEOUT_MS` | 선택 |
-
-#### 색인이 비었을 때 — 다시 만드는 방법
-
-Qdrant 없이 `ingest` 한 뒤에 나중에 Qdrant 를 붙이면 이 상태가 됩니다. **승인된 Card 는 있는데
-검색할 벡터가 없습니다.**
-
-`ingest` 를 다시 해도 풀리지 않습니다.
-
-```bash
-contextctl ingest
-# source.leave: unchanged      ← 문서가 안 바뀌었으므로 건너뜁니다
-```
-
-`ingest` 는 **문서가 바뀌었는지**만 봅니다. 색인이 존재하는지는 보지 않습니다. 안 바뀐 문서를
-매번 다시 임베딩하지 않는 것이 이 제품의 설계이고, `source remove` 후 다시 `add` 해도
-같은 판단이 나옵니다.
-
-색인만 다시 만들려면 **Ingestion 저장소를 지우고** 수집합니다.
-
-```bash
-contextctl paths                    # Ingestion 저장소 위치 확인
-rm ~/.contextctl/ingestion.db       # 기본 경로일 때
-contextctl ingest
-```
-
-**승인은 유지됩니다.** Publication ID 가 문서 내용에서 계산되므로 같은 문서는 같은 ID 를 만들고,
-Registry 는 `already_claimed` 로 받습니다. Card·승인·이력은 `registry.db` 에 있고 건드리지 않습니다.
-
-> ★ `registry.db` 는 지우지 마십시오. 그쪽을 지우면 승인이 사라져 다시 승인해야 합니다.
 
 ### ★ Card 의미 생성기 — 설정을 권장합니다
 
@@ -308,7 +278,7 @@ contextctl status --json   # 감시 도구가 읽는 형태
 resolve           not_ready  임베딩 자산이 없어 질문을 벡터로 만들 수 없습니다. contextctl install-assets 를 실행하세요.
 registry          ready      게시된 Publication 을 모두 소비했습니다.
 selection_assets  not_ready  임베딩 모델이 설치되어 있지 않습니다: …/embedding-assets/active.json 를 읽을 수 없습니다 …. contextctl install-assets 를 실행하세요.
-ingestion         ready      끝나지 않은 게시가 없습니다. 점검 대상은 한 번이라도 소비된 Source 0개입니다. …
+ingestion         not_ready  게시할 지속 가능한 벡터 인덱스가 설정되지 않았습니다: CONTEXTCTL_QDRANT_URL이 필요합니다 …
 
 not_ready lane 이 있어 서비스할 수 없습니다.
 ```
@@ -359,10 +329,10 @@ contextctl status --json > status.json || echo "막힌 영역이 있습니다"
 
 | 실행 영역 | 판정 근거 |
 | -- | -- |
-| `resolve` | 승인 Card 를 읽을 수 있는가, 질문을 벡터로 만들 수 있는가 |
+| `resolve` | 승인 Card 를 읽고 질문을 벡터로 만들며 지속 가능한 색인을 검색할 수 있는가 |
 | `registry` | 소비하지 않은 Publication 이 있는가, 5분 넘게 대기 중인 Scope 가 있는가 |
 | `selection_assets` | 고정된 임베딩 자산이 설치되어 있는가 |
-| `ingestion` | 끝나지 않은 게시가 남은 Source 가 있는가 |
+| `ingestion` | 지속 가능한 색인이 설정됐고 끝나지 않은 게시가 남은 Source 가 없는가 |
 
 **`registry` 가 밀려도 `resolve` 는 `ready` 입니다.** 낡은 Card 로 답하는 것은 고장이 아니라 지연이고, 이때 운영자가 할 일은 프로세스를 재시작하는 것이 아니라 기다리거나 `ingest` 를 다시 실행하는 것입니다.
 
@@ -413,7 +383,8 @@ Claude Code 에 붙이려면 프로젝트 루트 `.mcp.json` 에:
 contextctl paths
 ```
 
-그리고 원하는 것만 지웁니다.
+그리고 제거 범위를 정합니다. Registry, Ingestion, Qdrant 색인은 하나의 운영 상태이므로
+일부만 지워 재구축하는 복구 절차는 지원하지 않습니다.
 
 ### ① 명령 — 안전
 
@@ -434,7 +405,7 @@ rm -rf ~/.contextctl/embedding-assets
 
 `contextctl install-assets` 로 언제든 복구됩니다.
 
-### ③ 상태 — ★ 승인한 Card 가 사라집니다
+### ③ 로컬 상태 — ★ 승인한 Card 가 사라집니다
 
 ```bash
 rm ~/.contextctl/registry.db      # Card 와 승인 이력 — 다시 승인해야 합니다
@@ -442,8 +413,10 @@ rm ~/.contextctl/ingestion.db     # 관측·게시 이력 — 같은 문서를 �
 rm ~/.contextctl/sources.json     # 등록한 문서 목록
 ```
 
-되돌릴 수 없습니다. 셋은 따로 지울 수 있습니다 — Card 는 두고 수집만 초기화할 수 있습니다.
-색인만 다시 만들려는 것이라면 [색인이 비었을 때](#색인이-비었을-때--다시-만드는-방법)를 보십시오.
+되돌릴 수 없습니다. 실행 중인 daemon 을 먼저 중지하고, 필요하다면 세 파일을 백업한 뒤
+Registry 와 Ingestion 상태를 함께 초기화하십시오. 둘 중 하나만 지우면 Publication 연쇄,
+소비 위치, 승인 이력이 서로 다른 시점을 가리킬 수 있습니다. 색인 복구 목적으로 이 파일들을
+지우지 마십시오.
 
 ### ④ Qdrant 컬렉션 — ★ contextctl 이 띄운 서버가 아닙니다
 

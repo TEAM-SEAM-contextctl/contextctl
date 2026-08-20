@@ -103,6 +103,16 @@ describe("contextctl status on a fresh machine", () => {
     expect(result.stdout).toContain("contextctl install-assets");
   });
 
+  it("reports the missing durable index as an Ingestion blocker", async () => {
+    const result = await runStatusIn(await freshHome());
+    const ingestionLine = result.stdout
+      .split("\n")
+      .find((line) => line.startsWith("ingestion"));
+
+    expect(ingestionLine).toContain("not_ready");
+    expect(ingestionLine).toContain("CONTEXTCTL_QDRANT_URL");
+  });
+
   it("reports Registry as ready on an empty database", async () => {
     const result = await runStatusIn(await freshHome());
     const registryLine = result.stdout

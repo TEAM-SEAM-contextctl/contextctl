@@ -22,7 +22,7 @@ import {
 } from "./meaning-generator.js";
 import { resolveContextctlPaths, readNonEmpty } from "./paths.js";
 import { readSourcesFile, SourcesFileError } from "./sources-file.js";
-import { resolveVectorBackend } from "./vector-backend.js";
+import { resolveVectorBackend } from "../vector-backend.js";
 
 /**
  * What `contextctl doctor` reports, and why it is not the composition root.
@@ -396,30 +396,19 @@ async function collectSizeProblems(
  *
  * No connection is attempted. A `doctor` that hangs for a TCP timeout against a
  * Qdrant an operator has not started yet is a `doctor` that gets interrupted,
- * and "the server is down" is a different question from "is this CLI set up" —
- * `emptyResultDiagnosis` already answers the first one where it matters.
- *
- * In-memory is a warning rather than `ok` because it is the default and it
- * silently loses every index when the process exits, which reads to an operator
- * as `contextctl ingest` having done nothing.
+ * and "the server is down" is a different question from "is this CLI set up".
+ * The endpoint is nevertheless mandatory: an unset endpoint is a broken
+ * production composition, not a request for a volatile fallback.
  */
 function checkVectorBackend(
   environment: Readonly<Partial<Record<string, string>>>,
 ): DiagnosisStep {
   try {
     const backend = resolveVectorBackend(environment);
-    if (backend.kind === "in_memory") {
-      return diagnosis(
-        "vector-backend",
-        "warn",
-        "벡터 색인이 메모리에만 있습니다. 프로세스가 끝나면 색인이 사라져 다음 contextctl query 는 결과가 비어 있습니다.",
-        "CONTEXTCTL_QDRANT_URL 로 Qdrant 를 지정하면 색인이 유지됩니다.",
-      );
-    }
     return diagnosis(
       "vector-backend",
       "ok",
-      `Qdrant 를 쓰도록 설정되어 있습니다: ${backend.endpoint ?? "(주소 없음)"} (접속은 확인하지 않았습니다)`,
+      `Qdrant 를 쓰도록 설정되어 있습니다: ${backend.endpoint} (접속은 확인하지 않았습니다)`,
     );
   } catch (error) {
     return diagnosis(
@@ -536,4 +525,3 @@ function diagnosis(
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-

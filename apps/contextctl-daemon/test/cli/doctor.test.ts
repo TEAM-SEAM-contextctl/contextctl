@@ -275,14 +275,15 @@ describe("runDiagnosis / sources", () => {
 });
 
 describe("runDiagnosis / backends", () => {
-  it("warns about the in-memory index and does not dial Qdrant when one is set", async () => {
+  it("fails without Qdrant and does not dial a configured endpoint", async () => {
     const home = await makeHome();
 
-    const volatile = stepNamed(
+    const missing = stepNamed(
       await runDiagnosis({ environment: { CONTEXTCTL_HOME: home } }),
       "vector-backend",
     );
-    expect(volatile.status).toBe("warn");
+    expect(missing.status).toBe("fail");
+    expect(missing.remedy).toContain("CONTEXTCTL_QDRANT_URL");
 
     // No server is listening on 6333 in CI. `ok` here is the assertion that no
     // connection was attempted — a dial would have to either hang or fail.
@@ -427,12 +428,13 @@ describe("runDiagnosis / report", () => {
     expect(everything.steps.map((step) => step.status)).not.toContain("warn");
     expect(everything.healthy).toBe(true);
 
-    // Only the vector backend degrades: a warning must not flip `healthy`.
-    const warned = await runDiagnosis({
+    // A missing durable index is a broken production composition, not a
+    // degraded mode. It must flip the aggregate verdict.
+    const missingQdrant = await runDiagnosis({
       environment: { CONTEXTCTL_HOME: home },
     });
-    expect(warned.steps.map((step) => step.status)).toContain("warn");
-    expect(warned.healthy).toBe(true);
+    expect(missingQdrant.steps.map((step) => step.status)).toContain("fail");
+    expect(missingQdrant.healthy).toBe(false);
 
     const broken = await runDiagnosis({
       environment: { ...healthyEnvironment(home), CONTEXTCTL_SOURCES_FILE: home },

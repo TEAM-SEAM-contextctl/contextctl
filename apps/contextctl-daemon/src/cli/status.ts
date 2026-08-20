@@ -50,6 +50,11 @@ export type AssetObservation =
   | { readonly status: "installed"; readonly directory: string }
   | { readonly status: "unavailable"; readonly detail: string };
 
+/** The durable vector index required by both publish and resolve paths. */
+export type VectorIndexObservation =
+  | { readonly status: "configured"; readonly endpoint: string }
+  | { readonly status: "unavailable"; readonly detail: string };
+
 /**
  * Registry's own state, as the reachability report gives it.
  *
@@ -97,6 +102,7 @@ export interface StatusObservation {
   readonly assets: AssetObservation;
   readonly registry: RegistryObservation;
   readonly ingestion: IngestionObservation;
+  readonly vectorIndex: VectorIndexObservation;
 }
 
 const LANE_ORDER: readonly LaneName[] = [
@@ -112,7 +118,7 @@ export function judgeLanes(observation: StatusObservation): StatusReport {
     judgeResolve(observation),
     judgeRegistry(observation.registry),
     judgeSelectionAssets(observation.assets),
-    judgeIngestion(observation.ingestion),
+    judgeIngestion(observation.ingestion, observation.vectorIndex),
   ];
   // Ordered by the design's own list rather than by severity. An operator reads
   // the same four lines in the same places every time, and a report that
@@ -147,7 +153,7 @@ export function judgeLanes(observation: StatusObservation): StatusReport {
  * no selection to make — the lane is not slow, it is unable.
  */
 function judgeResolve(observation: StatusObservation): LaneVerdict {
-  const { registry, assets } = observation;
+  const { registry, assets, vectorIndex } = observation;
   if (registry.status === "unreadable") {
     return lane(
       "resolve",
@@ -160,6 +166,13 @@ function judgeResolve(observation: StatusObservation): LaneVerdict {
       "resolve",
       "not_ready",
       "임베딩 자산이 없어 질문을 벡터로 만들 수 없습니다. contextctl install-assets 를 실행하세요.",
+    );
+  }
+  if (vectorIndex.status === "unavailable") {
+    return lane(
+      "resolve",
+      "not_ready",
+      `지속 가능한 벡터 인덱스가 설정되지 않았습니다: ${vectorIndex.detail}`,
     );
   }
   if (registry.approvedCardCount === 0) {
@@ -256,7 +269,17 @@ function judgeSelectionAssets(observation: AssetObservation): LaneVerdict {
  * consumer cursors — so a Source that was published and never consumed is not
  * covered. An unqualified `ready` here would claim more than was checked.
  */
-function judgeIngestion(observation: IngestionObservation): LaneVerdict {
+function judgeIngestion(
+  observation: IngestionObservation,
+  vectorIndex: VectorIndexObservation,
+): LaneVerdict {
+  if (vectorIndex.status === "unavailable") {
+    return lane(
+      "ingestion",
+      "not_ready",
+      `게시할 지속 가능한 벡터 인덱스가 설정되지 않았습니다: ${vectorIndex.detail}`,
+    );
+  }
   if (observation.status === "unreadable") {
     return lane(
       "ingestion",
