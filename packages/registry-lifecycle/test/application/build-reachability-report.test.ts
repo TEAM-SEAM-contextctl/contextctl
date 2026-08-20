@@ -315,8 +315,12 @@ describe("scope provenance and source checkpoints", () => {
     });
 
     expect(report.sourceCheckpoints).toEqual([
-      { sourceId: "src_payments", processedPublicationId: "pub_p7", behind: false },
-      { sourceId: "src_refunds", processedPublicationId: "pub_r2", behind: false },
+      { sourceId: "src_payments", processedPublicationId: "pub_p7" },
+      { sourceId: "src_refunds", processedPublicationId: "pub_r2" },
+    ]);
+    expect(report.sourceFreshnessLags.map((lag) => lag.sourceId)).toEqual([
+      "src_payments",
+      "src_refunds",
     ]);
   });
 
@@ -338,7 +342,7 @@ describe("scope provenance and source checkpoints", () => {
     });
 
     expect(report.sourceCheckpoints[0]?.latestReadyPublicationId).toBeUndefined();
-    expect(report.sourceCheckpoints[0]?.freshnessLagMs).toBeUndefined();
+    expect(report.sourceFreshnessLags[0]?.freshnessLagMs).toBeUndefined();
   });
 
   describe("with a publication reader assembled", () => {
@@ -408,11 +412,18 @@ describe("scope provenance and source checkpoints", () => {
         publications: feed(newest),
       });
 
+      // Two arrays, keyed by the same id: the design keeps the position and the
+      // delay apart, and only the second is a judgement.
       expect(report.sourceCheckpoints).toEqual([
         {
           sourceId: "src_payments",
           processedPublicationId: "pub_p7",
           latestReadyPublicationId: "pub_p9",
+        },
+      ]);
+      expect(report.sourceFreshnessLags).toEqual([
+        {
+          sourceId: "src_payments",
           behind: true,
           freshnessLagMs: 2 * 60 * 60 * 1_000,
         },
@@ -467,7 +478,7 @@ describe("scope provenance and source checkpoints", () => {
       });
 
       expect(report.counts.pending_registry).toBe(0);
-      expect(report.sourceCheckpoints[0]?.behind).toBe(true);
+      expect(report.sourceFreshnessLags[0]?.behind).toBe(true);
     });
 
     it("excludes a waiting Scope from the coverage denominator", async () => {
@@ -553,8 +564,8 @@ describe("scope provenance and source checkpoints", () => {
         publications: feed({ ...consumed } as typeof newest),
       });
 
-      expect(report.sourceCheckpoints[0]?.behind).toBe(false);
-      expect(report.sourceCheckpoints[0]?.freshnessLagMs).toBe(0);
+      expect(report.sourceFreshnessLags[0]?.behind).toBe(false);
+      expect(report.sourceFreshnessLags[0]?.freshnessLagMs).toBe(0);
     });
   });
 

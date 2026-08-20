@@ -153,3 +153,47 @@ function elapsedMs(from: string, to: string): number | undefined {
   }
   return end - start;
 }
+
+/**
+ * One Source's position, as the report publishes it.
+ *
+ * Exactly the three fields the design names, and no more. The delay travels in
+ * `sourceFreshnessLags` instead of here because the design keeps the two apart —
+ * §6 speaks of "Source freshness lag와 sourceCheckpoints" as two places a new
+ * Publication's unprocessed state shows up, not one. Folding the delay into the
+ * position would also mean a consumer that wants only the watermark has to read
+ * past a judgement it did not ask for.
+ */
+export interface SourceCheckpoint {
+  readonly sourceId: SourceId;
+  readonly processedPublicationId?: PublicationId | undefined;
+  readonly latestReadyPublicationId?: PublicationId | undefined;
+}
+
+/** One Source's delay, keyed by the same id as its checkpoint. */
+export interface SourceFreshnessLag {
+  readonly sourceId: SourceId;
+  readonly behind: boolean;
+  readonly freshnessLagMs?: number | undefined;
+}
+
+/** Splits one judgement into the two shapes the report publishes. */
+export function toSourceCheckpoint(lag: SourceProcessingLag): SourceCheckpoint {
+  return {
+    sourceId: lag.sourceId,
+    ...(lag.processedPublicationId === undefined
+      ? {}
+      : { processedPublicationId: lag.processedPublicationId }),
+    ...(lag.latestReadyPublicationId === undefined
+      ? {}
+      : { latestReadyPublicationId: lag.latestReadyPublicationId }),
+  };
+}
+
+export function toSourceFreshnessLag(lag: SourceProcessingLag): SourceFreshnessLag {
+  return {
+    sourceId: lag.sourceId,
+    behind: lag.behind,
+    ...(lag.freshnessLagMs === undefined ? {} : { freshnessLagMs: lag.freshnessLagMs }),
+  };
+}

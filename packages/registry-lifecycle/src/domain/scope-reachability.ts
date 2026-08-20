@@ -1,6 +1,12 @@
 import type { PublicationId, SourceId } from "@contextctl/contracts";
 
-import type { SourceProcessingLag } from "./processing-lag.js";
+import {
+  toSourceCheckpoint,
+  toSourceFreshnessLag,
+  type SourceCheckpoint,
+  type SourceFreshnessLag,
+  type SourceProcessingLag,
+} from "./processing-lag.js";
 import type {
   CardId,
   CardValidationState,
@@ -216,7 +222,16 @@ export interface ReachabilityReport {
    * invent one, and a Source that is behind would look current whenever another
    * Source moved.
    */
-  readonly sourceCheckpoints: readonly SourceProcessingLag[];
+  readonly sourceCheckpoints: readonly SourceCheckpoint[];
+  /**
+   * Per Source, how far behind consumption is — the same ids as above.
+   *
+   * A second array rather than two more fields on the checkpoint, because the
+   * design treats position and delay as separate readings and only the delay is a
+   * judgement. A consumer that wants the watermark reads one; a consumer asking
+   * "is anything stale" reads the other.
+   */
+  readonly sourceFreshnessLags: readonly SourceFreshnessLag[];
   readonly counts: Readonly<Record<ScopeReachabilityState, number>>;
   /**
    * Share of exposable Scope versions that a query can actually reach.
@@ -308,7 +323,7 @@ export function collectScopeObservations(
 export function summarizeScopeReachability(
   generatedAt: string,
   verdicts: readonly ScopeReachability[],
-  sourceCheckpoints: readonly SourceProcessingLag[] = [],
+  sourceLags: readonly SourceProcessingLag[] = [],
 ): ReachabilityReport {
   const counts: Record<ScopeReachabilityState, number> = {
     pending_registry: 0,
@@ -327,12 +342,14 @@ export function summarizeScopeReachability(
     counts.pending_registry -
     counts.intentionally_unexposed;
   const oldest = oldestStateAge(generatedAt, verdicts);
+  const sorted = [...sourceLags].sort((left, right) =>
+    left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0,
+  );
 
   return {
     generatedAt,
-    sourceCheckpoints: [...sourceCheckpoints].sort((left, right) =>
-      left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0,
-    ),
+    sourceCheckpoints: sorted.map(toSourceCheckpoint),
+    sourceFreshnessLags: sorted.map(toSourceFreshnessLag),
     counts,
     currentReachabilityCoverage:
       exposable === 0 ? 1 : counts.reachable / exposable,
