@@ -56,6 +56,12 @@ function withdrawalEvent(note: string | undefined): LifecycleEvent {
   };
 }
 
+/** A reader with nothing to report — required, and not the same as no reader. */
+const emptyFeed = {
+  latestForSource: async () => undefined,
+  findById: async () => undefined,
+};
+
 describe("SqliteScopeReachabilityStore", () => {
   let database: DatabaseSync;
   let cards: SqliteCardStore;
@@ -72,10 +78,46 @@ describe("SqliteScopeReachabilityStore", () => {
     );
   });
 
+  it("names the Source from the claim record, not from Ingestion", async () => {
+    // The join that makes `sourceId` possible without crossing a boundary:
+    // `consumer_checkpoints` stores the Source beside every Publication Registry
+    // consumed, so a Scope observed through a Card Version already knows it.
+    await cards.saveCard(servingCard(), []);
+    await checkpoints.markProcessed({
+      sourceId: "src_payments",
+      publicationId: "pub_initial",
+    });
+
+    const report = await buildReachabilityReport({
+      scopes,
+      checkpoints,
+      clock,
+      publications: emptyFeed,
+    });
+
+    expect(report.scopes[0]?.sourceId).toBe("src_payments");
+  });
+
+  it("falls back to the Publication id when no claim row names the Source", async () => {
+    // A Card Version written before the claim record carried a Source would
+    // otherwise drop out of the report, and a Scope missing from a reachability
+    // report is the one failure this report exists to prevent.
+    await cards.saveCard(servingCard(), []);
+
+    const report = await buildReachabilityReport({
+      scopes,
+      checkpoints,
+      clock,
+      publications: emptyFeed,
+    });
+
+    expect(report.scopes[0]?.sourceId).toBe("pub_initial");
+  });
+
   it("reports a served Scope as reachable", async () => {
     await cards.saveCard(servingCard(), []);
 
-    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock, publications: emptyFeed });
 
     expect(report.counts.reachable).toBe(1);
     expect(report.scopes[0]?.reference).toEqual({
@@ -94,7 +136,7 @@ describe("SqliteScopeReachabilityStore", () => {
 
     expect((await cards.listApprovedCards()).cards).toHaveLength(0);
 
-    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock, publications: emptyFeed });
 
     expect(report.scopes).toHaveLength(1);
     expect(report.counts.orphaned).toBe(1);
@@ -107,7 +149,7 @@ describe("SqliteScopeReachabilityStore", () => {
       withdrawalEvent("문서가 정책 핸드북으로 대체됨"),
     ]);
 
-    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock, publications: emptyFeed });
 
     expect(report.counts.intentionally_unexposed).toBe(1);
     expect(report.scopes[0]?.reason).toBe("문서가 정책 핸드북으로 대체됨");
@@ -141,7 +183,7 @@ describe("SqliteScopeReachabilityStore", () => {
       [],
     );
 
-    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock, publications: emptyFeed });
 
     expect(report.counts.reachable).toBe(1);
     expect(report.counts.pending_approval).toBe(1);
@@ -168,7 +210,7 @@ describe("SqliteScopeReachabilityStore", () => {
     };
     await cards.saveCard(servingCard(twoScopes), []);
 
-    const report = await buildReachabilityReport({ scopes, checkpoints, clock });
+    const report = await buildReachabilityReport({ scopes, checkpoints, clock, publications: emptyFeed });
 
     expect(report.scopes.map((scope) => scope.reference.scopeId).sort()).toEqual(
       ["scope_payment_failures", "scope_payments_table"],

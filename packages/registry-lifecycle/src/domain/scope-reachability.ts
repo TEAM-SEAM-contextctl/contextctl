@@ -111,8 +111,8 @@ export interface ScopeObservation {
    * ready, not since Registry noticed.
    */
   readonly readySince?: string | undefined;
-  /** Which Source published it, when the caller could resolve that. */
-  readonly sourceId?: SourceId | undefined;
+  /** Which Source published it. Resolved by the caller from the Publication. */
+  readonly sourceId: SourceId;
   readonly carriers: readonly ScopeCarrier[];
   readonly decisions: readonly ScopeDecision[];
 }
@@ -122,13 +122,14 @@ export interface ScopeReachability {
   /**
    * Which Source published this Scope.
    *
-   * Optional only because it is read from the Publication, which a composition
-   * without a publication reader cannot fetch — the design has it as required.
-   * Absent means "not resolved", never "no Source": an operator choosing between
-   * creating a Card, approving one and marking a Scope unexposed needs to know
-   * which Source it came from, and a list of bare Scope ids does not tell them.
+   * An operator choosing between creating a Card, approving one and marking a
+   * Scope unexposed cannot make any of those decisions about a bare Scope id, so
+   * the field is not optional. Registry has no `source_id` of its own to answer
+   * with — a Card Version records the Publication and the Source belongs to the
+   * Publication — which is why building this report requires a publication
+   * reader rather than treating one as an extra.
    */
-  readonly sourceId?: SourceId | undefined;
+  readonly sourceId: SourceId;
   readonly introducedByPublicationId: PublicationId;
   readonly lastSeenPublicationId: PublicationId;
   readonly state: ScopeReachabilityState;
@@ -202,6 +203,14 @@ function toDecision(
 /** One Card Version carrying one Scope version, as the store hands it over. */
 export interface ScopeSighting extends ScopeCarrier {
   readonly publicationId: PublicationId;
+  /**
+   * Which Source published it, from our own claim record.
+   *
+   * Not read from Ingestion. The claim record already stores the Source beside
+   * every Publication Registry consumed, so the store answers this with a join
+   * inside one database rather than a fetch per Publication across a boundary.
+   */
+  readonly sourceId: SourceId;
 }
 
 /**
@@ -284,7 +293,7 @@ export function collectScopeObservations(
 
   const observations = new Map<string, ScopeObservation>();
   for (const sighting of sightings) {
-    const { publicationId, ...carrier } = sighting;
+    const { publicationId, sourceId, ...carrier } = sighting;
     const reference = carrier.scope.reference;
     const key = `${reference.scopeId}\u0000${reference.scopeVersion}`;
     const existing = observations.get(key);
@@ -292,6 +301,7 @@ export function collectScopeObservations(
     if (existing === undefined) {
       observations.set(key, {
         reference,
+        sourceId,
         introducedByPublicationId: publicationId,
         lastSeenPublicationId: publicationId,
         processed: true,
@@ -531,9 +541,7 @@ function verdict(
 ): ScopeReachability {
   return {
     reference: observation.reference,
-    ...(observation.sourceId === undefined
-      ? {}
-      : { sourceId: observation.sourceId }),
+    sourceId: observation.sourceId,
     introducedByPublicationId: observation.introducedByPublicationId,
     lastSeenPublicationId: observation.lastSeenPublicationId,
     state,

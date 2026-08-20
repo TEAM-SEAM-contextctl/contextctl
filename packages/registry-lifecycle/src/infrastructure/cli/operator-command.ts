@@ -58,13 +58,13 @@ export interface OperatorCommandPorts extends CardDecisionPorts {
   /** Read for the reachability report's per-Source checkpoints. */
   readonly checkpoints: ConsumerCheckpointStore;
   /**
-   * How far each Source has been published, for the processing delay.
+   * How far each Source has been published, and what those Publications carry.
    *
-   * Optional: the reachability states need only committed Card state, so a
-   * composition that has no publication reader still gets a full report — minus
-   * the delay, which is then reported as unknown rather than as caught up.
+   * Required for the same reason `buildReachabilityReport` requires it: a Scope
+   * waiting to be consumed can only be found by reading Ingestion, and that is
+   * one of the six states rather than an optional extra.
    */
-  readonly publications?: SourcePublicationFeed & Partial<PublicationRepository>;
+  readonly publications: SourcePublicationFeed & PublicationRepository;
 }
 
 const USAGE = [
@@ -327,7 +327,7 @@ function formatScopeList(
       // The Source leads the line. An operator reading this list is choosing
       // whether to create a Card, approve one, or mark the Scope unexposed, and
       // none of those decisions can be made about a bare Scope id.
-      const source = scope.sourceId === undefined ? "source unknown" : scope.sourceId;
+      const source = scope.sourceId;
       const event =
         scope.lifecycleEventId === undefined ? "" : ` [event ${scope.lifecycleEventId}]`;
       return `  ${source}  ${scope.reference.scopeId}@${scope.reference.scopeVersion} (${carried})${event}${reason}`;
