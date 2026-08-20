@@ -95,6 +95,7 @@ describe("judgeSourceProcessingLag", () => {
 function scope(overrides: Partial<ScopeReachability> = {}): ScopeReachability {
   return {
     reference: { scopeId: "scope_payments", scopeVersion: "scpv_aaaa" },
+    sourceId: "src_payments",
     introducedByPublicationId: "pub_1",
     lastSeenPublicationId: "pub_1",
     state: "pending_registry",

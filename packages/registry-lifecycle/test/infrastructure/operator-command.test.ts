@@ -51,6 +51,12 @@ function version(
   return { ...createDocumentCardVersion(), id, cardId, validationState };
 }
 
+/** A reader with nothing to report — required, and not the same as no reader. */
+const emptyFeed = {
+  latestForSource: async () => undefined,
+  findById: async () => undefined,
+};
+
 describe("runOperatorCommand", () => {
   let database: DatabaseSync;
   let ports: OperatorCommandPorts;
@@ -69,6 +75,7 @@ describe("runOperatorCommand", () => {
         () => "2026-08-19T00:00:00.000Z",
       ),
       clock: { now: () => "2026-08-10T00:00:00.000Z" },
+      publications: emptyFeed,
       ids: {
         nextId: () => {
           nextId += 1;

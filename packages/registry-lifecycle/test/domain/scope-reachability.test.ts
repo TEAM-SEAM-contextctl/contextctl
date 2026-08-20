@@ -53,6 +53,7 @@ function observe(overrides: Partial<ScopeObservation> = {}): ScopeObservation {
     reference,
     introducedByPublicationId: "pub_initial",
     lastSeenPublicationId: "pub_initial",
+    sourceId: "src_payments",
     processed: true,
     carriers: [],
     decisions: [],

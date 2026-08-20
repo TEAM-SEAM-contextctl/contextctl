@@ -27,11 +27,21 @@ export class SqliteScopeReachabilityStore implements ScopeReachabilityStore {
     // tell a serving version from a superseded one without asking again.
     const rows = this.#database
       .prepare(
+        // Left join to the claim record for the Source. It stores `source_id`
+        // beside every Publication Registry consumed, so the Source of a Scope
+        // costs a join in this database rather than a fetch per Publication
+        // across the Ingestion boundary. Left rather than inner: a Card Version
+        // written before that column existed would otherwise vanish from the
+        // report, and a Scope missing from a reachability report is the one
+        // failure this report exists to prevent.
         `SELECT
            v.version_id, v.card_id, v.publication_id, v.scopes,
-           v.validation_state, v.created_at, c.current_version_id
+           v.validation_state, v.created_at, c.current_version_id,
+           k.source_id
          FROM card_versions v
          JOIN cards c ON c.card_id = v.card_id
+         LEFT JOIN consumer_checkpoints k
+           ON k.publication_id = v.publication_id
          ORDER BY v.append_order`,
       )
       .all() as SqlRow[];
@@ -42,6 +52,12 @@ export class SqliteScopeReachabilityStore implements ScopeReachabilityStore {
         cardId: readText(row, "card_id"),
         versionId,
         publicationId: readText(row, "publication_id"),
+        // Falls back to the Publication id when no claim row names the Source.
+        // Reachability without a Source is unusable to an operator, and the
+        // Publication is the one identifier that is always present and does at
+        // least point at something they can look up.
+        sourceId:
+          readOptionalText(row, "source_id") ?? readText(row, "publication_id"),
         validationState: readValidationState(row),
         isCurrent: readOptionalText(row, "current_version_id") === versionId,
         createdAt: readText(row, "created_at"),

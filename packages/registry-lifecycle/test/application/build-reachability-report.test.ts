@@ -13,6 +13,18 @@ const generatedAt = "2026-08-15T00:00:00.000Z";
 
 const clock: Clock = { now: () => generatedAt };
 
+/**
+ * A reader that has nothing to report, for the cases that are not about lag.
+ *
+ * Required rather than omitted: `pending_registry` can only be found by reading
+ * Ingestion, so a report built without a reader could not produce one of the six
+ * states. "Nothing published" is a legitimate answer; "no reader" is not.
+ */
+const emptyFeed = {
+  latestForSource: async () => undefined,
+  findById: async () => undefined,
+};
+
 /** No cursor recorded, so the report carries no Source checkpoint. */
 const noCursors: ConsumerCheckpointStore = {
   hasProcessed: async () => false,
@@ -61,6 +73,7 @@ function sighting(overrides: Partial<ScopeSighting> = {}): ScopeSighting {
     cardId: "card_payment_failures",
     versionId: "cv_1",
     publicationId: "pub_initial",
+    sourceId: "src_payments",
     scope: documentScope("scpv_aaaa"),
     validationState: "validated",
     isCurrent: true,
@@ -95,6 +108,7 @@ describe("buildReachabilityReport", () => {
       ]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.generatedAt).toBe(generatedAt);
@@ -118,6 +132,7 @@ describe("buildReachabilityReport", () => {
       scopes: new FakeScopeReachabilityStore([both, second]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(
@@ -138,6 +153,7 @@ describe("buildReachabilityReport", () => {
       ]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.scopes).toHaveLength(1);
@@ -171,6 +187,7 @@ describe("buildReachabilityReport", () => {
       ),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     // One reachable, one deliberately unexposed: the deliberate one is not a
@@ -184,6 +201,7 @@ describe("buildReachabilityReport", () => {
       scopes: new FakeScopeReachabilityStore([]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.currentReachabilityCoverage).toBe(1);
@@ -195,6 +213,7 @@ describe("buildReachabilityReport", () => {
       scopes: new FakeScopeReachabilityStore([sighting()]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(reachabilityGateViolations(report)).toEqual([]);
@@ -208,6 +227,7 @@ describe("buildReachabilityReport", () => {
       ),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.counts.orphaned).toBe(1);
@@ -228,6 +248,7 @@ describe("buildReachabilityReport", () => {
       ),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.counts.intentionally_unexposed).toBe(1);
@@ -249,6 +270,7 @@ describe("buildReachabilityReport", () => {
       ]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.counts.broken).toBe(1);
@@ -278,6 +300,7 @@ describe("scope provenance and source checkpoints", () => {
       ]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.scopes).toHaveLength(1);
@@ -292,6 +315,7 @@ describe("scope provenance and source checkpoints", () => {
       ]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.scopes[0]?.introducedByPublicationId).toBe("pub_first");
@@ -312,6 +336,7 @@ describe("scope provenance and source checkpoints", () => {
         ],
       },
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.sourceCheckpoints).toEqual([
@@ -339,6 +364,7 @@ describe("scope provenance and source checkpoints", () => {
         ],
       },
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.sourceCheckpoints[0]?.latestReadyPublicationId).toBeUndefined();
@@ -512,9 +538,10 @@ describe("scope provenance and source checkpoints", () => {
     });
 
     it("names the Source an observed Scope came from", async () => {
-      // Registry's own tables have no `source_id`: a Card Version records the
-      // Publication, and the Source is the Publication's. Without this an
-      // operator reading `--state orphaned` gets Scope ids and no way to act.
+      // Read from our own claim record rather than from Ingestion: the store
+      // joins `consumer_checkpoints`, which holds the Source beside every
+      // Publication Registry consumed. Without it an operator reading
+      // `--state orphaned` gets Scope ids and no way to act.
       const report = await buildReachabilityReport({
         scopes: new FakeScopeReachabilityStore([sighting()]),
         checkpoints: oneCursor,
@@ -539,19 +566,9 @@ describe("scope provenance and source checkpoints", () => {
       const waiting = report.scopes.find(
         (scope) => scope.reference.scopeId === "scope_waiting",
       );
-      // Known without a second read: the Scope was found by asking that Source
-      // for its newest Publication.
+      // Known without any lookup: the Scope was found by asking that Source for
+      // its newest Publication.
       expect(waiting?.sourceId).toBe("src_payments");
-    });
-
-    it("leaves the Source absent rather than guessing when it cannot be read", async () => {
-      const report = await buildReachabilityReport({
-        scopes: new FakeScopeReachabilityStore([sighting()]),
-        checkpoints: oneCursor,
-        clock,
-      });
-
-      expect(report.scopes[0]?.sourceId).toBeUndefined();
     });
 
     it("reports a Source that consumed the newest Publication as current", async () => {
@@ -574,6 +591,7 @@ describe("scope provenance and source checkpoints", () => {
       scopes: new FakeScopeReachabilityStore([sighting()]),
       checkpoints: noCursors,
       clock,
+      publications: emptyFeed,
     });
 
     expect(report.sourceCheckpoints).toEqual([]);

@@ -24,17 +24,17 @@ export interface BuildReachabilityReportPorts {
   readonly checkpoints: ConsumerCheckpointStore;
   readonly clock: Clock;
   /**
-   * How far each Source has been published, for measuring the delay.
+   * How far each Source has been published, and what those Publications carry.
    *
-   * Optional, and absent is a legitimate composition rather than a degraded one:
-   * the reachability judgement itself needs only committed Card state, so a
-   * caller that wants the states and not the delay should not have to assemble a
-   * publication reader to get them. When it is absent every Source reports
-   * `behind: false` with no lag, which is the same shape as "caught up" — and
-   * that is why the CLI says which composition it ran under rather than letting
-   * a missing reader read as a healthy one.
+   * Required, and it was optional here for a while on the grounds that the
+   * reachability judgement needs only committed Card state. That was wrong:
+   * `pending_registry` is one of the six states and the first in the priority
+   * order, and a Scope waiting to be consumed has no Card Version to be observed
+   * through — it can only be found by reading Ingestion. A report assembled
+   * without this reader is not a report with a missing extra, it is one that
+   * cannot produce a state the design defines.
    */
-  readonly publications?: SourcePublicationFeed & Partial<PublicationRepository>;
+  readonly publications: SourcePublicationFeed & PublicationRepository;
 }
 
 /**
@@ -71,48 +71,9 @@ export async function buildReachabilityReport(
 
   return summarizeScopeReachability(
     ports.clock.now(),
-    [...(await withSourceIds(ports, observations)), ...waiting].map(
-      judgeScopeReachability,
-    ),
+    [...observations, ...waiting].map(judgeScopeReachability),
     lags,
   );
-}
-
-/**
- * Names the Source each observed Scope came from.
- *
- * The Scope is observed through a Card Version, whose lineage records the
- * Publication but not the Source — Registry's own tables have no `source_id`
- * column, and adding one would duplicate a fact Ingestion owns. So the Source is
- * read from the Publication, once per distinct id rather than once per Scope: a
- * run that produced forty Cards from one document would otherwise fetch the same
- * record forty times.
- *
- * Unresolved is left absent rather than filled with a guess. An operator reading
- * a list of Scope ids with no Source cannot decide anything about them, and a
- * wrong Source would be worse than none.
- */
-async function withSourceIds(
-  ports: BuildReachabilityReportPorts,
-  observations: readonly ScopeObservation[],
-): Promise<readonly ScopeObservation[]> {
-  const feed = ports.publications;
-  if (feed?.findById === undefined) {
-    return observations;
-  }
-
-  const sources = new Map<string, string | undefined>();
-  for (const observation of observations) {
-    const id = observation.introducedByPublicationId;
-    if (!sources.has(id)) {
-      sources.set(id, (await feed.findById(id))?.sourceId);
-    }
-  }
-
-  return observations.map((observation) => {
-    const sourceId = sources.get(observation.introducedByPublicationId);
-    return sourceId === undefined ? observation : { ...observation, sourceId };
-  });
 }
 
 /**
@@ -142,10 +103,6 @@ async function awaitingRegistry(
   observed: readonly ScopeObservation[],
 ): Promise<readonly ScopeObservation[]> {
   const feed = ports.publications;
-  if (feed === undefined) {
-    return [];
-  }
-
   const seen = new Set(
     observed.map(
       (observation) =>
@@ -206,15 +163,9 @@ async function sight(
 ): Promise<SourceConsumptionSighting> {
   const feed = ports.publications;
   const processedSighting = { publicationId: cursor.publicationId };
-  if (feed === undefined) {
-    // The watermark is Registry's own state, so it is reported either way. Only
-    // the delay needs Ingestion.
-    return { sourceId: cursor.sourceId, processed: processedSighting };
-  }
-
   const [latest, processed] = await Promise.all([
     feed.latestForSource(cursor.sourceId),
-    feed.findById?.(cursor.publicationId),
+    feed.findById(cursor.publicationId),
   ]);
 
   return {
