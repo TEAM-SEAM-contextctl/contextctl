@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -119,10 +119,28 @@ describe("documentation coverage", () => {
     }
   });
 
+  it("lists every document in the docs index", () => {
+    // `docs/README.md` is what GitHub renders when someone opens the folder, so
+    // a document missing from it is a document nobody browsing finds. Read from
+    // the directory rather than a list here: a hard-coded list would need the
+    // same edit the index does, which is the edit being forgotten.
+    const index = read("docs/README.md");
+    const documents = readdirSync(resolve(repositoryRoot, "docs"))
+      .filter((entry) => entry.endsWith(".md") && entry !== "README.md");
+
+    expect(documents.length).toBeGreaterThan(0);
+    for (const document of documents) {
+      expect(index, `docs/${document} is missing from docs/README.md`).toContain(
+        `(${document})`,
+      );
+    }
+  });
+
   it("resolves every relative link between the documents", () => {
     const documents = [
       "README.md",
       "README.ko.md",
+      "docs/README.md",
       "docs/cli.md",
       "docs/configuration.md",
       "docs/operations.md",
