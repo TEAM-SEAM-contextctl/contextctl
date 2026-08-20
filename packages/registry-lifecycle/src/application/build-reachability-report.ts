@@ -67,14 +67,52 @@ export async function buildReachabilityReport(
     cursors.map(async (cursor) => sight(ports, cursor)),
   );
   const lags = sightingsBySource.map(judgeSourceProcessingLag);
+  const waiting = await awaitingRegistry(ports, lags, observations);
 
   return summarizeScopeReachability(
     ports.clock.now(),
-    [...observations, ...(await awaitingRegistry(ports, lags, observations))].map(
+    [...(await withSourceIds(ports, observations)), ...waiting].map(
       judgeScopeReachability,
     ),
     lags,
   );
+}
+
+/**
+ * Names the Source each observed Scope came from.
+ *
+ * The Scope is observed through a Card Version, whose lineage records the
+ * Publication but not the Source — Registry's own tables have no `source_id`
+ * column, and adding one would duplicate a fact Ingestion owns. So the Source is
+ * read from the Publication, once per distinct id rather than once per Scope: a
+ * run that produced forty Cards from one document would otherwise fetch the same
+ * record forty times.
+ *
+ * Unresolved is left absent rather than filled with a guess. An operator reading
+ * a list of Scope ids with no Source cannot decide anything about them, and a
+ * wrong Source would be worse than none.
+ */
+async function withSourceIds(
+  ports: BuildReachabilityReportPorts,
+  observations: readonly ScopeObservation[],
+): Promise<readonly ScopeObservation[]> {
+  const feed = ports.publications;
+  if (feed?.findById === undefined) {
+    return observations;
+  }
+
+  const sources = new Map<string, string | undefined>();
+  for (const observation of observations) {
+    const id = observation.introducedByPublicationId;
+    if (!sources.has(id)) {
+      sources.set(id, (await feed.findById(id))?.sourceId);
+    }
+  }
+
+  return observations.map((observation) => {
+    const sourceId = sources.get(observation.introducedByPublicationId);
+    return sourceId === undefined ? observation : { ...observation, sourceId };
+  });
 }
 
 /**
@@ -134,6 +172,9 @@ async function awaitingRegistry(
         seen.add(key);
         waiting.push({
           reference: { scopeId: scope.scopeId, scopeVersion: scope.scopeVersion },
+          // Known without a second read: this Scope was found by asking for that
+          // Source's newest Publication in the first place.
+          sourceId: lag.sourceId,
           introducedByPublicationId: publication.publicationId,
           lastSeenPublicationId: publication.publicationId,
           processed: false,

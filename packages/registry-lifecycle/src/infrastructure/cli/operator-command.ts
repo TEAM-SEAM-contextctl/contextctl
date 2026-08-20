@@ -317,7 +317,13 @@ function formatScopeList(
         scope.lastSeenPublicationId === scope.introducedByPublicationId
           ? scope.introducedByPublicationId
           : `${scope.introducedByPublicationId} → ${scope.lastSeenPublicationId}`;
-      return `  ${scope.reference.scopeId}@${scope.reference.scopeVersion} (${carried})${reason}`;
+      // The Source leads the line. An operator reading this list is choosing
+      // whether to create a Card, approve one, or mark the Scope unexposed, and
+      // none of those decisions can be made about a bare Scope id.
+      const source = scope.sourceId === undefined ? "source unknown" : scope.sourceId;
+      const event =
+        scope.lifecycleEventId === undefined ? "" : ` [event ${scope.lifecycleEventId}]`;
+      return `  ${source}  ${scope.reference.scopeId}@${scope.reference.scopeVersion} (${carried})${event}${reason}`;
     }),
   ].join("\n");
 }

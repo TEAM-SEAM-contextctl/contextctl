@@ -63,6 +63,7 @@ function observe(overrides: Partial<ScopeObservation> = {}): ScopeObservation {
 function decision(overrides: Partial<ScopeDecision> = {}): ScopeDecision {
   return {
     kind: "withdrawn",
+    eventId: "evt_withdrawn",
     cardId: "card_payment_failures",
     versionId: "cv_1",
     occurredAt: "2026-08-02T00:00:00.000Z",
@@ -178,6 +179,50 @@ describe("judgeScopeReachability", () => {
     );
 
     expect(result.state).toBe("broken");
+  });
+
+  /**
+   * A verdict names the audit entry it rests on, where a decision produced it.
+   *
+   * `stateSince` says when. On its own it leaves an operator searching the trail
+   * for what happened at that moment, and the design puts `lifecycleEventId` in
+   * the read model for exactly that reason.
+   */
+  describe("evidence", () => {
+    it("names the promotion behind a reachable verdict", () => {
+      const result = judgeScopeReachability(
+        observe({
+          carriers: [carrier({ isCurrent: true })],
+          decisions: [decision({ kind: "promoted", eventId: "evt_promoted" })],
+        }),
+      );
+
+      expect(result.state).toBe("reachable");
+      expect(result.lifecycleEventId).toBe("evt_promoted");
+    });
+
+    it("names the refusal behind an intentionally_unexposed verdict", () => {
+      const result = judgeScopeReachability(
+        observe({
+          carriers: [carrier({ validationState: "rejected" })],
+          decisions: [
+            decision({ kind: "refused", eventId: "evt_refused", note: "정책상 비노출" }),
+          ],
+        }),
+      );
+
+      expect(result.state).toBe("intentionally_unexposed");
+      expect(result.lifecycleEventId).toBe("evt_refused");
+    });
+
+    it("carries no event for a Scope nothing has decided about", () => {
+      // A Scope waiting to be processed has no decision behind it, and inventing
+      // one would point an operator at an entry that says nothing about it.
+      const result = judgeScopeReachability(observe({ processed: false }));
+
+      expect(result.state).toBe("pending_registry");
+      expect(result).not.toHaveProperty("lifecycleEventId");
+    });
   });
 
   it("reports a refusal that recorded a reason as intentionally_unexposed", () => {
