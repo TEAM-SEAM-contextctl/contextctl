@@ -36,7 +36,7 @@ export interface LocalEmbeddingAssetManifest {
   readonly files: readonly LocalEmbeddingAssetFile[];
 }
 
-export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST: LocalEmbeddingAssetManifest =
+export const GRANITE_FP32_EMBEDDING_ASSET_MANIFEST: LocalEmbeddingAssetManifest =
   Object.freeze({
     schemaVersion: 1,
     repository:
@@ -77,12 +77,89 @@ export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST: LocalEmbeddingAssetManife
     ]),
   });
 
-export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256 =
+export const GRANITE_FP32_EMBEDDING_ASSET_MANIFEST_SHA256 =
   "eb0923125496145fce8105135180b42f37d098c688837037d73e4ba11bd8c389";
 
-export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE: DocumentRetrievalEmbeddingProfile =
+export const GRANITE_Q4_EMBEDDING_ASSET_MANIFEST: LocalEmbeddingAssetManifest =
   Object.freeze({
+    schemaVersion: 1,
+    repository:
+      "onnx-community/granite-embedding-97m-multilingual-r2-ONNX",
+    revision: "536a9f241cb3f02a9c5995a1e708c784bd274859",
+    license: "Apache-2.0",
+    files: Object.freeze([
+      Object.freeze({
+        path: "config.json",
+        bytes: 1_215,
+        sha256:
+          "ae74d55a56f779774cb9a8e63d3c2da9ae1af83c00229ffdff43d0b38407a0ee",
+      }),
+      Object.freeze({
+        path: "onnx/model_q4.onnx",
+        bytes: 294_460_363,
+        sha256:
+          "1dbf330ed882cf9aebbb92c85ed742930f076a348ff1051d05108f16b71e080a",
+      }),
+      Object.freeze({
+        path: "special_tokens_map.json",
+        bytes: 871,
+        sha256:
+          "013787ee251ff611722479197c00853b62113ad303cb0a36524231783c676c69",
+      }),
+      Object.freeze({
+        path: "tokenizer.json",
+        bytes: 25_301_671,
+        sha256:
+          "51947676cae1f991fa51c6b9a24e14ee5460e5f0b9f692f13bb3159829d1592a",
+      }),
+      Object.freeze({
+        path: "tokenizer_config.json",
+        bytes: 12_860,
+        sha256:
+          "6ed69389e30a8ecabfce2f9ebcdf0c908b34056f24d994340f2f216521c057d5",
+      }),
+    ]),
+  });
+
+export const GRANITE_Q4_EMBEDDING_ASSET_MANIFEST_SHA256 =
+  "b1bc40ece1ee20ca31571f02a2143ac072ad55989da96f072b1bd958e5fa6e50";
+
+export const GRANITE_FP32_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE =
+  graniteDocumentRetrievalProfile({
     id: "document-granite-97m-multilingual-r2-fp32-v1",
+    artifactPath: "onnx/model.onnx",
+    artifactSha256:
+      "68e592b160673d30250824c1116bc6ab33f70efb22b97c9e1d7ce1e69c1c9d70",
+    assetManifestSha256: GRANITE_FP32_EMBEDDING_ASSET_MANIFEST_SHA256,
+    precision: "fp32",
+  });
+
+export const GRANITE_Q4_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE =
+  graniteDocumentRetrievalProfile({
+    id: "document-granite-97m-multilingual-r2-q4-v1",
+    artifactPath: "onnx/model_q4.onnx",
+    artifactSha256:
+      "1dbf330ed882cf9aebbb92c85ed742930f076a348ff1051d05108f16b71e080a",
+    assetManifestSha256: GRANITE_Q4_EMBEDDING_ASSET_MANIFEST_SHA256,
+    precision: "q4",
+  });
+
+export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST =
+  GRANITE_FP32_EMBEDDING_ASSET_MANIFEST;
+export const DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256 =
+  GRANITE_FP32_EMBEDDING_ASSET_MANIFEST_SHA256;
+export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE =
+  GRANITE_FP32_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
+
+function graniteDocumentRetrievalProfile(input: {
+  readonly id: string;
+  readonly artifactPath: string;
+  readonly artifactSha256: string;
+  readonly assetManifestSha256: string;
+  readonly precision: LocalDocumentEmbeddingExecution["precision"];
+}): DocumentRetrievalEmbeddingProfile {
+  return Object.freeze({
+    id: input.id,
     version: "1",
     model: "ibm-granite/granite-embedding-97m-multilingual-r2",
     modelRevision: "835ad14087e140460703cf0fae09f97d469d65c2",
@@ -93,12 +170,10 @@ export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE: DocumentRetrievalEmbe
       artifactRepository:
         "onnx-community/granite-embedding-97m-multilingual-r2-ONNX",
       artifactRevision: "536a9f241cb3f02a9c5995a1e708c784bd274859",
-      artifactPath: "onnx/model.onnx",
-      artifactSha256:
-        "68e592b160673d30250824c1116bc6ab33f70efb22b97c9e1d7ce1e69c1c9d70",
-      assetManifestSha256:
-        DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
-      precision: "fp32",
+      artifactPath: input.artifactPath,
+      artifactSha256: input.artifactSha256,
+      assetManifestSha256: input.assetManifestSha256,
+      precision: input.precision,
     }),
     dimensions: 384,
     pooling: "cls",
@@ -114,6 +189,7 @@ export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE: DocumentRetrievalEmbe
     maxInputTokens: 480,
     textMeasureProfileVersion: "unicode-estimate-v1",
   });
+}
 
 export interface LocalFeatureExtractionRuntime {
   tokenCount(text: string): number;
@@ -516,6 +592,8 @@ function modelFileName(execution: LocalDocumentEmbeddingExecution): string {
   const suffix =
     execution.precision === "q8"
       ? "_quantized.onnx"
+      : execution.precision === "q4"
+        ? "_q4.onnx"
       : execution.precision === "fp16"
         ? "_fp16.onnx"
         : ".onnx";

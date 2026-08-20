@@ -14,19 +14,23 @@ import {
 } from "./fixtures/document-retrieval-eval.js";
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
-  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+  GRANITE_FP32_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+  GRANITE_Q4_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
 } from "../src/index.js";
 
-const q8Directory = process.env.CONTEXTCTL_GRANITE_ASSET_DIRECTORY;
+const assetDirectory = process.env.CONTEXTCTL_GRANITE_ASSET_DIRECTORY;
 const fp32Directory = process.env.CONTEXTCTL_GRANITE_FP32_ASSET_DIRECTORY;
 const resultPath = process.env.CONTEXTCTL_EVAL_RESULT_PATH;
+const profileVariant = readProfileVariant(
+  process.env.CONTEXTCTL_GRANITE_EVAL_PROFILE,
+);
 const resourceGateMode = readResourceGateMode(
   process.env.CONTEXTCTL_EVAL_RESOURCE_GATE_MODE,
 );
 
 const RECALL_AT_5_GATE = 0.9;
 const MRR_AT_10_GATE = 0.75;
-const MAX_Q8_RECALL_REGRESSION = 0.02;
+const MAX_QUANTIZED_RECALL_REGRESSION = 0.02;
 const WARM_QUERY_P95_MS_GATE = 100;
 const PEAK_RSS_MIB_GATE = 768;
 const BATCH_SIZE = 32;
@@ -42,15 +46,18 @@ const BATCH_SIZE = 32;
  * result records the failed resource gate but cannot stand in for release
  * evidence from the deployment reference machine.
  */
-describe.skipIf(q8Directory === undefined)(
+describe.skipIf(assetDirectory === undefined)(
   "document-retrieval-eval-v1",
   () => {
     it(
       "meets the pinned quality and resource gates",
       async () => {
         const corpus = await loadEvalCorpus();
-        const profile = DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
-        const provider = createLocalProvider(q8Directory!, profile);
+        const profile =
+          profileVariant === "q4"
+            ? GRANITE_Q4_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE
+            : DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
+        const provider = createLocalProvider(assetDirectory!, profile);
         await provider.ready();
 
         // Measure the specified batch workload before retaining the evaluation
@@ -85,13 +92,16 @@ describe.skipIf(q8Directory === undefined)(
         }
         const warmQueryP95Ms = percentile(latencies, 0.95);
 
-        const baseline = await measureBaseline(corpus, quality);
+        const baseline = await measureBaseline(corpus, quality, profile);
         const result = {
           datasetId: corpus.datasetId,
           datasetVersion: corpus.version,
           datasetDigest: corpus.digest,
           profileId: profile.id,
-          assetManifestSha256: DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+          assetManifestSha256:
+            profile.execution.kind === "local"
+              ? profile.execution.assetManifestSha256
+              : undefined,
           artifactSha256: profile.execution.kind === "local"
             ? profile.execution.artifactSha256
             : undefined,
@@ -114,7 +124,7 @@ describe.skipIf(q8Directory === undefined)(
           gates: {
             recallAt5: RECALL_AT_5_GATE,
             mrrAt10: MRR_AT_10_GATE,
-            maxRecallRegression: MAX_Q8_RECALL_REGRESSION,
+            maxRecallRegression: MAX_QUANTIZED_RECALL_REGRESSION,
             warmQueryP95Ms: WARM_QUERY_P95_MS_GATE,
             peakRssMiB: PEAK_RSS_MIB_GATE,
           },
@@ -138,7 +148,7 @@ describe.skipIf(q8Directory === undefined)(
         }
         if (baseline !== undefined) {
           expect(baseline.recallAt5 - quality.recallAt5).toBeLessThanOrEqual(
-            MAX_Q8_RECALL_REGRESSION,
+            MAX_QUANTIZED_RECALL_REGRESSION,
           );
         }
       },
@@ -157,6 +167,14 @@ function readResourceGateMode(
   );
 }
 
+function readProfileVariant(value: string | undefined): "default" | "q4" {
+  if (value === undefined || value === "default") return "default";
+  if (value === "q4") return "q4";
+  throw new Error(
+    "CONTEXTCTL_GRANITE_EVAL_PROFILE must be default or q4",
+  );
+}
+
 interface BaselineQuality {
   readonly recallAt5: number;
   readonly mrrAt10: number;
@@ -171,25 +189,30 @@ interface BaselineQuality {
  */
 async function measureBaseline(
   corpus: Awaited<ReturnType<typeof loadEvalCorpus>>,
-  q8: RetrievalQuality,
+  measured: RetrievalQuality,
+  measuredProfile: typeof DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
 ): Promise<BaselineQuality | undefined> {
   if (
-    fp32Directory === undefined ||
-    (DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE.execution.kind === "local" &&
-      DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE.execution.precision === "fp32")
+    measuredProfile.execution.kind === "local" &&
+    measuredProfile.execution.precision === "fp32"
   ) {
     return undefined;
   }
+  if (fp32Directory === undefined) {
+    throw new Error(
+      "quantized evaluation requires CONTEXTCTL_GRANITE_FP32_ASSET_DIRECTORY",
+    );
+  }
   const profile = await readBaselineProfile(
     fp32Directory,
-    DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+    GRANITE_FP32_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   );
   const provider = createLocalProvider(fp32Directory, profile);
   await provider.ready();
   const chunkVectors = await embedAll(provider, profile, corpus.chunks);
   const queryVectors = await embedAll(provider, profile, corpus.queries);
   const quality = scoreRetrieval(corpus, chunkVectors, queryVectors);
-  expect(quality.queryCount).toBe(q8.queryCount);
+  expect(quality.queryCount).toBe(measured.queryCount);
   return {
     recallAt5: quality.recallAt5,
     mrrAt10: quality.mrrAt10,

@@ -27,7 +27,7 @@ export interface LocalDocumentEmbeddingExecution {
   readonly artifactPath: string;
   readonly artifactSha256: string;
   readonly assetManifestSha256: string;
-  readonly precision: "fp32" | "fp16" | "q8";
+  readonly precision: "fp32" | "fp16" | "q8" | "q4";
 }
 
 export interface RemoteDocumentEmbeddingExecution {
@@ -299,7 +299,8 @@ function validateDocumentEmbeddingExecution(
     if (
       !(execution.precision === "fp32" ||
         execution.precision === "fp16" ||
-        execution.precision === "q8")
+        execution.precision === "q8" ||
+        execution.precision === "q4")
     ) {
       issues.push(
         issue(
