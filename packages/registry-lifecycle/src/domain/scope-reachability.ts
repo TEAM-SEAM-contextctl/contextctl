@@ -92,6 +92,17 @@ export interface ScopeObservation {
   /** The most recent Publication in the same chain that still carried it. */
   readonly lastSeenPublicationId: PublicationId;
   readonly processed: boolean;
+  /**
+   * When the Publication carrying this Scope became ready, for unprocessed ones.
+   *
+   * `pending_registry` is the one state whose age cannot be read off the audit
+   * trail: nothing has happened to the Scope yet, so there is no lifecycle event
+   * to date it from. What there is instead is the moment Ingestion made it
+   * available, and the operating standard measures the wait from exactly that —
+   * five minutes in `pending_registry` is five minutes since the Publication was
+   * ready, not since Registry noticed.
+   */
+  readonly readySince?: string | undefined;
   readonly carriers: readonly ScopeCarrier[];
   readonly decisions: readonly ScopeDecision[];
 }
@@ -192,6 +203,15 @@ export interface ReachabilityReport {
    * that are not problems. `1` when there is nothing to expose.
    */
   readonly currentReachabilityCoverage: number;
+  /**
+   * How long the longest-waiting Scope has been in its state, in milliseconds.
+   *
+   * One number rather than per state, because the question it answers is "is
+   * anything stuck", and a table of six ages makes an operator find the largest
+   * themselves. Absent when no Scope carries a timestamp — which is not the same
+   * as zero, and zero here would read as "everything is fresh".
+   */
+  readonly oldestStateAgeMs?: number | undefined;
   readonly scopes: readonly ScopeReachability[];
 }
 
@@ -282,6 +302,7 @@ export function summarizeScopeReachability(
     verdicts.length -
     counts.pending_registry -
     counts.intentionally_unexposed;
+  const oldest = oldestStateAge(generatedAt, verdicts);
 
   return {
     generatedAt,
@@ -291,8 +312,43 @@ export function summarizeScopeReachability(
     counts,
     currentReachabilityCoverage:
       exposable === 0 ? 1 : counts.reachable / exposable,
+    ...(oldest === undefined ? {} : { oldestStateAgeMs: oldest }),
     scopes: verdicts,
   };
+}
+
+/**
+ * The longest a Scope has been sitting in its current state.
+ *
+ * Undated Scopes are skipped rather than treated as ancient. `stateSince` comes
+ * from the evidence, so its absence means nothing has been recorded yet, and
+ * calling that the oldest wait would make a report about missing data look like
+ * a report about a stuck Source.
+ */
+function oldestStateAge(
+  generatedAt: string,
+  verdicts: readonly ScopeReachability[],
+): number | undefined {
+  const now = Date.parse(generatedAt);
+  if (Number.isNaN(now)) {
+    return undefined;
+  }
+
+  let oldest: number | undefined;
+  for (const verdict of verdicts) {
+    if (verdict.stateSince === undefined) {
+      continue;
+    }
+    const since = Date.parse(verdict.stateSince);
+    if (Number.isNaN(since) || now < since) {
+      continue;
+    }
+    const age = now - since;
+    if (oldest === undefined || age > oldest) {
+      oldest = age;
+    }
+  }
+  return oldest;
 }
 
 /**
@@ -355,7 +411,7 @@ export function judgeScopeReachability(
   }
 
   if (!observation.processed) {
-    return verdict(observation, "pending_registry", undefined, [], undefined);
+    return verdict(observation, "pending_registry", observation.readySince, [], undefined);
   }
 
   const serving = carriers.filter((carrier) => carrier.isCurrent);

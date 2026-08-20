@@ -346,11 +346,27 @@ describe("scope provenance and source checkpoints", () => {
       publicationId: "pub_p7",
       sourceId: "src_payments",
       producedAt: "2026-08-14T22:00:00.000Z",
+      knowledgeUnits: [],
     };
+    /**
+     * The unconsumed Publication, carrying a Scope nothing has a Card for yet.
+     *
+     * The Scope matters as much as the timestamps: it is the only way a
+     * `pending_registry` verdict can occur at all, because every other state is
+     * derived from `card_versions` — which by definition holds Scopes that were
+     * already consumed.
+     */
     const newest = {
       publicationId: "pub_p9",
       sourceId: "src_payments",
       producedAt: "2026-08-15T00:00:00.000Z",
+      knowledgeUnits: [
+        {
+          publishedScopes: [
+            { scopeId: "scope_waiting", scopeVersion: "scpv_waiting" },
+          ],
+        },
+      ],
     };
 
     /** Answers the two reads Registry performs, and refuses anything else. */
@@ -391,6 +407,87 @@ describe("scope provenance and source checkpoints", () => {
           freshnessLagMs: 2 * 60 * 60 * 1_000,
         },
       ]);
+    });
+
+    it("reports a Scope waiting to be consumed as pending_registry", async () => {
+      // The state existed in the type and in the priority order and nothing could
+      // ever be in it: every other verdict is derived from `card_versions`, which
+      // only holds Scopes Registry already consumed. Reading the unconsumed
+      // Publication is what makes the state occur.
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting()]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed(newest),
+      });
+
+      const waiting = report.scopes.find(
+        (scope) => scope.reference.scopeId === "scope_waiting",
+      );
+      expect(waiting?.state).toBe("pending_registry");
+      // Dated from when Ingestion made it ready, not from when we looked — the
+      // five-minute standard measures the wait, not the observation.
+      expect(waiting?.stateSince).toBe(newest.producedAt);
+      expect(report.counts.pending_registry).toBe(1);
+    });
+
+    it("does not send an already served Scope back to waiting", async () => {
+      // An immutable Scope carries forward unchanged, so the same version can sit
+      // in an unconsumed Publication while a Card is already serving it. The
+      // design forbids moving it back: the new Publication's unprocessed state
+      // shows up in the Source lag and the checkpoints, not in the Scope.
+      const served = sighting();
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([served]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed({
+          ...newest,
+          knowledgeUnits: [
+            {
+              publishedScopes: [
+                {
+                  scopeId: served.scope.reference.scopeId,
+                  scopeVersion: served.scope.reference.scopeVersion,
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      expect(report.counts.pending_registry).toBe(0);
+      expect(report.sourceCheckpoints[0]?.behind).toBe(true);
+    });
+
+    it("excludes a waiting Scope from the coverage denominator", async () => {
+      // Nothing has been decided about it yet, so counting it would move the
+      // number for a reason that is not a problem.
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting({ isCurrent: true })]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed(newest),
+      });
+
+      expect(report.counts.pending_registry).toBe(1);
+      expect(report.currentReachabilityCoverage).toBe(1);
+    });
+
+    it("reports how long the longest wait has been", async () => {
+      // 설계안 1241행: the report carries the oldest state's elapsed time, so an
+      // operator does not have to find the largest of six numbers themselves.
+      const report = await buildReachabilityReport({
+        scopes: new FakeScopeReachabilityStore([sighting()]),
+        checkpoints: oneCursor,
+        clock,
+        publications: feed(newest),
+      });
+
+      // The waiting Scope became ready exactly at `generatedAt`, so the oldest
+      // age is whatever the Card-derived Scope contributes — never negative, and
+      // present because at least one Scope carries a timestamp.
+      expect(report.oldestStateAgeMs).toBeGreaterThanOrEqual(0);
     });
 
     it("reports a Source that consumed the newest Publication as current", async () => {
