@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { arch, cpus, platform, totalmem } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -34,6 +36,12 @@ const MAX_QUANTIZED_RECALL_REGRESSION = 0.02;
 const WARM_QUERY_P95_MS_GATE = 100;
 const PEAK_RSS_MIB_GATE = 768;
 const BATCH_SIZE = 32;
+const RESOURCE_PROBE = fileURLToPath(
+  new URL(
+    "../../../scripts/run-document-retrieval-resource-probe.mjs",
+    import.meta.url,
+  ),
+);
 
 /**
  * The release gate for the fixed document retrieval profile.
@@ -57,23 +65,13 @@ describe.skipIf(assetDirectory === undefined)(
           profileVariant === "q4"
             ? GRANITE_Q4_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE
             : DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
+        const resources = await measureIsolatedResources(
+          profileVariant === "q4" ? "q4" : "fp32",
+          assetDirectory!,
+          profile.id,
+        );
         const provider = createLocalProvider(assetDirectory!, profile);
         await provider.ready();
-
-        // Measure the specified batch workload before retaining the evaluation
-        // vectors and latency samples. Those are evaluator bookkeeping, not
-        // part of the production 32-input embedding batch whose RSS is gated.
-        const readyRssBytes = process.memoryUsage().rss;
-        let peakRssBytes = readyRssBytes;
-        for (let offset = 0; offset < corpus.chunks.length; offset += BATCH_SIZE) {
-          await embedAll(
-            provider,
-            profile,
-            corpus.chunks.slice(offset, offset + BATCH_SIZE),
-            BATCH_SIZE,
-          );
-          peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
-        }
 
         const chunkVectors = await embedAll(provider, profile, corpus.chunks);
         const queryVectors = await embedAll(provider, profile, corpus.queries);
@@ -114,12 +112,19 @@ describe.skipIf(assetDirectory === undefined)(
           recallAt5: quality.recallAt5,
           mrrAt10: quality.mrrAt10,
           warmQueryP95Ms,
-          readyRssMiB: readyRssBytes / 1024 / 1024,
-          peakRssMiB: peakRssBytes / 1024 / 1024,
-          batchRssDeltaMiB: (peakRssBytes - readyRssBytes) / 1024 / 1024,
+          resourceMeasurement: resources.measurement,
+          resourceBatchSize: resources.batchSize,
+          processStartRssMiB: resources.processStartRssMiB,
+          readyRssMiB: resources.readyRssMiB,
+          modelReadyRssDeltaMiB: resources.modelReadyRssDeltaMiB,
+          modelLoadPeakRssMiB: resources.modelLoadPeakRssMiB,
+          batchEndRssMiB: resources.batchEndRssMiB,
+          peakRssMiB: resources.peakRssMiB,
+          batchRssDeltaMiB: resources.batchRssDeltaMiB,
+          lifetimePeakRssMiB: resources.lifetimePeakRssMiB,
           resourceGateMode,
           resourceGatePassed:
-            peakRssBytes / 1024 / 1024 <= PEAK_RSS_MIB_GATE,
+            resources.peakRssMiB <= PEAK_RSS_MIB_GATE,
           baseline,
           gates: {
             recallAt5: RECALL_AT_5_GATE,
@@ -165,6 +170,74 @@ function readResourceGateMode(
   throw new Error(
     "CONTEXTCTL_EVAL_RESOURCE_GATE_MODE must be release or hosted_observation",
   );
+}
+
+interface IsolatedResourceMeasurement {
+  readonly schemaVersion: 1;
+  readonly measurement: "isolated-node-process-v1";
+  readonly profileId: string;
+  readonly batchSize: 32;
+  readonly processStartRssMiB: number;
+  readonly readyRssMiB: number;
+  readonly modelReadyRssDeltaMiB: number;
+  readonly modelLoadPeakRssMiB: number;
+  readonly batchEndRssMiB: number;
+  readonly peakRssMiB: number;
+  readonly batchRssDeltaMiB: number;
+  readonly lifetimePeakRssMiB: number;
+}
+
+async function measureIsolatedResources(
+  variant: "fp32" | "q4",
+  directory: string,
+  expectedProfileId: string,
+): Promise<IsolatedResourceMeasurement> {
+  const stdout = await new Promise<string>((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [RESOURCE_PROBE, variant, directory],
+      { maxBuffer: 1024 * 1024 },
+      (error, childStdout, childStderr) => {
+        if (error !== null) {
+          reject(
+            new Error(
+              `isolated resource probe failed: ${childStderr.trim() || error.message}`,
+              { cause: error },
+            ),
+          );
+          return;
+        }
+        resolve(childStdout);
+      },
+    );
+  });
+  const parsed = JSON.parse(stdout) as Partial<IsolatedResourceMeasurement>;
+  const measurements = [
+    parsed.processStartRssMiB,
+    parsed.readyRssMiB,
+    parsed.modelReadyRssDeltaMiB,
+    parsed.modelLoadPeakRssMiB,
+    parsed.batchEndRssMiB,
+    parsed.peakRssMiB,
+    parsed.batchRssDeltaMiB,
+    parsed.lifetimePeakRssMiB,
+  ];
+  if (
+    parsed.schemaVersion !== 1 ||
+    parsed.measurement !== "isolated-node-process-v1" ||
+    parsed.profileId !== expectedProfileId ||
+    parsed.batchSize !== BATCH_SIZE ||
+    measurements.some(
+      (value) => typeof value !== "number" || !Number.isFinite(value) || value < 0,
+    ) ||
+    parsed.peakRssMiB! < parsed.readyRssMiB! ||
+    parsed.modelLoadPeakRssMiB! < parsed.readyRssMiB! ||
+    parsed.lifetimePeakRssMiB! < parsed.modelLoadPeakRssMiB! ||
+    parsed.lifetimePeakRssMiB! < parsed.peakRssMiB!
+  ) {
+    throw new Error("isolated resource probe returned an invalid result");
+  }
+  return parsed as IsolatedResourceMeasurement;
 }
 
 function readProfileVariant(value: string | undefined): "default" | "q4" {

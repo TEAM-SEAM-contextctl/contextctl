@@ -38,6 +38,7 @@ jobs:
             package-lock.json \
             scripts/run-external-test.mjs \
             scripts/install-document-retrieval-eval-assets.mjs \
+            scripts/run-document-retrieval-resource-probe.mjs \
             apps/contextctl-daemon/package.json \
             apps/contextctl-daemon/bin/contextctl.mjs \
             apps/contextctl-daemon/scripts/install-embedding-assets.mjs \
