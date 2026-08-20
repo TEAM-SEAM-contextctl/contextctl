@@ -78,18 +78,51 @@ describe("documentation coverage", () => {
     // would disagree eventually, and the one a reader found first would be the
     // one they trusted.
     const reference = read("docs/cli.md");
-    const others = ["README.md", "docs/configuration.md", "docs/operations.md"];
+    const others = [
+      "README.md",
+      "README.ko.md",
+      "docs/configuration.md",
+      "docs/operations.md",
+    ];
 
     expect(reference).toContain("## 종료 코드");
     for (const path of others) {
-      expect(read(path), `${path} should link to the exit codes, not repeat them`)
+      const body = read(path);
+      expect(body, `${path} should link to the exit codes, not repeat them`)
         .not.toContain("## 종료 코드");
+      // The English README would spell the same duplication differently.
+      expect(body, `${path} should link to the exit codes, not repeat them`)
+        .not.toMatch(/^#{2,3} Exit codes$/mu);
+    }
+  });
+
+  /**
+   * The two READMEs are the one mirrored pair in the repository, so they are the
+   * one place a reader can be told two different things. Only their shape is
+   * asserted — a translation check belongs to a person, but a missing language
+   * link, a lost section, or one side quietly growing into a manual again is
+   * mechanical.
+   */
+  it("keeps the two READMEs pointing at each other", () => {
+    expect(read("README.md")).toContain("(README.ko.md)");
+    expect(read("README.ko.md")).toContain("(README.md)");
+  });
+
+  it("keeps both READMEs short enough to read in one sitting", () => {
+    // The split exists because a 497-line README buried the introduction. A
+    // number here is arbitrary; a number that fails when the manual creeps back
+    // in is the point.
+    for (const path of ["README.md", "README.ko.md"]) {
+      const lines = read(path).split("\n").length;
+      expect(lines, `${path} is ${lines} lines — the reference belongs in docs/`)
+        .toBeLessThan(220);
     }
   });
 
   it("resolves every relative link between the documents", () => {
     const documents = [
       "README.md",
+      "README.ko.md",
       "docs/cli.md",
       "docs/configuration.md",
       "docs/operations.md",
