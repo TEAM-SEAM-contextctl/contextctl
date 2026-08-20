@@ -122,6 +122,7 @@ export function assembleContext(
         // know which item the target was planned for. Assembly and the split
         // back into items both depend on it.
         itemKey: item.itemKey,
+        targetKey: item.execution.targetKey,
         scopeRef: item.guide.scopeRef,
         rank: chunk.rank,
         chunkId: chunk.chunkId,
@@ -135,6 +136,14 @@ export function assembleContext(
   }
 
   const assembled = assembleDocumentContext(candidates, budget);
+  // A read that contradicted another read was set aside whole. The items that
+  // planned it have no chunks to file and report the contradiction instead;
+  // nothing else about the response changes (SOT L1534, L1639).
+  for (const [itemKey, verdict] of verdicts) {
+    if (verdict.kind === "fulfilled" && assembled.failedTargetKeys.includes(verdict.targetKey)) {
+      verdicts.set(itemKey, { kind: "failed", failure: ASSEMBLY_FAILURE });
+    }
+  }
   const chunksByItem = groupBy(
     rankContext(assembled.chunks),
     (entry) => entry.itemKey,
@@ -320,7 +329,11 @@ function indexOutcomes(
  * plan: either chunks assembly may fuse, or a failure the item reports as-is.
  */
 type ItemVerdict =
-  | { readonly kind: "fulfilled"; readonly chunks: readonly ResolvedDocumentChunk[] }
+  | {
+      readonly kind: "fulfilled";
+      readonly targetKey: string;
+      readonly chunks: readonly ResolvedDocumentChunk[];
+    }
   | { readonly kind: "failed"; readonly failure: ManagedFulfillmentFailure };
 
 /**
@@ -347,7 +360,11 @@ function judgeOutcome(
   if (!outcomeHoldsTogether(item.guide.limit, outcome.chunks)) {
     return { kind: "failed", failure: ASSEMBLY_FAILURE };
   }
-  return { kind: "fulfilled", chunks: outcome.chunks };
+  return {
+    kind: "fulfilled",
+    targetKey: item.execution.targetKey,
+    chunks: outcome.chunks,
+  };
 }
 
 /**
