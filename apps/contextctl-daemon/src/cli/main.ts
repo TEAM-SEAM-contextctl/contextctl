@@ -26,6 +26,7 @@ import {
   runSourceAdd,
   runSourceList,
   runSourceRemove,
+  runStatus,
   type CommandOutcome,
 } from "./commands.js";
 import {
@@ -34,6 +35,7 @@ import {
   EmbeddingAssetsUnavailableError,
   openRegistryOnlyRuntime,
   type CliRuntime,
+  type RegistryOnlyRuntime,
 } from "./runtime.js";
 import { resolveActiveAssetDirectory } from "./asset-directory.js";
 import { resolveContextctlPaths } from "./paths.js";
@@ -156,7 +158,11 @@ export async function runCli(input: {
   }
 
   try {
-    if (command.kind === "cards_decision" || command.kind === "reachability") {
+    if (
+      command.kind === "cards_decision" ||
+      command.kind === "reachability" ||
+      command.kind === "status"
+    ) {
       // Inside the same guard as every other command on purpose: an unreadable
       // database has to reach an operator as a sentence, and a branch outside it
       // reported the first `contextctl reachability` on a fresh machine as an
@@ -166,12 +172,10 @@ export async function runCli(input: {
         workingDirectory,
       });
       try {
-        return emit(
-          input,
-          command.kind === "cards_decision"
-            ? await runCardsDecision(registry, command)
-            : await runReachability(registry, command),
-        );
+        return emit(input, await runRegistryOnlyCommand(registry, command, {
+          environment: input.environment,
+          workingDirectory,
+        }));
       } finally {
         registry.close();
       }
@@ -202,6 +206,38 @@ function emit(
     input.stderr(line);
   }
   return outcome.exitCode;
+}
+
+/**
+ * The three commands that need Registry's database and nothing else.
+ *
+ * Switched in one place rather than with a nested conditional at the call site,
+ * so that adding a fourth cannot silently fall through to whichever branch the
+ * ternary happened to end on.
+ */
+async function runRegistryOnlyCommand(
+  registry: RegistryOnlyRuntime,
+  command: Extract<
+    CliCommand,
+    { kind: "cards_decision" | "reachability" | "status" }
+  >,
+  context: {
+    readonly environment: Readonly<Partial<Record<string, string>>>;
+    readonly workingDirectory: string;
+  },
+): Promise<CommandOutcome> {
+  switch (command.kind) {
+    case "cards_decision":
+      return runCardsDecision(registry, command);
+    case "reachability":
+      return runReachability(registry, command);
+    case "status":
+      return runStatus(registry, command, context);
+    default: {
+      const unreachable: never = command;
+      throw new Error(`unknown registry-only command: ${String(unreachable)}`);
+    }
+  }
 }
 
 async function runWithoutRuntime(

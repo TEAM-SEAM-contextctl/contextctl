@@ -1,9 +1,11 @@
 import { userInfo } from "node:os";
 
 import {
+  buildReachabilityReport,
   runOperatorCommand,
   SqliteConsumerCheckpointStore,
   SqliteScopeReachabilityStore,
+  stalePendingRegistryScopes,
   type ContextCard,
   type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
@@ -16,7 +18,20 @@ import {
   resolveAssetInstallationTarget,
   runAssetInstallation,
 } from "./asset-installation.js";
+import {
+  describeAssetDirectoryProblem,
+  resolveActiveAssetDirectory,
+} from "./asset-directory.js";
 import { runDiagnosis, type DiagnosisReport } from "./doctor.js";
+import { resolveContextctlPaths } from "./paths.js";
+import {
+  judgeLanes,
+  renderStatusReport,
+  type AssetObservation,
+  type IngestionObservation,
+  type RegistryObservation,
+  type StatusObservation,
+} from "./status.js";
 import { buildPathsReport, renderPathsReport } from "./paths-report.js";
 import {
   renderCardListings,
@@ -444,6 +459,157 @@ function operatorPorts(cli: RegistryOnlyRuntime): OperatorCommandPorts {
       findById: (publicationId) => cli.publications.find(publicationId),
     },
   };
+}
+
+/* ---------------------------------------------------------- lane status */
+
+/**
+ * Reads each lane's durable state and reports what it can do.
+ *
+ * The reads are here and the judgement is in `status.ts`, so that the rules —
+ * "Registry behind is degraded", "no assets is not_ready", "Registry degraded
+ * does not touch resolve" — are testable without a database or a 415MB model.
+ * Every read is wrapped: a lane whose state cannot be read is `not_ready` for
+ * that reason, and one failing store must not stop the other three from being
+ * reported. An operator running this command is usually already in trouble, and
+ * a status surface that throws on the first bad store tells them the least at
+ * the moment they need the most.
+ */
+export async function runStatus(
+  cli: RegistryOnlyRuntime,
+  command: Extract<CliCommand, { kind: "status" }>,
+  context: {
+    readonly environment: Readonly<Partial<Record<string, string>>>;
+    readonly workingDirectory: string;
+  },
+): Promise<CommandOutcome> {
+  const paths = resolveContextctlPaths(context.environment, context.workingDirectory);
+  const registry = await observeRegistry(cli);
+  const observation: StatusObservation = {
+    assets: await observeAssets(paths.embeddingAssetDirectory),
+    registry,
+    ingestion: await observeIngestion(cli, registry),
+  };
+  const report = judgeLanes(observation);
+  const stdout = command.json
+    ? JSON.stringify(report, undefined, 2)
+    : renderStatusReport(report);
+
+  if (report.serviceable) {
+    return ok(stdout);
+  }
+  // The report stays on stdout even when a lane is down — it is the same text a
+  // healthy run prints and it names which lane — with the verdict repeated on
+  // stderr so it survives being piped away. Same reasoning as the reachability
+  // gate below.
+  return {
+    stdout,
+    stderr: [
+      `일을 할 수 없는 실행 영역이 있습니다: ${report.lanes
+        .filter((verdict) => verdict.status === "not_ready")
+        .map((verdict) => verdict.lane)
+        .join(", ")}`,
+    ],
+    exitCode: EXIT_CODES.laneNotReady,
+  };
+}
+
+async function observeAssets(directory: string): Promise<AssetObservation> {
+  try {
+    // The same resolver `doctor` and the runtime use. Reading `active.json` here
+    // instead is what once let the diagnosis and the composition disagree about
+    // which revision was active.
+    const resolution = await resolveActiveAssetDirectory(directory);
+    return resolution.status === "unavailable"
+      ? {
+          status: "unavailable",
+          detail: describeAssetDirectoryProblem(resolution.problem),
+        }
+      : { status: "installed", directory: resolution.directory };
+  } catch (error) {
+    return { status: "unavailable", detail: describeError(error) };
+  }
+}
+
+/**
+ * Registry's delay and its approved catalog, from one reachability report.
+ *
+ * The report is rebuilt rather than parsed out of `runReachability`'s text: that
+ * command formats for a person, and reading a lane verdict out of formatted
+ * Korean would break the next time a sentence changes.
+ */
+async function observeRegistry(
+  cli: RegistryOnlyRuntime,
+): Promise<RegistryObservation> {
+  try {
+    const report = await buildReachabilityReport(operatorPorts(cli));
+    const behind = report.sourceFreshnessLags.filter((lag) => lag.behind);
+    const lags = behind
+      .map((lag) => lag.freshnessLagMs)
+      .filter((value): value is number => value !== undefined);
+    const catalog = await cli.cards.listApprovedCards();
+    return {
+      status: "read",
+      behindSources: behind.map((lag) => lag.sourceId),
+      // Absent rather than zero when no delay could be measured. A Source that
+      // has never been consumed is maximally behind, and reporting `0초` for it
+      // would read as caught up.
+      ...(lags.length === 0 ? {} : { worstFreshnessLagMs: Math.max(...lags) }),
+      stalePendingScopeCount: stalePendingRegistryScopes(report).length,
+      approvedCardCount: catalog.cards.length,
+    };
+  } catch (error) {
+    return { status: "unreadable", detail: describeError(error) };
+  }
+}
+
+/**
+ * Every Source we can name, asked whether its last publish finished.
+ *
+ * The names come from Registry's own report, which is the enumeration limit the
+ * lane verdict states: `pendingRecoveryIntentForSource` needs a `sourceId` and
+ * Ingestion exposes no query that lists them. The alternatives were worse than
+ * the limit — the staging store's `claimCleanup` takes leases, so a status check
+ * would have side effects, and `sources.json` holds configuration references
+ * rather than the ids the system assigns.
+ */
+async function observeIngestion(
+  cli: RegistryOnlyRuntime,
+  registry: RegistryObservation,
+): Promise<IngestionObservation> {
+  if (registry.status === "unreadable") {
+    return {
+      status: "unreadable",
+      detail: `점검할 Source 목록을 Registry 에서 읽을 수 없습니다: ${registry.detail}`,
+    };
+  }
+  try {
+    const sources = await sourceIdsWithCursors(cli);
+    const incomplete: string[] = [];
+    for (const sourceId of sources) {
+      const intent = await cli.publications.pendingRecoveryIntentForSource(sourceId);
+      if (intent !== undefined) {
+        incomplete.push(sourceId);
+      }
+    }
+    return { status: "read", probedSources: sources, incompleteSources: incomplete };
+  } catch (error) {
+    return { status: "unreadable", detail: describeError(error) };
+  }
+}
+
+/** Sources Registry has a cursor for — the only ones this process can name. */
+async function sourceIdsWithCursors(
+  cli: RegistryOnlyRuntime,
+): Promise<readonly string[]> {
+  const cursors = await new SqliteConsumerCheckpointStore(cli.database, () =>
+    new Date().toISOString(),
+  ).listCursors();
+  return cursors.map((cursor) => cursor.sourceId);
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /* ------------------------------------------------------ reachability report */

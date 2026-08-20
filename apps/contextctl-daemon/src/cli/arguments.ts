@@ -48,6 +48,12 @@ export type CliCommand =
       readonly note?: string;
     }
   | { readonly kind: "reachability"; readonly state?: string }
+  /**
+   * Per-lane readiness. Separate from `doctor` because it answers a different
+   * question — see `status.ts` — and `--json` exists because the intended second
+   * consumer is a monitor rather than a person.
+   */
+  | { readonly kind: "status"; readonly json: boolean }
   | {
       readonly kind: "query";
       readonly text: string;
@@ -172,6 +178,12 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
       "인덱싱됐지만 승인 카드로 도달할 수 없는 범위를 보고한다. 릴리스 기준을 넘기지 못하면 0이 아닌 코드로 끝난다.",
   },
   {
+    topic: "status",
+    line: "contextctl status [--json]",
+    summary:
+      "실행 영역별로 지금 일을 할 수 있는지 보여준다(resolve, registry, selection_assets, ingestion). 못 하는 영역이 있으면 0이 아닌 코드로 끝난다.",
+  },
+  {
     topic: "query",
     line: 'contextctl query "<질문>" [--json] [--max-context <n>]',
     summary: "승인된 카드에서 컨텍스트를 선택해 답한다. --max-context 는 문자 수 상한이다.",
@@ -252,6 +264,8 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
       return parsePathsCommand(argv.slice(1));
     case "reachability":
       return parseReachabilityCommand(argv.slice(1));
+    case "status":
+      return parseStatusCommand(argv.slice(1));
     case "serve":
       return parseServeCommand(argv.slice(1));
     case "help":
@@ -430,6 +444,25 @@ function parseReachabilityCommand(rest: readonly string[]): ParsedArguments {
   }
   const state = stringOf(outcome.values["state"]);
   return ok({ kind: "reachability", ...(state === undefined ? {} : { state }) });
+}
+
+/**
+ * Per-lane readiness, printed for a person or for a monitor.
+ *
+ * No `--lane` filter. A status surface exists to show what an operator did not
+ * think to ask about, and a command that reported one lane at a time would let a
+ * `not_ready` elsewhere go unseen — which is the failure the design's four-lane
+ * shape is there to prevent.
+ */
+function parseStatusCommand(rest: readonly string[]): ParsedArguments {
+  const outcome = tokenize(rest, { json: { type: "boolean" } }, "status");
+  if (outcome.status === "usage_error") {
+    return outcome;
+  }
+  if (outcome.positionals.length > 0) {
+    return usageError("status 는 인자를 받지 않습니다.", "status");
+  }
+  return ok({ kind: "status", json: outcome.values["json"] === true });
 }
 
 function parseCardsCommand(rest: readonly string[]): ParsedArguments {

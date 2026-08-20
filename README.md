@@ -98,6 +98,9 @@ contextctl doctor
 실패한 항목에는 다음에 칠 명령이 `→` 로 붙습니다. `--deep` 은 모델 파일 전체를
 다시 해싱합니다(느립니다). 기본 실행은 포인터와 파일 크기만 봅니다.
 
+`doctor` 는 **설치가 제대로 됐는지**를 봅니다. 쓰기 시작한 뒤에 **어느 실행 영역이 지금
+일을 못 하는지**를 알고 싶으면 `contextctl status` 입니다 ([아래](#status)).
+
 ### 4. 문서를 등록하고 수집합니다
 
 ```bash
@@ -221,6 +224,7 @@ contextctl cards reject <cardId> <versionId> [--by <who>] [--note <text>]
 contextctl cards disable <cardId> [--by <who>] [--note <text>]
 contextctl cards rollback <cardId> <versionId> [--by <who>] [--note <text>]
 contextctl reachability [--state <state>]
+contextctl status [--json]
 contextctl query "<질문>" [--json] [--max-context <n>]
 contextctl serve
 contextctl help [<command>]
@@ -243,8 +247,11 @@ contextctl --version
 | `3` | `reachability` 릴리스 기준 미달 — `broken` 또는 이유 없는 `orphaned` 가 있습니다 |
 | `4` | `ingest` — 선행 Publication 을 아직 소비하지 않아 보류. **재시도로 해소됩니다** |
 | `5` | `ingest` — Source 의 체인이 갈라짐. **사람이 확인해야 합니다** |
+| `6` | `status` — 일을 할 수 없는 실행 영역이 있습니다(`not_ready`) |
 
 `4` 와 `5` 를 가른 이유는 재시도해도 되는 것과 안 되는 것이 다르기 때문입니다.
+
+`6` 은 **`not_ready` 에만** 붙습니다. `degraded` 는 `0` 으로 끝납니다 — 이미 승인된 Card 는 계속 서비스되므로, 밀린 상태에 경보를 울리면 정상 상태에 경보를 울리는 셈이 됩니다.
 
 ### reachability
 
@@ -256,6 +263,83 @@ contextctl reachability --state orphaned     # 그 상태의 Scope 목록과 이
 ```
 
 `--state` 는 `pending_registry`, `broken`, `reachable`, `pending_approval`, `intentionally_unexposed`, `orphaned` 를 받습니다.
+
+### status
+
+daemon 은 프로세스 하나지만 그 안에서 성격이 다른 일이 동시에 벌어집니다. 어느 영역이 지금 일을 못 하는지 영역별로 봅니다.
+
+```bash
+contextctl status          # 사람이 읽는 형태
+contextctl status --json   # 감시 도구가 읽는 형태
+```
+
+방금 설치해 아무것도 없는 기계에서:
+
+```
+resolve           not_ready  임베딩 자산이 없어 질문을 벡터로 만들 수 없습니다. contextctl install-assets 를 실행하세요.
+registry          ready      게시된 Publication 을 모두 소비했습니다.
+selection_assets  not_ready  임베딩 모델이 설치되어 있지 않습니다: …/embedding-assets/active.json 를 읽을 수 없습니다 …. contextctl install-assets 를 실행하세요.
+ingestion         ready      끝나지 않은 게시가 없습니다. 점검 대상은 한 번이라도 소비된 Source 0개입니다. …
+
+not_ready lane 이 있어 서비스할 수 없습니다.
+```
+
+이때는 `6` 으로 끝나고, 어느 영역이 막혔는지는 `stderr` 로도 한 줄 나갑니다(보고서를 파이프로 넘겨도 남습니다).
+
+모델을 설치하고 문서를 수집·승인한 뒤, 새 Publication 이 하나 게시됐지만 아직 소비되지 않았고
+직전 게시가 끝나지 않은 기계에서:
+
+```
+resolve           ready      승인 Card 1개로 답할 수 있습니다. Registry 지연은 이 판정에 영향을 주지 않습니다(설계안 120절).
+registry          degraded   소비하지 않은 Publication 이 있는 Source 1개: src_local1 (가장 오래된 지연 6분)
+selection_assets  ready      임베딩 자산을 쓸 수 있습니다: ~/.contextctl/embedding-assets/revisions/eb09231254…
+ingestion         degraded   게시가 끝나지 않은 Source 1개: src_local1 — contextctl ingest 를 다시 실행하면 이어서 마칩니다. 점검 대상은 한 번이라도 소비된 Source 1개입니다. …
+
+서비스할 수 없는 lane 은 없습니다.
+```
+
+**두 영역이 저하인데 종료 코드는 `0` 입니다.** 승인된 Card 는 계속 서비스되므로 `resolve` 는
+`ready` 로 남습니다. 운영자가 할 일은 재시작이 아니라 `contextctl ingest` 를 다시 실행하는
+것입니다.
+
+지연을 재지 못한 경우(소비한 Publication 의 시각을 모를 때)에는 `0초` 대신 지연을 아예 적지
+않습니다 — `0초` 는 "따라잡았다"로 읽히기 때문입니다.
+
+승인 Card 가 아직 없으면 `resolve` 는 `degraded` 입니다. 기계는 다 정상이고 답할 대상만 없는
+상태라, 다음에 할 일은 `contextctl cards approve <id>` 입니다.
+
+감시 도구나 CI 에서:
+
+```bash
+contextctl status --json > status.json || echo "막힌 영역이 있습니다"
+```
+
+```json
+{
+  "lanes": [
+    { "lane": "resolve", "status": "ready", "detail": "…" },
+    { "lane": "registry", "status": "degraded", "detail": "…" }
+  ],
+  "serviceable": true
+}
+```
+
+(네 영역이 모두 나오고 `detail` 은 위 사람용 출력과 같은 문장입니다. 여기서는 줄여 적었습니다.)
+
+`serviceable` 은 `not_ready` 가 하나도 없을 때 `true` 입니다. `degraded` 는 서비스 가능으로 셉니다.
+
+| 실행 영역 | 판정 근거 |
+| -- | -- |
+| `resolve` | 승인 Card 를 읽을 수 있는가, 질문을 벡터로 만들 수 있는가 |
+| `registry` | 소비하지 않은 Publication 이 있는가, 5분 넘게 대기 중인 Scope 가 있는가 |
+| `selection_assets` | 고정된 임베딩 자산이 설치되어 있는가 |
+| `ingestion` | 끝나지 않은 게시가 남은 Source 가 있는가 |
+
+**`registry` 가 밀려도 `resolve` 는 `ready` 입니다.** 낡은 Card 로 답하는 것은 고장이 아니라 지연이고, 이때 운영자가 할 일은 프로세스를 재시작하는 것이 아니라 기다리거나 `ingest` 를 다시 실행하는 것입니다.
+
+`ingestion` 판정에는 한계가 있고 출력에 그 한계를 함께 적습니다. 점검할 수 있는 Source 는 **한 번이라도 소비된 Source** 뿐입니다 — 게시만 되고 소비된 적 없는 Source 는 이 명령이 알 수 없습니다.
+
+`doctor` 와는 묻는 것이 다릅니다. `doctor` 는 "설치가 제대로 됐는가", `status` 는 "지금 어느 영역이 일을 못 하는가" 입니다.
 
 ---
 
