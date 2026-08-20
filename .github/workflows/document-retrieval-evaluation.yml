@@ -37,6 +37,9 @@ jobs:
             package.json \
             package-lock.json \
             scripts/run-external-test.mjs \
+            scripts/install-document-retrieval-eval-assets.mjs \
+            scripts/run-document-retrieval-resource-probe.mjs \
+            scripts/summarize-document-retrieval-candidate.mjs \
             apps/contextctl-daemon/package.json \
             apps/contextctl-daemon/bin/contextctl.mjs \
             apps/contextctl-daemon/scripts/install-embedding-assets.mjs \
@@ -46,7 +49,8 @@ jobs:
             packages/ingestion-indexing/src \
             packages/ingestion-indexing/test/document-retrieval-eval.test.ts \
             packages/ingestion-indexing/test/fixtures/document-retrieval-eval.ts \
-            packages/ingestion-indexing/test/fixtures/document-retrieval-eval-v1
+            packages/ingestion-indexing/test/fixtures/document-retrieval-eval-v1 \
+            test/document-retrieval-candidate-summary.test.ts
           status=$?
           set -e
 
@@ -93,18 +97,61 @@ jobs:
           ')"
           test -n "${directory}"
           echo "directory=${directory}" >> "${GITHUB_OUTPUT}"
+      - name: Restore pinned Granite q8 candidate assets
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/contextctl-q8-eval-assets
+          key: granite-q8-${{ runner.os }}-200799bc14e4bc0d4087e4e588a58755e3d3bdbfef7e5761e366dfefcd09f069
+      - name: Install and verify Granite q8 candidate assets
+        id: granite-q8-assets
+        env:
+          GRANITE_Q8_ASSET_ROOT: ${{ runner.temp }}/contextctl-q8-eval-assets
+        run: |
+          directory="$(node scripts/install-document-retrieval-eval-assets.mjs q8 "${GRANITE_Q8_ASSET_ROOT}")"
+          test -n "${directory}"
+          echo "directory=${directory}" >> "${GITHUB_OUTPUT}"
       - name: Run hosted document retrieval evaluation
         env:
           CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
           CONTEXTCTL_EVAL_RESOURCE_GATE_MODE: hosted_observation
           CONTEXTCTL_EVAL_RESULT_PATH: ${{ runner.temp }}/document-retrieval-eval.json
         run: npm run test:eval:document-retrieval
+      - name: Measure Granite q8 candidate quality
+        env:
+          CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-q8-assets.outputs.directory }}
+          CONTEXTCTL_GRANITE_FP32_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
+          CONTEXTCTL_GRANITE_EVAL_PROFILE: q8
+          CONTEXTCTL_EVAL_QUALITY_GATE_MODE: candidate_observation
+          CONTEXTCTL_EVAL_RESOURCE_GATE_MODE: hosted_observation
+          CONTEXTCTL_EVAL_RESULT_PATH: ${{ runner.temp }}/document-retrieval-q8-candidate-eval.json
+        run: npm run test:eval:document-retrieval
+      - name: Run five isolated Granite q8 candidate RSS observations
+        env:
+          GRANITE_Q8_ASSET_DIRECTORY: ${{ steps.granite-q8-assets.outputs.directory }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/document-retrieval-q8-probes"
+          for attempt in 1 2 3 4 5; do
+            node scripts/run-document-retrieval-resource-probe.mjs \
+              q8 \
+              "${GRANITE_Q8_ASSET_DIRECTORY}" \
+              > "${RUNNER_TEMP}/document-retrieval-q8-probes/run-${attempt}.json"
+          done
+      - name: Summarize Granite q8 candidate observation
+        run: |
+          node scripts/summarize-document-retrieval-candidate.mjs \
+            "${RUNNER_TEMP}/document-retrieval-q8-candidate-eval.json" \
+            "${RUNNER_TEMP}/document-retrieval-q8-candidate-summary.json" \
+            "${RUNNER_TEMP}"/document-retrieval-q8-probes/run-{1,2,3,4,5}.json
       - name: Upload hosted document retrieval result
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: document-retrieval-hosted-eval-${{ github.sha }}
-          path: ${{ runner.temp }}/document-retrieval-eval.json
+          path: |
+            ${{ runner.temp }}/document-retrieval-eval.json
+            ${{ runner.temp }}/document-retrieval-q8-candidate-eval.json
+            ${{ runner.temp }}/document-retrieval-q8-candidate-summary.json
+            ${{ runner.temp }}/document-retrieval-q8-probes/*.json
           if-no-files-found: error
           retention-days: 30
 

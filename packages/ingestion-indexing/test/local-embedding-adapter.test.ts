@@ -24,6 +24,14 @@ import {
   type LocalFeatureExtractionRuntime,
   type LocalFeatureExtractionRuntimeFactory,
 } from "../src/index.js";
+import {
+  GRANITE_FP32_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+  GRANITE_FP32_EMBEDDING_ASSET_MANIFEST,
+  GRANITE_FP32_EMBEDDING_ASSET_MANIFEST_SHA256,
+  GRANITE_Q8_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+  GRANITE_Q8_EMBEDDING_ASSET_MANIFEST,
+  GRANITE_Q8_EMBEDDING_ASSET_MANIFEST_SHA256,
+} from "../src/infrastructure/transformers-js-local-embedding-adapter.js";
 import { createManagedChunkFixture } from "./fixtures/document-fixture.js";
 
 const temporaryDirectories: string[] = [];
@@ -84,6 +92,51 @@ describe("document retrieval embedding profile", () => {
         ),
       ),
     ).toBe(DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256);
+  });
+
+  it("pins fp32 and q8 as separate immutable vector families", () => {
+    expect(DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE).toBe(
+      GRANITE_FP32_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+    );
+    expect(DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST).toBe(
+      GRANITE_FP32_EMBEDDING_ASSET_MANIFEST,
+    );
+    expect(DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256).toBe(
+      GRANITE_FP32_EMBEDDING_ASSET_MANIFEST_SHA256,
+    );
+    expect(validateEmbeddingProfile(GRANITE_Q8_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE))
+      .toEqual([]);
+    expect(GRANITE_Q8_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE).toMatchObject({
+      id: "document-granite-97m-multilingual-r2-q8-v1",
+      execution: {
+        artifactPath: "onnx/model_quantized.onnx",
+        precision: "q8",
+      },
+    });
+    expect(GRANITE_Q8_EMBEDDING_ASSET_MANIFEST.files.map((file) => file.path))
+      .toEqual([
+        "config.json",
+        "onnx/model_quantized.onnx",
+        "special_tokens_map.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+      ]);
+    expect(
+      digest(
+        Buffer.from(
+          serializeLocalEmbeddingAssetManifest(
+            GRANITE_Q8_EMBEDDING_ASSET_MANIFEST,
+          ).trim(),
+          "utf8",
+        ),
+      ),
+    ).toBe(GRANITE_Q8_EMBEDDING_ASSET_MANIFEST_SHA256);
+    expect(
+      documentEmbeddingProfileChangeRequiresFullRebuild(
+        GRANITE_FP32_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+        GRANITE_Q8_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+      ),
+    ).toBe(true);
   });
 
   it("requires a full rebuild for every vector-semantics change", () => {
