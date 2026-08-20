@@ -24,3 +24,4 @@ See [`0000-template.md`](./0000-template.md).
 | [0001](./0001-registry-owns-operator-cli-surface.md) | 운영자 승인 CLI 표면은 Registry가 소유한다 | Accepted | 2026-08-10 |
 | [0002](./0002-registry-classifies-scope-reachability.md) | Registry가 Published Scope의 도달 가능성을 판정하고 보고한다 | Accepted | 2026-08-14 |
 | [0003](./0003-no-reverse-lifecycle-contract-to-indexing.md) | Registry에서 Indexing으로 가는 역방향 lifecycle 계약을 만들지 않는다 | Accepted | 2026-08-14 |
+| [0004](./0004-backlog-reported-as-behind-and-lag.md) | Registry는 backlog를 개수가 아니라 밀림 여부와 지연 시간으로 보고한다 | Accepted | 2026-08-20 |
