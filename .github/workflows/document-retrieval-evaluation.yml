@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # GitHub-hosted runners are CPU-only. The Linux CPU runtime is bundled with
+  # onnxruntime-node; skip the optional CUDA payload fetched from NuGet.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   change_detection:
     name: document-retrieval-change-detection
