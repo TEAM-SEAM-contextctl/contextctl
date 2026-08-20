@@ -1,126 +1,128 @@
 # contextctl
 
-**검색하기 전에, 어디를 검색할지 먼저 정합니다.**
+**Decide where to search before you search.**
 
-MCP 가 외부 데이터를 AI 에 연결해 준다면, contextctl 은 연결된 지식을 검색 가능한 형태로
-만들고, 최신 상태로 유지하며, AI 가 사용할 검색 범위를 **사람이 승인한 것으로 제한**합니다.
+[한국어](README.ko.md)
 
-문서를 등록해도 곧바로 검색되지 않습니다. 사람이 Card 를 승인해야 서비스에 들어가고, 질의는
-그 승인된 범위 안에서만 답합니다.
+MCP connects external data to an AI. contextctl makes that connected knowledge
+searchable, keeps it current, and restricts what an AI may search to **what a
+person approved**.
 
-MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습니다.
+Registering a document does not make it searchable. A human approves a Card
+first, and every query answers from inside that approved scope.
 
-> 검증 범위: **darwin arm64 에서 검증됨. Linux / WSL 미검증.**
+It also runs as an MCP server, so an agent like Claude Code can use it.
 
----
+> **The CLI speaks Korean.** Command names and flags are English; messages,
+> diagnostics and the reference docs are Korean. Locale support is planned, not
+> implemented.
 
-## 무엇을 하는가
-
-네 가지 일을 합니다.
-
-| | |
-|---|---|
-| **표현** | 외부 지식을 구조와 의미를 보존한 검색 단위로 만듭니다. Markdown 은 문서 구조를 따라 의미 단위와 청크로 쪼개고 임베딩해 색인에 게시합니다. PostgreSQL·OpenAPI 는 원본을 복제하지 않고 **좌표만** 게시합니다 |
-| **생명주기** | 수집과 등록이 **독립 주기로** 돕니다. 문서가 바뀌면 바뀐 청크만 다시 임베딩하고, 등록 쪽이 밀리면 그 지연을 숨기지 않고 관측합니다. Card 는 덮어쓰지 않고 버전을 쌓으며, 검증된 버전만 서비스로 승격됩니다 |
-| **선택** | 질문에 적합한 지식 영역과 검색 범위를 고릅니다. 순위 목록이 아니라 **승인·보류·기각 판정**을 내고, 무엇을 왜 버렸는지도 함께 보고합니다 |
-| **전달** | 관리 문서는 본문 근거까지 같은 요청에서 조립해 주고, DB·API 는 **안전하게 검증 가능한 조회 좌표**를 줍니다 |
-
-### 하지 않는 일
-
-책임 범위를 좁게 두는 것이 설계입니다. 미구현이 아닙니다.
-
-- **SQL 을 만들거나 실행하지 않습니다.** 자연어를 SQL 로 바꾸는 대신, 검증 가능한 좌표
-  (schema·table·column·허용 연산)까지만 줍니다
-- **HTTP API 를 호출하지 않습니다.** 어느 오퍼레이션인지까지만 줍니다
-- **최종 답변을 만들지 않습니다.** 근거를 조립해 주고, 답은 호출자가 만듭니다
-- **가져온 문서 본문을 지시로 해석하지 않습니다.** 응답은 항상 `contentTrust: untrusted` 로
-  표시됩니다 — 검색된 텍스트는 데이터입니다
+> Verified on **darwin arm64**. Linux and WSL are untested.
 
 ---
 
-## 요구사항
+## What it does
 
 | | |
 |---|---|
-| **Node.js** | **24 이상** — 저장소가 `node:sqlite` 위에 있고, 그 모듈은 Node 24 에서 처음 제공됩니다 |
-| **Qdrant** | 사실상 필수입니다. 없으면 색인이 프로세스 메모리에만 남습니다 |
-| **디스크** | 임베딩 모델 **396.1 MiB** |
+| **Represent** | Turns external knowledge into retrieval units that keep its structure and meaning. Markdown is split along document structure into semantic units and chunks, embedded, and published to an index. PostgreSQL and OpenAPI are never copied — only their **coordinates** are published |
+| **Lifecycle** | Capture and registration run on **independent cycles**. When a document changes, only the changed chunks are re-embedded; when registration falls behind, the delay is reported rather than hidden. Cards are never overwritten — versions accumulate and only a validated one is promoted |
+| **Select** | Picks the knowledge areas and retrieval scopes that fit a question. The answer is not a ranked list but an **admit / defer / reject verdict**, and it reports what it discarded as well as what it chose |
+| **Deliver** | For managed documents it assembles the supporting text in the same request. For databases and APIs it returns **coordinates you can verify** before acting on them |
 
-> ★ **`fnm` · `nvm` · `asdf` 를 쓴다면**: 이들은 **활성 Node 버전의 `bin` 에만** 설치합니다.
-> 버전을 바꾸면 `contextctl` 이 사라진 것처럼 보입니다. `contextctl paths` 가 현재 어느 Node
-> 아래 있는지 알려줍니다.
+## What it will not do
 
-## 설치
+Keeping the responsibility narrow is the design, not a missing feature.
+
+- **It does not write or run SQL.** Instead of turning a question into a query,
+  it gives you verifiable coordinates — schema, table, columns, permitted
+  operations
+- **It does not call HTTP APIs.** It tells you which operation
+- **It does not produce the final answer.** It assembles grounds; the caller
+  answers
+- **It never reads retrieved document text as instruction.** Every response
+  carries `contentTrust: untrusted` — retrieved text is data
+
+---
+
+## Requirements
+
+| | |
+|---|---|
+| **Node.js** | **24 or newer** — the stores are built on `node:sqlite`, first shipped in Node 24 |
+| **Qdrant** | Effectively required. Without it the index lives only in process memory |
+| **Disk** | **396.1 MiB** for the embedding model |
+
+> ★ **Using `fnm`, `nvm` or `asdf`?** They install into the **active Node
+> version's `bin` only**. Switching versions makes `contextctl` look like it
+> vanished. `contextctl paths` reports which Node it is under.
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
 ```
 
-스크립트가 하는 일은 셋뿐입니다 — Node 버전 확인, 패키지 5개 내려받아 `npm i -g`, `PATH` 도달
-확인. **모델은 받지 않습니다.** 396 MiB 다운로드는 별도 동의가 필요한 일이라 다음 단계에서
-직접 물어봅니다.
+The script does three things — check the Node version, install five packages
+globally, confirm `PATH` reaches them. **It does not download the model.** A
+396 MiB download needs its own consent, so the next step asks for it.
 
 ---
 
-## 5분 만에 해보기
+## Five minutes
 
-> **모든 명령이 `SQLite is an experimental feature` 경고를 `stderr` 로 냅니다. 정상입니다.**
-> 저장소가 Node 내장 `node:sqlite` 를 쓰기 때문이고 무해합니다. 억제 플래그는 안내하지
-> 않습니다 — 이 경고를 끄면 정작 중요한 경고도 함께 사라집니다.
+> Every command prints a `SQLite is an experimental feature` warning on
+> `stderr`. That is expected and harmless — the stores use Node's built-in
+> `node:sqlite`. No suppression flag is documented, because silencing this
+> warning silences the ones that matter too.
 
 ```bash
-# 1. 벡터 색인을 띄웁니다
+# 1. Start the vector index
 docker run -d -p 6333:6333 qdrant/qdrant
 export CONTEXTCTL_QDRANT_URL=http://localhost:6333
 
-# 2. 임베딩 모델을 설치합니다 (396.1 MiB, 동의를 묻습니다)
+# 2. Install the embedding model (396.1 MiB, asks for consent)
 contextctl install-assets
 
-# 3. 설치를 점검합니다
+# 3. Check the installation
 contextctl doctor
 
-# 4. 문서를 등록하고 수집합니다
+# 4. Register a document and capture it
 contextctl source add ./docs/leave.md
 contextctl ingest
 
-# 5. 눈으로 확인하고 승인합니다
+# 5. Read what was produced, then approve it
 contextctl cards list
 contextctl cards approve <cardId>
 
-# 6. 질의합니다
-contextctl query "반차는 어떻게 써?"
+# 6. Ask
+contextctl query "How do I take a half day?"
 ```
 
-4번에서 이렇게 나옵니다.
+**Step 5 is the boundary this product exists for.** Capturing alone searches
+nothing. A Card you do not approve is never used, and one you did approve can be
+withdrawn with `cards disable` and approved again later — without re-capturing.
 
-```
-source.leave: published
-  Publication pub_… — claimed
-  Card unit_… / 버전 id_… [validated]
-Card 버전 4개가 승인을 기다린다. 다음: contextctl cards list
-```
-
-**5번이 이 제품의 경계입니다.** 수집만으로는 아무것도 검색되지 않습니다. 잘못 만들어진 Card 는
-승인하지 않으면 되고, 이미 승인한 것도 `cards disable` 로 내렸다가 다시 승인할 수 있습니다
-(다시 수집할 필요는 없습니다).
-
-> ★ **Card 의미 생성기를 설정하지 않으면 6번에서 빈 결과가 나옵니다.** 기본 생성기는 모델을
-> 쓰지 않아서 Card 키워드가 스키마 필드 이름뿐이고, 자연어 질의와 겹치는 말이 없습니다.
-> 이유와 설정 방법은 [설정 문서](docs/configuration.md#card-의미-생성기--설정을-권장합니다)에
-> 실측과 함께 있습니다.
+> ★ **Without a Card meaning generator configured, step 6 returns nothing.** The
+> default generator uses no model, so a Card's keywords are schema field names
+> with no words in common with a natural-language question. The reason and the
+> setup are in
+> [설정 / Configuration](docs/configuration.md#card-의미-생성기--설정을-권장합니다)
+> (Korean), with measurements.
 
 ---
 
-## MCP 로 붙이기
+## As an MCP server
 
 ```bash
 contextctl serve
 ```
 
-stdin/stdout 으로 MCP 를 말합니다. 에이전트에 노출되는 도구는 **`resolve_context` 하나**입니다.
-승인·거부 같은 제어 명령은 의도적으로 MCP 에 없습니다 — 승인은 사람의 손에 남깁니다.
+Speaks MCP over stdin/stdout. Exactly **one tool** is exposed to an agent:
+`resolve_context`. Control commands like approve and reject are deliberately
+absent — approval stays in human hands.
 
-Claude Code 라면 프로젝트 루트 `.mcp.json` 에 이렇게 씁니다.
+For Claude Code, in the project's `.mcp.json`:
 
 ```json
 {
@@ -134,9 +136,9 @@ Claude Code 라면 프로젝트 루트 `.mcp.json` 에 이렇게 씁니다.
 }
 ```
 
-> ★ **이 설정 형식은 이 저장소에서 검증하지 않았습니다.** `contextctl serve` 가 MCP stdio
-> 서버로 동작하는 것은 확인했지만, 위 `.mcp.json` 으로 Claude Code 에 실제로 등록해 보지는
-> 않았습니다.
+> ★ **This configuration shape is not verified in this repository.** We confirmed
+> that `contextctl serve` works as an MCP stdio server, but we have not
+> registered it in Claude Code with the `.mcp.json` above.
 
 HTTP 질의 표면은 기본으로 꺼져 있습니다. 필요한 경우에만 포트를 지정합니다.
 
@@ -154,21 +156,24 @@ MCP·HTTP·`query` 요청은 UTF-8 `64KiB`, 최종 응답은 UTF-8 `2MiB`를 넘
 
 ---
 
-## 문서
+## Documentation
+
+The reference is in Korean, for the reason stated at the top — it quotes CLI
+output extensively.
 
 | | |
 |---|---|
-| [CLI 레퍼런스](docs/cli.md) | 명령 전체, 플래그, 종료 코드 |
-| [설정](docs/configuration.md) | 환경변수, 임베딩 모델, Card 의미 생성기 |
-| [운영](docs/operations.md) | 상태 점검, 도달 가능성, 색인 복구, 제거 |
-| [CONTRIBUTING](CONTRIBUTING.md) | 개발 환경, 브랜치와 리뷰 규칙 |
+| [CLI 레퍼런스](docs/cli.md) | Every command, flag and exit code |
+| [설정](docs/configuration.md) | Environment variables, embedding model, meaning generator |
+| [운영](docs/operations.md) | Status checks, reachability, index rebuild, uninstall |
+| [CONTRIBUTING](CONTRIBUTING.md) | Development setup, branch and review rules |
 
-터미널에서는 CLI 가 직접 알려줍니다.
+In a terminal the CLI tells you itself.
 
 ```bash
-contextctl help                 # 전체
-contextctl help cards approve   # 한 명령
-contextctl status               # 지금 어느 실행 영역이 일을 못 하는가
+contextctl help                 # everything
+contextctl help cards approve   # one command
+contextctl status               # which execution lane cannot work right now
 ```
 
 ## License

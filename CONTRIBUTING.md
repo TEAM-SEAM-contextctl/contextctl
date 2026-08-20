@@ -45,6 +45,29 @@ Domain packages do not depend on each other at all. Values that cross a boundary
 travel through `@contextctl/contracts`, and the daemon is the only place that
 knows about more than one domain.
 
+## Language
+
+One rule decides it:
+
+> **A document is written in the language of the output it quotes.**
+
+| | Language |
+|---|---|
+| `README.md` | English — the front door, and it quotes almost no output |
+| `README.ko.md` | Korean, kept short and linked from the English one |
+| `docs/*.md` | Korean — the reference quotes CLI output extensively |
+| `packages/*/docs/adr/*.md` | Korean — internal decision records |
+| Code, comments, commit messages | English |
+| CLI messages | Korean today; locale support is planned, not implemented |
+
+**The two READMEs are the only mirrored pair.** Do not add a second language to
+`docs/` — four files would become eight, and one side would be updated without
+the other.
+
+If you change a user-facing CLI message, remember that some tests assert those
+strings. Moving messages into one place is the prerequisite for translating them
+at all, and that work has not been done yet.
+
 ## Scope
 
 - Keep one logical change per branch and pull request.
