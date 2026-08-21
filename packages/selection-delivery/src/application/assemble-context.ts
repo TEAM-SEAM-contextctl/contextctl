@@ -34,6 +34,7 @@ import {
 import {
   isManagedPlannedItem,
   SELECTION_PLANNING_POLICY_VERSION,
+  verifySelectionPlan,
   type ApprovedCardReference,
   type PlannedManagedItem,
   type PlannedResolutionItem,
@@ -103,6 +104,11 @@ export function assembleContext(
   options: AssembleContextOptions = {},
 ): ContextResolution {
   const budget = options.budget ?? DEFAULT_CONTEXT_BUDGET;
+  // The plan is re-verified here as well as where it was built. Assembly files
+  // results by the plan's keys, so a key that no longer matches its fields
+  // would file evidence under the wrong Scope; the check is cheap and the
+  // plan crossed an executor boundary in between (SOT L2358).
+  verifySelectionPlan(plan);
   const byTargetKey = indexOutcomes(plan, outcomes);
 
   const verdicts = new Map<string, ItemVerdict>();

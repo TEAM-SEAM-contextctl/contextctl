@@ -24,7 +24,11 @@ import {
   scoreCardsAgainstQuery,
   type CandidateScore,
 } from "../domain/query-scoring.js";
-import { planSelectedScopes, type SelectionPlan } from "../domain/selection-plan.js";
+import {
+  planSelectedScopes,
+  verifySelectionPlan,
+  type SelectionPlan,
+} from "../domain/selection-plan.js";
 import {
   judgeCandidates,
   SELECTION_RANKING_POLICY_VERSION,
@@ -195,7 +199,7 @@ export async function selectContext(
     options.chunkLimitPerScope ?? DEFAULT_CHUNK_LIMIT_PER_SCOPE,
   );
 
-  return {
+  const plan: SelectionPlan = {
     query: queryText,
     summary: {
       candidates: scored.candidates,
@@ -205,6 +209,11 @@ export async function selectContext(
     items: planned.items,
     managedTargets: planned.managedTargets,
   };
+  // Re-derived before the plan leaves: the keys the executor will read by are
+  // recomputed from the fields they are defined over, and the plan's Cards are
+  // compared against the verdicts that were just handed down (SOT L2358).
+  verifySelectionPlan(plan, { query: queryText });
+  return plan;
 }
 
 /** What the scoring step decided, and under which family it decided it. */
