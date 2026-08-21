@@ -248,8 +248,63 @@ describe("keywords and aliases carry the words a person wrote", () => {
     });
 
     expect(meaning.keywords).toEqual(
-      expect.arrayContaining(["3", "5영업일", "계좌이체", "카드", "환불"]),
+      expect.arrayContaining(["5영업일", "계좌이체", "카드", "환불"]),
     );
+    // `3~5영업일` splits into `3` and `5영업일`; the bare digit is dropped.
+    expect(meaning.keywords).not.toContain("3");
+  });
+
+  it("drops a token that is digits alone", async () => {
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: [
+        { name: "section.label", value: "반차" },
+        { name: "keywords.derived", value: ["0.5", "15", "2시간", "30분", "3~5영업일", "연차"] },
+      ],
+    });
+
+    // Bare numbers match by substring inside any order number, time or count
+    // a query happens to carry, so none of them may become a keyword.
+    for (const digits of ["0", "5", "15", "30", "3"]) {
+      expect(meaning.keywords).not.toContain(digits);
+    }
+    // A number with its unit is a word a person types for this area.
+    expect(meaning.keywords).toEqual(
+      expect.arrayContaining(["2시간", "30분", "5영업일", "반차", "연차"]),
+    );
+  });
+
+  it("keeps identifier tokens that mix letters and digits", async () => {
+    const meaning = await generator.generate({
+      coordinate: {
+        ...sqlCoordinate,
+        columns: ["v2_flag", "col_2023", "status"],
+      },
+      facts: [],
+    });
+
+    expect(meaning.keywords).toEqual(
+      expect.arrayContaining(["v2", "flag", "col", "status", "payments", "public"]),
+    );
+    expect(meaning.keywords).not.toContain("2023");
+  });
+
+  it("does not let a dropped digit token take a slot under the ceiling", async () => {
+    const words = Array.from({ length: 62 }, (_, index) => `파생${String(index).padStart(2, "0")}`);
+    const digits = Array.from({ length: 10 }, (_, index) => String(index + 1));
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: [
+        { name: "section.label", value: "환불 처리" },
+        { name: "keywords.derived", value: [...digits, ...words] },
+      ],
+    });
+
+    // Two label tokens plus 62 words is exactly the ceiling; the ten digits
+    // were dropped before the count, so no word fell off to make room for them.
+    expect(meaning.keywords).toHaveLength(64);
+    expect(meaning.keywords).toContain("파생61");
+    expect(meaning.keywords.some((keyword) => /^\p{N}+$/u.test(keyword))).toBe(false);
   });
 
   it("adds the section label and document title as aliases after the coordinate's own", async () => {
