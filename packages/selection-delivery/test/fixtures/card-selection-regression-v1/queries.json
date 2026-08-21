@@ -1,0 +1,409 @@
+{
+  "datasetId": "card-selection-regression-v1",
+  "version": "1",
+  "generatedAt": "2026-08-21",
+  "language": "ko",
+  "categories": [
+    {
+      "id": "body_vocabulary",
+      "title": "본문에만 정답 어휘가 있는 질의",
+      "description": "제목·섹션 라벨에는 없고 본문(keywords.derived)에만 있는 단어로 묻는다. SEAM-99 이후에야 잡힌다"
+    },
+    {
+      "id": "adjacent_wrong_section",
+      "title": "같은 문서 안의 인접한 오답 섹션",
+      "description": "정답 섹션과 같은 문서의 다른 섹션이 공통 어휘로 함께 걸린다. SEAM-100의 핵심 현상. 같은 문서의 다른 섹션은 전부 forbidden"
+    },
+    {
+      "id": "similar_term_other_document",
+      "title": "다른 문서의 유사한 업무 용어",
+      "description": "다른 문서의 Card가 공유 어휘(안내·알림·카드·배송)로 걸린다. demo/docs 3문서뿐이라 이 범주는 얕다 — README 참고"
+    },
+    {
+      "id": "no_answer_or_low_confidence",
+      "title": "정답이 없거나 신뢰도가 낮은 질의",
+      "description": "confidence=none은 어떤 Card도 admit되면 안 되는 완전 무관 질의. confidence=low는 정답이 있지만 선언 어휘가 없어 어휘 경로로는 잡기 어려운 질의"
+    },
+    {
+      "id": "multiple_cards_required",
+      "title": "실제로 여러 카드가 필요한 질의",
+      "description": "required가 둘 이상. 완전 집합 recall(L1452)로 잰다"
+    }
+  ],
+  "fields": {
+    "required": "전부 admit돼야 하는 Card",
+    "optional": "admit돼도 오답으로 세지 않는 Card",
+    "forbidden": "admit되면 안 되는 Card — 같은 문서의 다른 섹션. 목록에 없는 다른 문서의 Card는 '기대 외'로 오답 비율에만 센다",
+    "confidence": "none | low (정답없음 범주만)"
+  },
+  "queryCount": 25,
+  "queries": [
+    {
+      "id": "body-01",
+      "category": "body_vocabulary",
+      "text": "운송장은 언제 발급돼?",
+      "required": [
+        "shipping/§배송 조회"
+      ],
+      "optional": [],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 지연"
+      ],
+      "note": "'운송장'은 본문(파생 키워드)에만 있고 제목·라벨에는 없다"
+    },
+    {
+      "id": "body-02",
+      "category": "body_vocabulary",
+      "text": "계좌이체로 돌려받으면 언제 들어와?",
+      "required": [
+        "payment/§환불 처리"
+      ],
+      "optional": [],
+      "forbidden": [
+        "payment/문서",
+        "payment/§결제 운영 안내",
+        "payment/§결제 재시도"
+      ],
+      "note": "'계좌이체'는 §환불 처리 본문에만"
+    },
+    {
+      "id": "body-03",
+      "category": "body_vocabulary",
+      "text": "천재지변이면 어떻게 돼?",
+      "required": [
+        "shipping/§배송 지연"
+      ],
+      "optional": [],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 조회"
+      ],
+      "note": "'천재지변'은 §배송 지연 본문에만"
+    },
+    {
+      "id": "body-04",
+      "category": "body_vocabulary",
+      "text": "입사 1년 되면 며칠 받아?",
+      "required": [
+        "leave/§연차 사용"
+      ],
+      "optional": [],
+      "forbidden": [
+        "leave/문서",
+        "leave/§인사 규정",
+        "leave/§반차"
+      ],
+      "note": "'입사'는 §연차 사용 본문에만. 제목어(연차)가 질의에 없다"
+    },
+    {
+      "id": "body-05",
+      "category": "body_vocabulary",
+      "text": "오전에만 쉬고 싶으면?",
+      "required": [
+        "leave/§반차"
+      ],
+      "optional": [],
+      "forbidden": [
+        "leave/문서",
+        "leave/§인사 규정",
+        "leave/§연차 사용"
+      ],
+      "note": "'오전'은 §반차 본문에만. 제목어(반차)가 질의에 없다"
+    },
+    {
+      "id": "adj-01",
+      "category": "adjacent_wrong_section",
+      "text": "결제 실패하면 몇 번 재시도해?",
+      "required": [
+        "payment/§결제 재시도"
+      ],
+      "optional": [],
+      "forbidden": [
+        "payment/문서",
+        "payment/§결제 운영 안내",
+        "payment/§환불 처리"
+      ],
+      "note": "'결제'가 payment 문서의 4 Card 전부에 있다. 정답은 §결제 재시도 하나"
+    },
+    {
+      "id": "adj-02",
+      "category": "adjacent_wrong_section",
+      "text": "카드 결제 환불은 언제 들어와?",
+      "required": [
+        "payment/§환불 처리"
+      ],
+      "optional": [],
+      "forbidden": [
+        "payment/문서",
+        "payment/§결제 운영 안내",
+        "payment/§결제 재시도"
+      ],
+      "note": "'결제'로 §결제 재시도·문서·§결제 운영 안내가 함께 걸린다"
+    },
+    {
+      "id": "adj-03",
+      "category": "adjacent_wrong_section",
+      "text": "배송 조회는 어떻게 하나요?",
+      "required": [
+        "shipping/§배송 조회"
+      ],
+      "optional": [],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 지연"
+      ],
+      "note": "'배송'이 shipping 4 Card 전부에 있다"
+    },
+    {
+      "id": "adj-04",
+      "category": "adjacent_wrong_section",
+      "text": "안 쓴 연차 이월 돼?",
+      "required": [
+        "leave/§연차 사용"
+      ],
+      "optional": [],
+      "forbidden": [
+        "leave/문서",
+        "leave/§인사 규정",
+        "leave/§반차"
+      ],
+      "note": "'연차'가 §반차 본문에도 있다(연차 0.5일 차감)"
+    },
+    {
+      "id": "adj-05",
+      "category": "adjacent_wrong_section",
+      "text": "반차는 어떻게 써?",
+      "required": [
+        "leave/§반차"
+      ],
+      "optional": [],
+      "forbidden": [
+        "leave/문서",
+        "leave/§인사 규정",
+        "leave/§연차 사용"
+      ],
+      "note": "README 첫 실행 예시 질의. '반차'는 §반차에만 있어야 하나 §연차 사용과 인접"
+    },
+    {
+      "id": "xdoc-01",
+      "category": "similar_term_other_document",
+      "text": "배송이 지연되면 안내가 오나요?",
+      "required": [
+        "shipping/§배송 지연"
+      ],
+      "optional": [],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 조회"
+      ],
+      "note": "'안내'가 payment 문서 제목(결제 운영 안내)에 있다. shipping 밖의 Card는 forbidden이 아니라 '기대 외'로 센다"
+    },
+    {
+      "id": "xdoc-02",
+      "category": "similar_term_other_document",
+      "text": "결제 알림은 언제 와?",
+      "required": [
+        "payment/§결제 재시도"
+      ],
+      "optional": [],
+      "forbidden": [
+        "payment/문서",
+        "payment/§결제 운영 안내",
+        "payment/§환불 처리"
+      ],
+      "note": "'알림'은 §결제 재시도 본문. shipping §배송 지연은 '안내'를 쓴다"
+    },
+    {
+      "id": "xdoc-03",
+      "category": "similar_term_other_document",
+      "text": "고객에게 발송되는 건 뭐야?",
+      "required": [
+        "shipping/§배송 지연"
+      ],
+      "optional": [
+        "payment/§결제 재시도"
+      ],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 조회"
+      ],
+      "note": "'고객에게 … 발송'이 §배송 지연(사전 안내)과 §결제 재시도(알림) 둘 다에 있다. 후자는 optional"
+    },
+    {
+      "id": "xdoc-04",
+      "category": "similar_term_other_document",
+      "text": "비밀번호를 잊어버렸어",
+      "required": [],
+      "optional": [],
+      "forbidden": [],
+      "note": "어느 Card도 답하지 못한다. '번호'(§배송 조회의 '운송장 번호')가 '비밀번호'의 부분문자열이라 부분문자열 매칭이 배송 조회 Card를 admit한다 — ADR 0010의 토큰 경계 한계",
+      "confidence": "none"
+    },
+    {
+      "id": "xdoc-05",
+      "category": "similar_term_other_document",
+      "text": "환불 배송비는 누가 내?",
+      "required": [
+        "payment/§환불 처리"
+      ],
+      "optional": [],
+      "forbidden": [
+        "payment/문서",
+        "payment/§결제 운영 안내",
+        "payment/§결제 재시도"
+      ],
+      "note": "'배송'이 shipping 문서 전체의 키워드. 환불 질의인데 shipping Card가 걸린다"
+    },
+    {
+      "id": "none-01",
+      "category": "no_answer_or_low_confidence",
+      "text": "오늘 점심 메뉴 추천",
+      "required": [],
+      "optional": [],
+      "forbidden": [],
+      "note": "완전 무관. 어떤 Card도 admit되면 안 된다",
+      "confidence": "none"
+    },
+    {
+      "id": "none-02",
+      "category": "no_answer_or_low_confidence",
+      "text": "회의실 예약은 어떻게 해?",
+      "required": [],
+      "optional": [],
+      "forbidden": [],
+      "note": "완전 무관",
+      "confidence": "none"
+    },
+    {
+      "id": "none-03",
+      "category": "no_answer_or_low_confidence",
+      "text": "주차 등록은 어디서 해?",
+      "required": [],
+      "optional": [],
+      "forbidden": [],
+      "note": "완전 무관",
+      "confidence": "none"
+    },
+    {
+      "id": "none-04",
+      "category": "no_answer_or_low_confidence",
+      "text": "주문 1234번 어디까지 왔어?",
+      "required": [
+        "shipping/§배송 조회"
+      ],
+      "optional": [],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 지연"
+      ],
+      "note": "저신뢰: 배송 조회를 묻지만 '배송'·'운송장' 같은 키워드가 없다. '주문'은 §결제 재시도 본문(주문은 자동으로 취소)에 있다",
+      "confidence": "low"
+    },
+    {
+      "id": "none-05",
+      "category": "no_answer_or_low_confidence",
+      "text": "택배가 언제 오나요?",
+      "required": [
+        "shipping/§배송 조회"
+      ],
+      "optional": [],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 지연"
+      ],
+      "note": "저신뢰: 동의어(택배)만 있고 선언 어휘가 없다. 어휘 경로로는 reject가 정상이고 의미 경로가 필요하다",
+      "confidence": "low"
+    },
+    {
+      "id": "multi-01",
+      "category": "multiple_cards_required",
+      "text": "환불 불가 상품과 결제 실패 내역, 그리고 결제 상태 조회 방법을 알려줘",
+      "required": [
+        "payment/§환불 처리",
+        "payment/§결제 재시도"
+      ],
+      "optional": [],
+      "forbidden": [
+        "payment/문서",
+        "payment/§결제 운영 안내"
+      ],
+      "note": "기획 §15 데모 질의. 한 문서 안의 두 섹션이 정답"
+    },
+    {
+      "id": "multi-02",
+      "category": "multiple_cards_required",
+      "text": "반차 쓰면 연차에서 얼마나 차감되고 이월은 돼?",
+      "required": [
+        "leave/§반차",
+        "leave/§연차 사용"
+      ],
+      "optional": [],
+      "forbidden": [
+        "leave/문서",
+        "leave/§인사 규정"
+      ],
+      "note": "한 문서 안의 두 섹션"
+    },
+    {
+      "id": "multi-03",
+      "category": "multiple_cards_required",
+      "text": "배송 조회랑 지연 안내 둘 다 알려줘",
+      "required": [
+        "shipping/§배송 조회",
+        "shipping/§배송 지연"
+      ],
+      "optional": [],
+      "forbidden": [
+        "shipping/문서",
+        "shipping/§배송 운영 안내"
+      ],
+      "note": "한 문서 안의 두 섹션. '안내'로 payment가 끼어든다"
+    },
+    {
+      "id": "multi-04",
+      "category": "multiple_cards_required",
+      "text": "환불 받으려는데 운송장 번호도 필요해?",
+      "required": [
+        "payment/§환불 처리",
+        "shipping/§배송 조회"
+      ],
+      "optional": [],
+      "forbidden": [
+        "payment/문서",
+        "payment/§결제 운영 안내",
+        "payment/§결제 재시도",
+        "shipping/문서",
+        "shipping/§배송 운영 안내",
+        "shipping/§배송 지연"
+      ],
+      "note": "두 문서에 걸친 정답"
+    },
+    {
+      "id": "multi-05",
+      "category": "multiple_cards_required",
+      "text": "연차 규정이랑 결제 환불 기간 둘 다 알려줘",
+      "required": [
+        "leave/§연차 사용",
+        "payment/§환불 처리"
+      ],
+      "optional": [],
+      "forbidden": [
+        "leave/문서",
+        "leave/§인사 규정",
+        "leave/§반차",
+        "payment/문서",
+        "payment/§결제 운영 안내",
+        "payment/§결제 재시도"
+      ],
+      "note": "두 문서에 걸친 정답. '규정'은 leave 문서 제목(인사 규정)이라 leave/§인사 규정·문서가 걸린다"
+    }
+  ]
+}
