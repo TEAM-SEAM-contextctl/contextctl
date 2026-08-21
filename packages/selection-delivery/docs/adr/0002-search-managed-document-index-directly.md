@@ -1,6 +1,6 @@
 # 0002. 관리 문서 인덱스는 Selection이 직접 검색한다
 
-- 상태: Accepted
+- 상태: Superseded by 0008
 - 날짜: 2026-07-30
 - 범위: selection
 

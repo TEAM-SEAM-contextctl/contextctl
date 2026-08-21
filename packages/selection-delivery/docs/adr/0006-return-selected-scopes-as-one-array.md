@@ -1,6 +1,6 @@
 # 0006. 선택된 Scope는 종류와 무관하게 하나의 배열로 반환한다
 
-- 상태: Accepted
+- 상태: Superseded by 0008
 - 날짜: 2026-08-14
 - 범위: selection
 
