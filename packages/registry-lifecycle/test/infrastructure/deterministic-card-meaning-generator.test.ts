@@ -185,6 +185,186 @@ describe("DeterministicCardMeaningGenerator", () => {
   });
 });
 
+describe("keywords and aliases carry the words a person wrote", () => {
+  const sectionFacts: readonly PublishedFact[] = [
+    { name: "document.media_type", value: "text/markdown" },
+    { name: "document.title", value: "결제 운영 안내" },
+    { name: "section.label", value: "환불 처리" },
+    { name: "section.path", value: ["결제 운영 안내", "환불 처리"] },
+    { name: "structure.block_count", value: 2 },
+    { name: "structure.block_kinds", value: ["heading", "paragraph"] },
+    { name: "unit.kind", value: "section" },
+  ];
+
+  it("tokenizes the Korean title, label and path into keywords", async () => {
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: sectionFacts,
+    });
+
+    expect(meaning.keywords).toEqual(["결제", "안내", "운영", "처리", "환불"]);
+  });
+
+  it("keeps machine-measured facts and fact names out of the keywords", async () => {
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: sectionFacts,
+    });
+
+    // Values a parser measured are true of every Card and select none; the
+    // fact names split into `document`, `title`, `block`, `count` used to be
+    // keywords too, and matched every document on any English query.
+    for (const noise of [
+      "markdown", "text", "heading", "paragraph", "section", "2",
+      "document", "title", "label", "path", "structure", "block", "count",
+      "kind", "kinds", "media", "type", "unit",
+    ]) {
+      expect(meaning.keywords).not.toContain(noise);
+    }
+  });
+
+  it("keeps document and unit identifiers out of the keywords", async () => {
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: sectionFacts,
+    });
+
+    // Nobody queries for a system identifier, and its `doc`/`unit` prefix was
+    // matching inside unrelated English words.
+    expect(meaning.keywords).not.toContain("doc");
+    expect(meaning.keywords).not.toContain("payments");
+    expect(meaning.keywords).not.toContain("unit");
+    expect(meaning.keywords).not.toContain("payment");
+    expect(meaning.keywords).not.toContain("failures");
+  });
+
+  it("includes derived keywords when Ingestion publishes them", async () => {
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: [
+        ...sectionFacts,
+        { name: "keywords.derived", value: ["3~5영업일", "계좌이체", "카드"] },
+      ],
+    });
+
+    expect(meaning.keywords).toEqual(
+      expect.arrayContaining(["3", "5영업일", "계좌이체", "카드", "환불"]),
+    );
+  });
+
+  it("adds the section label and document title as aliases after the coordinate's own", async () => {
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: sectionFacts,
+    });
+
+    expect(meaning.aliases).toEqual([
+      "doc_payments",
+      "unit_payment_failures",
+      "결제 운영 안내",
+      "환불 처리",
+    ]);
+  });
+
+  it("still takes a table's schema, name and columns as keywords", async () => {
+    const meaning = await generator.generate({
+      coordinate: sqlCoordinate,
+      facts: [],
+    });
+
+    expect(meaning.keywords).toEqual([
+      "at", "created", "failed", "payments", "public", "reason", "status",
+    ]);
+  });
+
+  it("takes an HTTP path but not the method as keywords", async () => {
+    const meaning = await generator.generate({
+      coordinate: httpCoordinate,
+      facts: [],
+    });
+
+    expect(meaning.keywords).toEqual(["id", "payments"]);
+    // The method stays where it was: on the alias a person can cite.
+    expect(meaning.aliases).toContain("GET /payments/{id}");
+  });
+
+  it("produces the same keywords whatever order the facts arrive in", async () => {
+    const forward = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: sectionFacts,
+    });
+    const reversed = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: [...sectionFacts].reverse(),
+    });
+
+    expect(reversed.keywords).toEqual(forward.keywords);
+    expect(reversed.aliases).toEqual(forward.aliases);
+  });
+
+  it("caps keywords at the read-model ceiling, keeping the heading words", async () => {
+    const derived = Array.from({ length: 80 }, (_, index) => `파생${String(index).padStart(2, "0")}`);
+    const meaning = await generator.generate({
+      coordinate: sqlCoordinate,
+      facts: [
+        { name: "section.label", value: "환불 처리" },
+        { name: "keywords.derived", value: derived },
+      ],
+    });
+
+    expect(meaning.keywords).toHaveLength(64);
+    // Filled by priority — label, then derived — before the cut, so the label
+    // survives and the coordinate tokens are what fell off the end.
+    expect(meaning.keywords).toContain("환불");
+    expect(meaning.keywords).toContain("처리");
+    expect(meaning.keywords).not.toContain("payments");
+    // Sorted afterwards, so the cut never depends on input order.
+    expect(meaning.keywords).toEqual([...meaning.keywords].sort());
+    // And the same 64 every time.
+    expect(
+      (await generator.generate({
+        coordinate: sqlCoordinate,
+        facts: [
+          { name: "keywords.derived", value: [...derived].reverse() },
+          { name: "section.label", value: "환불 처리" },
+        ],
+      })).keywords,
+    ).toEqual(meaning.keywords);
+  });
+
+  it("drops a token over 64 code units rather than cutting it", async () => {
+    const long = "가".repeat(65);
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: [{ name: "section.label", value: `${long} 환불` }],
+    });
+
+    expect(meaning.keywords).toEqual(["환불"]);
+    expect(meaning.keywords.some((keyword) => keyword.length > 64)).toBe(false);
+  });
+
+  it("drops an alias over 128 code units rather than cutting it", async () => {
+    const long = "가".repeat(129);
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: [{ name: "section.label", value: long }],
+    });
+
+    expect(meaning.aliases).toEqual(["doc_payments", "unit_payment_failures"]);
+  });
+
+  it("passes grounding with Korean headings in the matched lists", async () => {
+    const meaning = await generator.generate({
+      coordinate: documentCoordinate,
+      facts: sectionFacts,
+    });
+
+    expect(groundCardVersion(documentCoordinate, [documentScope], meaning)).toEqual(
+      { outcome: "validated" },
+    );
+  });
+});
+
 describe("consuming a publication with no model behind the generator", () => {
   function createPorts(publication: ReturnType<typeof createSqlPublicationFixture>) {
     const processed = new Set<string>();
