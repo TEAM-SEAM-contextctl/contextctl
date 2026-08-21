@@ -1,0 +1,466 @@
+{
+  "datasetId": "card-selection-regression-v1",
+  "version": "1",
+  "generator": "deterministic",
+  "generatorDetail": "DeterministicCardMeaningGenerator as of main 299a343 (derived keywords published by Ingestion, digit-only tokens dropped). Reproducible from the documents.",
+  "sourceCommit": "299a343",
+  "generatedAt": "2026-08-21",
+  "documents": [
+    {
+      "path": "apps/contextctl-daemon/demo/docs/leave.md",
+      "sha256": "9e93420a268690dd49b51518b3217a36a5cab1ed6151645e5328b36e49cd4dd4"
+    },
+    {
+      "path": "apps/contextctl-daemon/demo/docs/payment.md",
+      "sha256": "72a1bd0d2d525afe6e5c160a52e6a4898bcedb0665bbb03588f88f2bd282cb61"
+    },
+    {
+      "path": "apps/contextctl-daemon/demo/docs/shipping.md",
+      "sha256": "091e2db6d0af7a8a3ce84e58b4c1188bd229ecc48060cca230ebf2f0f09b59dd"
+    }
+  ],
+  "cardCount": 12,
+  "cards": [
+    {
+      "label": "leave/§반차",
+      "cardId": "unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a",
+      "versionId": "unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a@v1",
+      "meaning": {
+        "description": "Semantic unit unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a of document doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q. document.media_type: text/markdown · document.title: 인사 규정 · keywords.derived: 0.5, 나뉘며, 반차는, 반차로, 반차와, 연차, 오전, 오후, 일을, 차감합니다 · section.label: 반차 · section.path: 인사 규정, 반차 · structure.block_count: 2 · structure.block_kinds: heading, paragraph · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q say in unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a?"
+        ],
+        "aliases": [
+          "doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q",
+          "unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a",
+          "반차",
+          "인사 규정"
+        ],
+        "keywords": [
+          "규정",
+          "나뉘며",
+          "반차",
+          "반차는",
+          "반차로",
+          "반차와",
+          "연차",
+          "오전",
+          "오후",
+          "인사",
+          "일을",
+          "차감합니다"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a"
+      }
+    },
+    {
+      "label": "leave/§연차 사용",
+      "cardId": "unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a",
+      "versionId": "unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a@v1",
+      "meaning": {
+        "description": "Semantic unit unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a of document doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q. document.media_type: text/markdown · document.title: 인사 규정 · keywords.derived: 1, 15, 다음, 부여됩니다, 사용하지, 않습니다, 않은, 연차는, 이월되지, 일이, 입사, 해로 · section.label: 연차 사용 · section.path: 인사 규정, 연차 사용 · structure.block_count: 2 · structure.block_kinds: heading, paragraph · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q say in unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a?"
+        ],
+        "aliases": [
+          "doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q",
+          "unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a",
+          "연차 사용",
+          "인사 규정"
+        ],
+        "keywords": [
+          "규정",
+          "다음",
+          "부여됩니다",
+          "사용",
+          "사용하지",
+          "않습니다",
+          "않은",
+          "연차",
+          "연차는",
+          "이월되지",
+          "인사",
+          "일이",
+          "입사",
+          "해로"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a"
+      }
+    },
+    {
+      "label": "leave/§인사 규정",
+      "cardId": "unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq",
+      "versionId": "unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq@v1",
+      "meaning": {
+        "description": "Semantic unit unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq of document doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q. document.media_type: text/markdown · document.title: 인사 규정 · section.label: 인사 규정 · section.path: 인사 규정 · structure.block_count: 1 · structure.block_kinds: heading · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q say in unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq?"
+        ],
+        "aliases": [
+          "doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q",
+          "unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq",
+          "인사 규정"
+        ],
+        "keywords": [
+          "규정",
+          "인사"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq"
+      }
+    },
+    {
+      "label": "leave/문서",
+      "cardId": "unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta",
+      "versionId": "unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta@v1",
+      "meaning": {
+        "description": "Semantic unit unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta of document doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q. document.media_type: text/markdown · document.title: 인사 규정 · structure.block_count: 0 · unit.kind: document",
+        "representativeQuestions": [
+          "What does doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q say in unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta?"
+        ],
+        "aliases": [
+          "doc_nycvtduaj2tcoaetouakx3l77nnvjwuc6ljjztfh7eq3ctw7zs4q",
+          "unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta",
+          "인사 규정"
+        ],
+        "keywords": [
+          "규정",
+          "인사"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta"
+      }
+    },
+    {
+      "label": "payment/§결제 운영 안내",
+      "cardId": "unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa",
+      "versionId": "unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa@v1",
+      "meaning": {
+        "description": "Semantic unit unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa of document doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga. document.media_type: text/markdown · document.title: 결제 운영 안내 · section.label: 결제 운영 안내 · section.path: 결제 운영 안내 · structure.block_count: 1 · structure.block_kinds: heading · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga say in unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa?"
+        ],
+        "aliases": [
+          "doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga",
+          "unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa",
+          "결제 운영 안내"
+        ],
+        "keywords": [
+          "결제",
+          "안내",
+          "운영"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa"
+      }
+    },
+    {
+      "label": "payment/§결제 재시도",
+      "cardId": "unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq",
+      "versionId": "unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq@v1",
+      "meaning": {
+        "description": "Semantic unit unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq of document doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga. document.media_type: text/markdown · document.title: 결제 운영 안내 · keywords.derived: 2, 30, 5, 간격은, 결제, 고객에게, 모두, 발송됩니다, 번까지, 시간입니다, 실패는, 실패하면, 알림이, 자동으로, 재시도, 재시도합니다, 주문은, 최대, 취소되고 · section.label: 결제 재시도 · section.path: 결제 운영 안내, 결제 재시도 · structure.block_count: 2 · structure.block_kinds: heading, paragraph · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga say in unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq?"
+        ],
+        "aliases": [
+          "doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga",
+          "unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq",
+          "결제 운영 안내",
+          "결제 재시도"
+        ],
+        "keywords": [
+          "간격은",
+          "결제",
+          "고객에게",
+          "모두",
+          "발송됩니다",
+          "번까지",
+          "시간입니다",
+          "실패는",
+          "실패하면",
+          "안내",
+          "알림이",
+          "운영",
+          "자동으로",
+          "재시도",
+          "재시도합니다",
+          "주문은",
+          "최대",
+          "취소되고"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq"
+      }
+    },
+    {
+      "label": "payment/§환불 처리",
+      "cardId": "unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq",
+      "versionId": "unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq@v1",
+      "meaning": {
+        "description": "Semantic unit unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq of document doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga. document.media_type: text/markdown · document.title: 결제 운영 안내 · keywords.derived: 3, 5, 결제, 계좌이체는, 그대로, 당일, 돌려줍니다, 수단으로, 영업일, 처리됩니다, 카드는, 환불은 · section.label: 환불 처리 · section.path: 결제 운영 안내, 환불 처리 · structure.block_count: 2 · structure.block_kinds: heading, paragraph · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga say in unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq?"
+        ],
+        "aliases": [
+          "doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga",
+          "unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq",
+          "결제 운영 안내",
+          "환불 처리"
+        ],
+        "keywords": [
+          "결제",
+          "계좌이체는",
+          "그대로",
+          "당일",
+          "돌려줍니다",
+          "수단으로",
+          "안내",
+          "영업일",
+          "운영",
+          "처리",
+          "처리됩니다",
+          "카드는",
+          "환불",
+          "환불은"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq"
+      }
+    },
+    {
+      "label": "payment/문서",
+      "cardId": "unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq",
+      "versionId": "unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq@v1",
+      "meaning": {
+        "description": "Semantic unit unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq of document doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga. document.media_type: text/markdown · document.title: 결제 운영 안내 · structure.block_count: 0 · unit.kind: document",
+        "representativeQuestions": [
+          "What does doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga say in unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq?"
+        ],
+        "aliases": [
+          "doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga",
+          "unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq",
+          "결제 운영 안내"
+        ],
+        "keywords": [
+          "결제",
+          "안내",
+          "운영"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq"
+      }
+    },
+    {
+      "label": "shipping/§배송 운영 안내",
+      "cardId": "unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa",
+      "versionId": "unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa@v1",
+      "meaning": {
+        "description": "Semantic unit unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa of document doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga. document.media_type: text/markdown · document.title: 배송 운영 안내 · section.label: 배송 운영 안내 · section.path: 배송 운영 안내 · structure.block_count: 1 · structure.block_kinds: heading · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga say in unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa?"
+        ],
+        "aliases": [
+          "doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga",
+          "unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa",
+          "배송 운영 안내"
+        ],
+        "keywords": [
+          "배송",
+          "안내",
+          "운영"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa"
+      }
+    },
+    {
+      "label": "shipping/§배송 조회",
+      "cardId": "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq",
+      "versionId": "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq@v1",
+      "meaning": {
+        "description": "Semantic unit unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq of document doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga. document.media_type: text/markdown · document.title: 배송 운영 안내 · keywords.derived: 2, 발급됩니다, 배송, 번호를, 사용합니다, 시간, 운송장, 운송장은, 이내에, 조회는, 출고 · section.label: 배송 조회 · section.path: 배송 운영 안내, 배송 조회 · structure.block_count: 2 · structure.block_kinds: heading, paragraph · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga say in unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq?"
+        ],
+        "aliases": [
+          "doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga",
+          "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq",
+          "배송 운영 안내",
+          "배송 조회"
+        ],
+        "keywords": [
+          "발급됩니다",
+          "배송",
+          "번호를",
+          "사용합니다",
+          "시간",
+          "안내",
+          "운송장",
+          "운송장은",
+          "운영",
+          "이내에",
+          "조회",
+          "조회는",
+          "출고"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq"
+      }
+    },
+    {
+      "label": "shipping/§배송 지연",
+      "cardId": "unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq",
+      "versionId": "unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq@v1",
+      "meaning": {
+        "description": "Semantic unit unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq of document doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga. document.media_type: text/markdown · document.title: 배송 운영 안내 · keywords.derived: 고객에게, 물류, 발송합니다, 사전, 안내를, 지연되면, 천재지변이나, 파업으로 · section.label: 배송 지연 · section.path: 배송 운영 안내, 배송 지연 · structure.block_count: 2 · structure.block_kinds: heading, paragraph · unit.kind: section",
+        "representativeQuestions": [
+          "What does doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga say in unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq?"
+        ],
+        "aliases": [
+          "doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga",
+          "unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq",
+          "배송 운영 안내",
+          "배송 지연"
+        ],
+        "keywords": [
+          "고객에게",
+          "물류",
+          "발송합니다",
+          "배송",
+          "사전",
+          "안내",
+          "안내를",
+          "운영",
+          "지연",
+          "지연되면",
+          "천재지변이나",
+          "파업으로"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq"
+      }
+    },
+    {
+      "label": "shipping/문서",
+      "cardId": "unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq",
+      "versionId": "unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq@v1",
+      "meaning": {
+        "description": "Semantic unit unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq of document doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga. document.media_type: text/markdown · document.title: 배송 운영 안내 · structure.block_count: 0 · unit.kind: document",
+        "representativeQuestions": [
+          "What does doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga say in unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq?"
+        ],
+        "aliases": [
+          "doc_dx2otmddarzzjmqnxi2bc2wej4kv6bhu6caym66jrpchcloksoga",
+          "unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq",
+          "배송 운영 안내"
+        ],
+        "keywords": [
+          "배송",
+          "안내",
+          "운영"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq"
+      }
+    }
+  ]
+}

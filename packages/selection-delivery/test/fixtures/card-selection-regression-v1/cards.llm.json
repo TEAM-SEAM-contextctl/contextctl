@@ -1,0 +1,427 @@
+{
+  "datasetId": "card-selection-regression-v1",
+  "version": "1",
+  "generator": "llm",
+  "generatorDetail": "OpenAiCompatibleCardMeaningGenerator over an OpenAI-compatible 12B-class instruct model. A SINGLE SAMPLE: the model is not deterministic, and a second ingest of the same documents yields different meanings. This file is the sample, not the generator.",
+  "sourceCommit": "52c3480",
+  "generatedAt": "2026-08-21",
+  "documents": [
+    {
+      "path": "apps/contextctl-daemon/demo/docs/leave.md",
+      "sha256": "9e93420a268690dd49b51518b3217a36a5cab1ed6151645e5328b36e49cd4dd4"
+    },
+    {
+      "path": "apps/contextctl-daemon/demo/docs/payment.md",
+      "sha256": "72a1bd0d2d525afe6e5c160a52e6a4898bcedb0665bbb03588f88f2bd282cb61"
+    },
+    {
+      "path": "apps/contextctl-daemon/demo/docs/shipping.md",
+      "sha256": "091e2db6d0af7a8a3ce84e58b4c1188bd229ecc48060cca230ebf2f0f09b59dd"
+    }
+  ],
+  "cardCount": 12,
+  "cards": [
+    {
+      "label": "leave/§반차",
+      "cardId": "unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a",
+      "versionId": "unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a@v1",
+      "meaning": {
+        "description": "인사 규정 중 반차에 관한 세부 사항을 다루는 섹션으로, 반차 사용 시 연차 차감 방식에 대해 설명합니다.",
+        "representativeQuestions": [
+          "반차 사용 시 연차는 어떻게 차감되나요?",
+          "반차는 오전과 오후 중 어떻게 나누어 사용할 수 있나요?"
+        ],
+        "aliases": [
+          "반차 규정",
+          "연차 차감"
+        ],
+        "keywords": [
+          "반차",
+          "연차",
+          "오전",
+          "오후",
+          "차감"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_x2zcnzvr7tvvlq3uixw6psmkdenlvsyvrukvngxciremkrmpj52a"
+      }
+    },
+    {
+      "label": "leave/§연차 사용",
+      "cardId": "unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a",
+      "versionId": "unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a@v1",
+      "meaning": {
+        "description": "This section outlines the regulations regarding the use of annual leave, specifically stating that unused annual leave does not carry over to the next year.",
+        "representativeQuestions": [
+          "연차는 이월되나요?",
+          "연차 사용 규정이 어떻게 되나요?"
+        ],
+        "aliases": [
+          "연차 규정",
+          "휴가 정책"
+        ],
+        "keywords": [
+          "연차",
+          "이월",
+          "인사 규정",
+          "사용"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_yiwy2uoasjjvjschrm5x7sbvyzlgujnfhbh3djeqmmv4zlr4fm5a"
+      }
+    },
+    {
+      "label": "leave/§인사 규정",
+      "cardId": "unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq",
+      "versionId": "unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq@v1",
+      "meaning": {
+        "description": "This section contains the official personnel regulations (인사 규정) of the organization. It serves as the primary reference for human resources policies and rules.",
+        "representativeQuestions": [
+          "인사 규정은 어디에 있나요?",
+          "회사의 인사 규정에 대해 알려주세요."
+        ],
+        "aliases": [
+          "인사 규정",
+          "HR 규정"
+        ],
+        "keywords": [
+          "인사 규정",
+          "hr",
+          "규정",
+          "인사"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_rtrmlhceogzdxvqgr5esdn7zar5jwhgcrnq3tucux6betyl7a6yq"
+      }
+    },
+    {
+      "label": "leave/문서",
+      "cardId": "unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta",
+      "versionId": "unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta@v1",
+      "meaning": {
+        "description": "This document contains the official personnel regulations (인사 규정) for the organization.",
+        "representativeQuestions": [
+          "인사 규정은 무엇인가요?",
+          "회사의 인사 관련 규정을 확인하고 싶습니다."
+        ],
+        "aliases": [
+          "인사 규정",
+          "HR Regulations"
+        ],
+        "keywords": [
+          "인사",
+          "규정",
+          "hr",
+          "personnel"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_leave",
+        "semanticUnitId": "unit_2k2ygrf6rveuvpvs6fhswdr6uxbbg6neq6utex7g2gsdfrh53bta"
+      }
+    },
+    {
+      "label": "payment/§결제 운영 안내",
+      "cardId": "unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa",
+      "versionId": "unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa@v1",
+      "meaning": {
+        "description": "This section provides operational guidelines and information regarding payment processes.",
+        "representativeQuestions": [
+          "결제 운영 안내는 무엇인가요?",
+          "결제 운영에 관한 안내를 확인하고 싶습니다."
+        ],
+        "aliases": [
+          "결제 안내",
+          "결제 운영"
+        ],
+        "keywords": [
+          "결제",
+          "운영",
+          "안내",
+          "payment",
+          "operations"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_iwlmomlkmx3sgffj4tx5cyqzltubz4un37phinjxxb5kzq6dbowa"
+      }
+    },
+    {
+      "label": "payment/§결제 재시도",
+      "cardId": "unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq",
+      "versionId": "unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq@v1",
+      "meaning": {
+        "description": "This section provides operational guidelines regarding automatic payment retries, including the frequency of attempts and the conditions under which orders are canceled.",
+        "representativeQuestions": [
+          "결제 실패 시 재시도 정책은 어떻게 되나요?",
+          "결제 재시도 횟수와 간격은 어떻게 되나요?",
+          "결제 재시도 실패 시 주문은 어떻게 처리되나요?"
+        ],
+        "aliases": [
+          "결제 재시도 정책",
+          "결제 실패 처리"
+        ],
+        "keywords": [
+          "결제",
+          "재시도",
+          "실패",
+          "자동",
+          "주문",
+          "취소",
+          "알림",
+          "간격"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_xfru5zsdocm73tzja7nf4mbx6u2s34sqpadxigbyg64af4xfnzaq"
+      }
+    },
+    {
+      "label": "payment/§환불 처리",
+      "cardId": "unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq",
+      "versionId": "unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq@v1",
+      "meaning": {
+        "description": "This section provides guidelines on refund processing for payments made via bank transfer and card. It specifies that refunds are processed on the same day and details the procedures for different payment methods.",
+        "representativeQuestions": [
+          "환불은 어떻게 처리되나요?",
+          "계좌이체로 결제한 경우 환불은 언제 되나요?",
+          "카드 결제 환불은 어떻게 진행되나요?"
+        ],
+        "aliases": [
+          "환불 규정",
+          "결제 취소 안내"
+        ],
+        "keywords": [
+          "결제",
+          "계좌이체",
+          "환불",
+          "당일",
+          "영업일",
+          "카드"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_k475aiaiktu5jvgaawma7pr4m73emrmgog5rfkmkc4klj3nxwgxq"
+      }
+    },
+    {
+      "label": "payment/문서",
+      "cardId": "unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq",
+      "versionId": "unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq@v1",
+      "meaning": {
+        "description": "This document provides operational guidelines and information regarding payment processes.",
+        "representativeQuestions": [
+          "결제 운영 안내를 확인하려면 어디를 봐야 하나요?",
+          "결제 운영 관련 지침이 있나요?"
+        ],
+        "aliases": [
+          "결제 안내",
+          "결제 운영"
+        ],
+        "keywords": [
+          "결제",
+          "운영",
+          "안내",
+          "payment",
+          "operations"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_payment",
+        "semanticUnitId": "unit_2ngqlpqnl2udkpcdwdubde2iplqakj7c6l7hy2mdisk2eub7pduq"
+      }
+    },
+    {
+      "label": "shipping/§배송 운영 안내",
+      "cardId": "unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa",
+      "versionId": "unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa@v1",
+      "meaning": {
+        "description": "This section provides information regarding delivery operations and guidelines.",
+        "representativeQuestions": [
+          "배송 운영 안내는 어떻게 되나요?",
+          "배송 운영에 관한 정보를 확인하고 싶습니다."
+        ],
+        "aliases": [
+          "배송 안내",
+          "배송 운영"
+        ],
+        "keywords": [
+          "배송",
+          "운영",
+          "안내",
+          "delivery",
+          "operations"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_bf7cahucsifz5yjxviyvca2akjqnnfcl7orbqqa7vt7fcmcw4aaa"
+      }
+    },
+    {
+      "label": "shipping/§배송 조회",
+      "cardId": "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq",
+      "versionId": "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq@v1",
+      "meaning": {
+        "description": "This section provides information on how to track shipments using the tracking number issued during the shipping process.",
+        "representativeQuestions": [
+          "배송 조회를 어떻게 하나요?",
+          "운송장 번호는 어디서 확인하나요?"
+        ],
+        "aliases": [
+          "배송 조회 방법",
+          "운송장 조회"
+        ],
+        "keywords": [
+          "배송",
+          "운송장",
+          "조회",
+          "출고",
+          "번호",
+          "시간"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq"
+      }
+    },
+    {
+      "label": "shipping/§배송 지연",
+      "cardId": "unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq",
+      "versionId": "unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq@v1",
+      "meaning": {
+        "description": "This section provides information regarding delivery delays caused by natural disasters or strikes. It serves as a guide for customers regarding logistics and shipping operations.",
+        "representativeQuestions": [
+          "배송이 지연되는 이유는 무엇인가요?",
+          "천재지변이나 파업으로 인한 배송 지연 안내가 있나요?"
+        ],
+        "aliases": [
+          "배송 지연 안내",
+          "물류 지연"
+        ],
+        "keywords": [
+          "고객",
+          "물류",
+          "발송",
+          "사전 안내",
+          "지연",
+          "천재지변",
+          "파업"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_dmz4bqqd5uy2ddxzozdkslo6v6smbs6byk7nl37cawenu7atw6uq"
+      }
+    },
+    {
+      "label": "shipping/문서",
+      "cardId": "unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq",
+      "versionId": "unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq@v1",
+      "meaning": {
+        "description": "This document provides information regarding delivery operations. It is formatted as a text/markdown file.",
+        "representativeQuestions": [
+          "배송 운영 안내를 확인하려면 어디를 봐야 하나요?",
+          "배송 운영 관련 안내 사항이 있나요?"
+        ],
+        "aliases": [
+          "배송 안내",
+          "배송 운영"
+        ],
+        "keywords": [
+          "배송",
+          "운영",
+          "안내",
+          "delivery",
+          "operations"
+        ]
+      },
+      "policy": {
+        "sensitive": false,
+        "allowedUsage": [
+          "retrieval"
+        ]
+      },
+      "scope": {
+        "documentId": "doc_shipping",
+        "semanticUnitId": "unit_m3mwfyvy2rtrpmxlzknoy2ywx3pizih7j3f57toozahqroevv6kq"
+      }
+    }
+  ]
+}
