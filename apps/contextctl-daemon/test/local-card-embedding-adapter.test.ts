@@ -145,19 +145,29 @@ describe("LocalCardEmbeddingAdapter", () => {
     });
   });
 
-  it("maps a remote-only fault onto provider_unavailable", async () => {
-    // A Card selection has no remote binding, so reporting `rate_limited` under
-    // its own name would put a code in front of an operator that nothing in
-    // this composition can produce.
-    const adapter = adapterFor(
-      new ThrowingEmbeddingPort(
-        new EmbeddingProviderFault("rate_limited", true),
-      ),
-    );
+  it("carries a remote fault across under its own name", async () => {
+    // `rate_limited` and `authentication_failed` used to be folded into
+    // `provider_unavailable` because no Card provider could be remote. The
+    // port now admits one, so the codes travel as themselves and an operator
+    // can tell a quota from an outage.
+    for (const [code, retriable] of [
+      ["rate_limited", true],
+      ["authentication_failed", false],
+    ] as const) {
+      const adapter = adapterFor(
+        new ThrowingEmbeddingPort(new EmbeddingProviderFault(code, retriable)),
+      );
 
-    await expect(
-      adapter.embed({ profile: CARD_PROFILE, inputs: [{ key: "a", text: "x" }] }),
-    ).rejects.toMatchObject({ code: "provider_unavailable", retriable: true });
+      await expect(
+        adapter.embed({ profile: CARD_PROFILE, inputs: [{ key: "a", text: "x" }] }),
+      ).rejects.toMatchObject({ name: "CardEmbeddingFault", code, retriable });
+    }
+  });
+
+  it("states the Card profile it serves, for binding", () => {
+    const adapter = adapterFor(new RecordingEmbeddingPort());
+
+    expect(adapter.profile).toBe(CARD_PROFILE);
   });
 
   it("reports an arbitrary exception as a retriable provider failure", async () => {

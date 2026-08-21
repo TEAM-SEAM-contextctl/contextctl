@@ -50,6 +50,8 @@ export interface LocalCardEmbeddingAdapterOptions {
 
 export class LocalCardEmbeddingAdapter implements CardEmbeddingPort {
   readonly providerKind = "local" as const;
+  /** The Card family this port serves — `card` as given, stated for binding. */
+  readonly profile: CardSelectionProfile;
   readonly #provider: EmbeddingPort;
   readonly #session: EmbeddingProfile;
   readonly #card: CardSelectionProfile;
@@ -67,6 +69,7 @@ export class LocalCardEmbeddingAdapter implements CardEmbeddingPort {
     this.#provider = options.provider;
     this.#session = options.session;
     this.#card = options.card;
+    this.profile = options.card;
   }
 
   async embed(
@@ -112,11 +115,14 @@ export class LocalCardEmbeddingAdapter implements CardEmbeddingPort {
 /**
  * Restates Indexing's fault in this port's own vocabulary.
  *
- * Two of Indexing's codes have no counterpart here and are reported as
- * `provider_unavailable`: `authentication_failed` and `rate_limited` are facts
- * about a remote provider's account and quota, and a Card selection has no
- * remote binding to have either. Reporting them under their own names would put
- * a code in front of an operator that nothing in this composition can produce.
+ * The two vocabularies name the same seven conditions today, so the mapping is
+ * the identity — written out rather than cast, because the two types are owned
+ * by two packages and a code added to one does not appear in the other until
+ * someone decides it should. `authentication_failed` and `rate_limited` used to
+ * be folded into `provider_unavailable` on the grounds that a Card selection
+ * had no remote binding to have either; Selection's port now admits a remote
+ * provider, so they travel under their own names. A local session never
+ * raises them, which this function does not need to know.
  *
  * Anything that is not Indexing's own fault becomes `provider_unavailable` and
  * is marked retriable, because an arbitrary exception out of a model session is
@@ -129,13 +135,13 @@ function toCardEmbeddingFault(cause: unknown): CardEmbeddingFault {
     return new CardEmbeddingFault("provider_unavailable", true);
   }
   const mapped: Record<string, CardEmbeddingFaultCode> = {
+    authentication_failed: "authentication_failed",
     embedding_artifact_unavailable: "embedding_artifact_unavailable",
     input_limit_exceeded: "input_limit_exceeded",
     invalid_request: "invalid_request",
     invalid_response: "invalid_response",
     provider_unavailable: "provider_unavailable",
-    authentication_failed: "provider_unavailable",
-    rate_limited: "provider_unavailable",
+    rate_limited: "rate_limited",
   };
   return new CardEmbeddingFault(
     mapped[cause.code] ?? "provider_unavailable",

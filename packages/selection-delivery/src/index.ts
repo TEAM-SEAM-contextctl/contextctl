@@ -209,6 +209,7 @@ export {
 } from "./application/context-application.js";
 export type { ApprovedCardCatalog } from "./ports/approved-card-catalog.js";
 export {
+  assertCardEmbeddingProviderBinding,
   CardEmbeddingFault,
   type CardEmbeddingFaultCode,
   type CardEmbeddingInput,
@@ -222,10 +223,7 @@ export type {
   CardCandidateIndexStore,
 } from "./ports/card-candidate-index-store.js";
 export { InMemoryCardCatalog } from "./infrastructure/in-memory-card-catalog.js";
-export {
-  assertCardEmbeddingProviderKind,
-  DeterministicCardEmbeddingAdapter,
-} from "./infrastructure/deterministic-card-embedding-adapter.js";
+export { DeterministicCardEmbeddingAdapter } from "./infrastructure/deterministic-card-embedding-adapter.js";
 export { InMemoryCardCandidateIndexStore } from "./infrastructure/in-memory-card-candidate-index-store.js";
 export {
   createHttpQueryHandler,
