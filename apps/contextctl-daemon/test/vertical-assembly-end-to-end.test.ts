@@ -78,6 +78,12 @@ afterEach(async () => {
   );
 });
 
+/** The fixture with the payment-retry section deleted. */
+const FIXTURE_WITHOUT_RETRY = FIXTURE.replace(
+  `## 결제 재시도\n\n${RETRY_SENTENCE}.\n\n`,
+  "",
+);
+
 async function writeFixture(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "contextctl-vertical-"));
   directories.push(directory);
@@ -86,7 +92,17 @@ async function writeFixture(): Promise<string> {
   return path;
 }
 
+interface RuntimeUnderTest {
+  readonly runtime: DaemonRuntime;
+  /** The Markdown file the source reads, so a test can edit or delete it. */
+  readonly path: string;
+}
+
 async function buildRuntime(): Promise<DaemonRuntime> {
+  return (await buildRuntimeOverFile()).runtime;
+}
+
+async function buildRuntimeOverFile(): Promise<RuntimeUnderTest> {
   const path = await writeFixture();
   const runtime = createDaemonRuntime({
     embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
@@ -94,7 +110,7 @@ async function buildRuntime(): Promise<DaemonRuntime> {
     sourceConfigurations: { [SOURCE_REFERENCE]: { path } },
   });
   runtimes.push(runtime);
-  return runtime;
+  return { runtime, path };
 }
 
 /** Runs the ingest half: a real file through to a committed Publication. */
@@ -194,6 +210,15 @@ interface SelectionSummaryPayload {
     readonly deferred: number;
     readonly rejected: number;
   };
+}
+
+/** Every chunk the resolution actually returned, joined for a substring check. */
+function retrievedText(payload: Readonly<Record<string, unknown>>): string {
+  const items = payload["items"] as readonly ResolvedItem[];
+  return items
+    .flatMap((item) => item.fulfillment.context?.chunks ?? [])
+    .map((chunk) => chunk.text)
+    .join("\n");
 }
 
 describe("daemon vertical assembly", () => {
@@ -327,6 +352,50 @@ describe("daemon vertical assembly", () => {
     expect(
       contexts.every((context) => context.contentTrust === "untrusted"),
     ).toBe(true);
+  });
+
+  it("stops answering from a section deleted out of the source", async () => {
+    // ADR 0005, end to end. Every earlier assertion here is about knowledge
+    // arriving; this one is about knowledge leaving. Nothing purges a published
+    // index version (ADR 0003), so the deleted section's vectors are still
+    // searchable after the second publish — the only thing standing between
+    // them and an answer is Registry withdrawing the Card that named them.
+    const { runtime, path } = await buildRuntimeOverFile();
+    const published = await publish(runtime);
+    const claimed = await runtime.registryIntake.claim(
+      publicationIdOf(published),
+    );
+    for (const version of claimed.cardVersions) {
+      await runtime.registryIntake.approve(version.cardId, version.versionId, {
+        decidedBy: "end-to-end-test",
+      });
+    }
+
+    const query = documentIdOf(published);
+    expect(retrievedText(await resolveContext(runtime, query))).toContain(
+      RETRY_SENTENCE,
+    );
+
+    await writeFile(path, FIXTURE_WITHOUT_RETRY, "utf8");
+    const republished = await publish(runtime);
+    expect(
+      republished.publication?.changes.some(
+        (change) => change.kind === "removed",
+      ),
+    ).toBe(true);
+
+    const reclaimed = await runtime.registryIntake.claim(
+      publicationIdOf(republished),
+    );
+    expect(reclaimed.status).toBe("claimed");
+
+    // No approval step, and that is the assertion: the answer changes on
+    // consumption alone. Withdrawal is not an operator decision — keeping
+    // deleted content answerable until someone notices is what ADR 0005 rules
+    // out — while restoring service would be.
+    expect(retrievedText(await resolveContext(runtime, query))).not.toContain(
+      RETRY_SENTENCE,
+    );
   });
 
   it("claims one Publication exactly once", async () => {
