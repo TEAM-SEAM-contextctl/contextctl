@@ -167,6 +167,16 @@ contextctl query "반차는 어떻게 써?"
 | `CONTEXTCTL_QDRANT_API_KEY` | 선택 |
 | `CONTEXTCTL_QDRANT_TIMEOUT_MS` | 선택 |
 
+### 접근 정책
+
+| 변수 | 기본값 | |
+|---|---|---|
+| `CONTEXTCTL_SENSITIVE_ACCESS` | `deny` | `deny` 면 민감(`sensitive: true`)으로 승인된 Card 를 **점수 계산 전에** 모든 질의에서 제외합니다. `allow` 면 그 Card 가 질의 결과에 노출됩니다. 두 값 외에는 시작을 거부합니다. |
+
+질의 호출자는 이 값을 바꿀 수 없습니다 — 질의 본문, MCP 인자, CLI 플래그 어디에도 자리가 없고,
+MCP·HTTP·`query` 는 한 프로세스 안에서 같은 정책으로 답합니다. 용도(`usage`)는 `retrieval` 로 고정입니다.
+`contextctl doctor` 가 `policy-context` 줄에서 현재 값과 그 결과를 보여주며, `allow` 면 경고로 표시합니다.
+
 ### ★ Card 의미 생성기 — 설정을 권장합니다
 
 ```bash

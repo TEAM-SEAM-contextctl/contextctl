@@ -44,6 +44,7 @@ import {
   createHttpQueryHandler,
   createMcpQueryServer,
   DEFAULT_CARD_ADMISSION_LIMITS,
+  DEFAULT_POLICY_CONTEXT,
   DeterministicCardEmbeddingAdapter,
   InMemoryCardCandidateIndexStore,
   isCardSelectionEmbeddingProfile,
@@ -55,6 +56,7 @@ import {
   type CardSelectionProfile,
   type DeliveryHttpHandler,
   type McpQueryServer,
+  type PolicyContext,
   type ResolveContextApplication,
 } from "@contextctl/selection-delivery";
 
@@ -288,6 +290,16 @@ export interface DaemonRuntimeOptions {
    * physical index belongs to.
    */
   readonly stateNamespaceId?: string;
+  /**
+   * What a query may reach, fixed for this process. Defaults to
+   * `DEFAULT_POLICY_CONTEXT` — retrieval only, sensitive Cards denied.
+   *
+   * Handed to `DaemonContextApplication` once, so MCP, HTTP and the query CLI
+   * answer under one policy. It is configuration and nothing a request can
+   * name: Selection's request type has no field for it, and the CLI reads it
+   * through one resolver for every path that composes a runtime.
+   */
+  readonly policy?: PolicyContext;
   /** Wall clock for Registry's audit trail. Overridden to pin timestamps. */
   readonly clock?: () => string;
 }
@@ -441,6 +453,11 @@ export function createDaemonRuntime(
     catalog,
     search,
     securityDomain,
+    // The policy every surface this application serves runs under. Stated
+    // here even when it is the default, so a reader of this composition sees
+    // that sensitive Cards are denied rather than having to know what
+    // Selection assumes when nothing is said.
+    selection: { policy: options.policy ?? DEFAULT_POLICY_CONTEXT },
     semantic: {
       embedding: cardEmbeddingProvider,
       index: cardCandidateIndex,

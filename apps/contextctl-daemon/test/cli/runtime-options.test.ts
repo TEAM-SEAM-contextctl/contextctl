@@ -52,6 +52,7 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
   return {
     paths,
     options: cliRuntimeOptions({
+      environment: configuredEnvironment,
       paths,
       sourceConfigurations: { "source.payment": { path: "/tmp/payment.md" } },
       ingestionDatabase: ingestionDatabase(),
@@ -141,6 +142,23 @@ describe("CLI runtime options", () => {
     expect(deterministic.options.meanings).toBeDefined();
     expect(llm.options.meanings).toBeDefined();
     expect(llm.options.meanings).not.toBe(deterministic.options.meanings);
+  });
+
+  it("carries the access policy into the graph through one resolver", () => {
+    // Both composition paths — the CLI runtime behind `query` and the served
+    // process behind MCP and HTTP — obtain their options here, so the policy
+    // they run under is read in exactly one place.
+    expect(build({}).options.policy).toEqual({
+      usage: "retrieval",
+      sensitiveAccess: "deny",
+    });
+    expect(build({ CONTEXTCTL_SENSITIVE_ACCESS: "allow" }).options.policy).toEqual({
+      usage: "retrieval",
+      sensitiveAccess: "allow",
+    });
+    expect(() => build({ CONTEXTCTL_SENSITIVE_ACCESS: "maybe" })).toThrow(
+      "CONTEXTCTL_SENSITIVE_ACCESS 는 deny 또는 allow 만 받는다",
+    );
   });
 
   it("passes the registered Sources through unchanged", () => {
