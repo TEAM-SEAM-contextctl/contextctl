@@ -1,19 +1,15 @@
 import {
-  appendCardVersion,
   approveCardVersion,
-  claimPublication,
-  createContextCard,
-  withCardVersions,
+  intakePublication,
   type CardDecisionPorts,
   type CardMeaningGenerator,
   type CardPolicy,
   type CardStore,
   type CardValidationState,
-  type ClaimPublicationPorts,
   type ConsumptionDiagnostic,
   type ContextCard,
   type GroundingFinding,
-  type LifecycleEvent,
+  type IntakePublicationPorts,
   type OperatorDecision,
   type PublicationRepository,
 } from "@contextctl/registry-lifecycle";
@@ -21,13 +17,18 @@ import {
 /**
  * Registry's consumption of one Ingestion Publication, assembled.
  *
- * `claimPublication` is a pure read: it turns a Publication into Card Versions
- * and records that the Publication was consumed, but it never writes a Card.
- * Nothing else in Registry writes one either, so between "claimed" and
- * "approvable" there is a gap only a composition can close — find or create the
- * Card, append the version, persist. This file is that gap, and it lives in the
- * daemon because it is the only place allowed to open the database Registry
- * writes into.
+ * `intakePublication` consumes the Publication and commits everything it changes
+ * in one transaction — Cards, versions, the current pointer, the lifecycle
+ * events and the consumer cursor. This file used to assemble that itself, one
+ * `saveCard` at a time followed by `markProcessed`, which left partial drafts
+ * behind whenever the process died in the middle. Ordering the two writes could
+ * only choose which side the failure fell on, so the ordering question moved
+ * into Registry along with the transaction that removes it.
+ *
+ * What is left here is composition: the ports, the policy a new Card starts
+ * from, and the translation of a domain result into the shape the CLI reports.
+ * The daemon opens the database Registry writes into, and decides nothing about
+ * what goes in it.
  *
  * Claiming and approving stay two calls on purpose. ADR 0003 keeps approval in
  * an operator's hands, so a Publication arriving must not promote itself into
@@ -36,7 +37,9 @@ import {
  * end-to-end test, a demo script — makes both calls, and the audit trail then
  * names who approved rather than recording that ingestion did.
  */
-export interface RegistryIntakePorts extends ClaimPublicationPorts, CardDecisionPorts {
+export interface RegistryIntakePorts
+  extends IntakePublicationPorts,
+    CardDecisionPorts {
   readonly publications: PublicationRepository;
   readonly meanings: CardMeaningGenerator;
   readonly cards: CardStore;
@@ -106,12 +109,6 @@ export type RegistryIntakeResult =
       readonly diagnostic: ConsumptionDiagnostic;
     };
 
-/** The Publication shape this file reads, derived so no contract import appears. */
-type ClaimablePublication = NonNullable<
-  Awaited<ReturnType<PublicationRepository["findById"]>>
->;
-type PublishedUnit = ClaimablePublication["knowledgeUnits"][number];
-
 export interface RegistryIntakeOptions {
   readonly policy?: CardPolicy;
 }
@@ -126,86 +123,59 @@ export class RegistryIntake {
   }
 
   /**
-   * Consumes one Publication and persists a Card Version per Knowledge Unit.
+   * Consumes one Publication, or reports why Registry refused it.
    *
    * Idempotent by way of the claim record: a redelivered `PublicationReady`
    * answers `already_claimed` and writes nothing, so the append-only history
-   * cannot gain the same version twice. The record is written here rather than
-   * inside the use case, after the Cards are stored — see the comment at that
-   * call.
+   * cannot gain the same version twice.
    *
    * Registry may also refuse on chain order — `deferred` when a predecessor is
    * missing, `forked` when the chain is not linear. Both are passed through with
-   * no Card written, because in both cases Registry committed nothing and this
-   * file has nothing to persist.
+   * their diagnostic intact rather than flattened into a message: the code is
+   * what a lane status can be keyed on and `sourceId` says which lane, and this
+   * file decides neither.
    */
   async claim(publicationId: string): Promise<RegistryIntakeResult> {
-    const claimed = await claimPublication(this.#ports, publicationId);
-    if (claimed.status === "already_claimed") {
-      return { status: "already_claimed", publicationId, cardVersions: [] };
-    }
-    // Both refusals are passed through with their diagnostic intact rather than
-    // being flattened into a message. The code is what a lane status can be
-    // keyed on, and `sourceId` says which lane — this file is not the place that
-    // decides either, so it forwards both instead of interpreting them.
-    if (claimed.status === "deferred") {
-      return {
-        status: "deferred",
-        publicationId,
-        cardVersions: [],
-        sourceId: claimed.sourceId,
-        awaiting: claimed.awaiting,
-        diagnostic: claimed.diagnostic,
-      };
-    }
-    if (claimed.status === "forked") {
-      return {
-        status: "forked",
-        publicationId,
-        cardVersions: [],
-        sourceId: claimed.sourceId,
-        diagnostic: claimed.diagnostic,
-      };
-    }
+    const claimed = await intakePublication(this.#ports, publicationId, {
+      policy: this.#policy,
+    });
 
-    // Read after the claim rather than before: `claimPublication` already
-    // proved the Publication exists by consuming it, and reading first would
-    // fetch a record for a claim that turns out to be a no-op.
-    const units = await this.#unitsOf(publicationId);
-    const intaken: IntakenCardVersion[] = [];
-
-    for (const { version, findings } of claimed.cardVersions) {
-      const card = await this.#cardFor(version.cardId, units);
-      const event: LifecycleEvent = {
-        id: this.#ports.ids.nextId(),
-        kind: "card_version_added",
-        cardId: version.cardId,
-        occurredAt: version.createdAt,
-        versionId: version.id,
-        publicationId: version.lineage.publicationId,
-      };
-      await this.#ports.cards.saveCard(
-        withCardVersions(card, appendCardVersion(card.versions, version)),
-        [event],
-      );
-      intaken.push({
-        cardId: version.cardId,
-        versionId: version.id,
-        validationState: version.validationState,
-        findings,
-      });
+    switch (claimed.status) {
+      case "already_claimed":
+        return { status: "already_claimed", publicationId, cardVersions: [] };
+      case "deferred":
+        return {
+          status: "deferred",
+          publicationId,
+          cardVersions: [],
+          sourceId: claimed.sourceId,
+          awaiting: claimed.awaiting,
+          diagnostic: claimed.diagnostic,
+        };
+      case "forked":
+        return {
+          status: "forked",
+          publicationId,
+          cardVersions: [],
+          sourceId: claimed.sourceId,
+          diagnostic: claimed.diagnostic,
+        };
+      case "claimed":
+        return {
+          status: "claimed",
+          publicationId,
+          cardVersions: claimed.cardVersions.map(({ version, findings }) => ({
+            cardId: version.cardId,
+            versionId: version.id,
+            validationState: version.validationState,
+            findings,
+          })),
+        };
+      default: {
+        const unreachable: never = claimed;
+        throw new Error(`unknown claim status: ${JSON.stringify(unreachable)}`);
+      }
     }
-
-    // Marked consumed only now, with the cursor `claimPublication` handed back.
-    // Doing it before this loop would count the Publication as consumed while
-    // its Cards did not exist yet, and a crash in between would be unrecoverable
-    // — redelivery answers `already_claimed`. This order fails the other way: a
-    // crash here leaves the Cards stored and the Publication unconsumed, so a
-    // retry re-produces the same Card Versions and an operator sees duplicate
-    // drafts rather than silently missing knowledge.
-    await this.#ports.checkpoints.markProcessed(claimed.cursor);
-
-    return { status: "claimed", publicationId, cardVersions: intaken };
   }
 
   /**
@@ -221,48 +191,5 @@ export class RegistryIntake {
     decision: OperatorDecision,
   ): Promise<ContextCard> {
     return approveCardVersion(this.#ports, cardId, versionId, decision);
-  }
-
-  /**
-   * The existing Card, or a new one described from its Knowledge Unit.
-   *
-   * The meaning is generated a second time here — `claimPublication` generated
-   * one to ground the version against and kept it to itself. Regenerating is
-   * safe rather than merely tolerable: the generator is a port whose local
-   * implementation is deterministic, so the description a Card is created with
-   * is the same text grounding already accepted. A model-backed generator would
-   * make the two differ, and at that point the meaning belongs on the claim
-   * result rather than being re-derived — which is Registry's call to make, not
-   * this composition's.
-   */
-  async #cardFor(
-    cardId: string,
-    units: ReadonlyMap<string, PublishedUnit>,
-  ): Promise<ContextCard> {
-    const existing = await this.#ports.cards.findCard(cardId);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const unit = units.get(cardId);
-    if (unit === undefined) {
-      // A claimed version always names a unit of the Publication it came from,
-      // so this is unreachable for any record `claimPublication` produced.
-      throw new Error(`claimed card ${cardId} has no knowledge unit`);
-    }
-    const meaning = await this.#ports.meanings.generate({
-      coordinate: unit.sourceCoordinate,
-      facts: unit.facts,
-    });
-    return createContextCard(cardId, meaning, this.#policy);
-  }
-
-  async #unitsOf(
-    publicationId: string,
-  ): Promise<ReadonlyMap<string, PublishedUnit>> {
-    const publication = await this.#ports.publications.findById(publicationId);
-    if (publication === undefined) {
-      throw new Error(`claimed publication ${publicationId} disappeared`);
-    }
-    return new Map(publication.knowledgeUnits.map((unit) => [unit.id, unit]));
   }
 }

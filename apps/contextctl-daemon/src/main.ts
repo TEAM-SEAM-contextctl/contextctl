@@ -33,6 +33,7 @@ import {
   openRegistryDatabase,
   SqliteCardStore,
   SqliteConsumerCheckpointStore,
+  SqliteIntakeStore,
   type CardMeaningGenerator,
   type Clock,
   type IdGenerator,
@@ -435,6 +436,9 @@ export function createDaemonRuntime(
   const registryIntake = new RegistryIntake({
     publications: new IngestionPublicationRepository(ingestionPublications),
     checkpoints: new SqliteConsumerCheckpointStore(database, now),
+    // The Cards, their events and the consumer cursor land in one transaction,
+    // so the store that does it is one port rather than two calls in sequence.
+    intake: new SqliteIntakeStore(database, now),
     meanings: options.meanings ?? new DeterministicCardMeaningGenerator(),
     cards,
     clock,
