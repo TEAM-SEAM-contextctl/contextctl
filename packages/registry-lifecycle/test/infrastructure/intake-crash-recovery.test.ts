@@ -13,7 +13,7 @@ import { SqliteIntakeStore } from "../../src/infrastructure/sqlite/sqlite-intake
 /**
  * A killed process, and what the database says afterwards.
  *
- * SEAM-106 §6.5 asks for this specifically, and it is not the same test as
+ * SEAM-106 §6.6 asks for this specifically, and it is not the same test as
  * injecting an error: a thrown error unwinds through `ROLLBACK`, while `SIGKILL`
  * gives the process no chance to run anything. What holds the line there is
  * SQLite's own journal, so the only way to know it holds is to actually kill
@@ -153,7 +153,7 @@ describe("intake after a killed process", () => {
       ]).then(([card, processed, cursor]) => {
         // The Card row was written before the kill. Without the transaction it
         // would still be here with the Publication unconsumed — the partial
-        // draft SEAM-106 §6.5 names.
+        // draft SEAM-106 §6.6 names.
         expect(card).toBeUndefined();
         expect(processed).toBe(false);
         expect(cursor).toBeUndefined();

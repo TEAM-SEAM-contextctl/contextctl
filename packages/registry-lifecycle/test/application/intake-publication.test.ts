@@ -8,8 +8,13 @@ import {
   intakePublication,
   type IntakePublicationPorts,
 } from "../../src/application/intake-publication.js";
-import type { CardMeaning, CardPolicy } from "../../src/domain/context-card.js";
-import type { ContextCard } from "../../src/domain/context-card.js";
+import {
+  createContextCard,
+  withCardVersions,
+  type CardMeaning,
+  type CardPolicy,
+  type ContextCard,
+} from "../../src/domain/context-card.js";
 import type { PublicationIntake } from "../../src/ports/intake-store.js";
 import {
   createIngestionPublicationFixture,
@@ -190,6 +195,45 @@ describe("intakePublication", () => {
     });
 
     expect(second.commits[0]?.cards[0]?.card.versions.versions).toHaveLength(2);
+  });
+
+  it("leaves an approved Card serving when a new version arrives", async () => {
+    // SEAM-106 §9.1: re-processing must not change the current pointer. This is
+    // the case where it would matter — a Card an operator already approved gains
+    // a draft, and if intake carried a cleared pointer through the upsert the
+    // Card would silently stop being served while looking untouched.
+    const publication = createIngestionPublicationFixture();
+    const cardId = publication.knowledgeUnits[0]?.id ?? "";
+    const approved = withCardVersions(
+      createContextCard(cardId, meaning, POLICY),
+      {
+        cardId,
+        versions: [
+          {
+            id: "approved_version",
+            cardId,
+            lineage: {
+              publicationId: fixtureRootId("pub", "earlier"),
+              observationId: fixtureRootId("obs", "initial"),
+              knowledgeUnitId: cardId,
+            },
+            scopes: [],
+            validationState: "validated",
+            createdAt: "2026-08-01T00:00:00.000Z",
+          },
+        ],
+        currentVersionId: "approved_version",
+      },
+    );
+    const ports = createPorts([publication], { stored: [approved] });
+
+    await intakePublication(ports, publication.publicationId, {
+      policy: POLICY,
+    });
+
+    const committed = ports.commits[0]?.cards[0]?.card;
+    expect(committed?.versions.currentVersionId).toBe("approved_version");
+    expect(committed?.versions.versions).toHaveLength(2);
   });
 
   it("commits nothing when the claim was refused", async () => {
