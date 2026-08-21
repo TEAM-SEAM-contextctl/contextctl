@@ -1,4 +1,4 @@
-import { isId } from "./model-validation.js";
+import { isUuidV7Id } from "./model-validation.js";
 
 const MACHINE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 const MAX_DIAGNOSTIC_LENGTH = 256;
@@ -264,7 +264,7 @@ function normalizeCapabilities(
 }
 
 function validateSourceId(value: string): void {
-  if (!isId(value, "src")) {
+  if (!isUuidV7Id(value, "src")) {
     throw new KnowledgeSourceValidationError("id");
   }
 }

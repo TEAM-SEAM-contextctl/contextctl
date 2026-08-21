@@ -11,7 +11,18 @@ import {
   createIngestionPublicationFixture,
   createMultiScopePublicationFixture,
   createSqlPublicationFixture,
+  fixtureRootId,
 } from "../fixtures/ingestion-publication.fixture.js";
+
+const PUB_INITIAL = fixtureRootId("pub", "initial");
+const PUB_FIRST = fixtureRootId("pub", "first");
+const PUB_SECOND = fixtureRootId("pub", "second");
+const PUB_MISSING = fixtureRootId("pub", "missing");
+const PUB_RIVAL = fixtureRootId("pub", "rival");
+const PUB_UNCHAINED = fixtureRootId("pub", "unchained");
+const SRC_PAYMENTS = fixtureRootId("src", "payments");
+const DOC_PAYMENTS = fixtureRootId("doc", "payments");
+const OBS_INITIAL = fixtureRootId("obs", "initial");
 
 const groundedMeaning: CardMeaning = {
   description: "결제 실패 재시도 정책",
@@ -72,16 +83,16 @@ describe("claimPublication", () => {
 
     expect(result).toEqual({
       status: "claimed",
-      publicationId: "pub_initial",
-      cursor: { sourceId: "src_payments", publicationId: "pub_initial" },
+      publicationId: PUB_INITIAL,
+      cursor: { sourceId: SRC_PAYMENTS, publicationId: PUB_INITIAL },
       cardVersions: [
         {
           version: {
             id: "cv_1",
             cardId: "unit_payment_failures",
             lineage: {
-              publicationId: "pub_initial",
-              observationId: "obs_initial",
+              publicationId: PUB_INITIAL,
+              observationId: OBS_INITIAL,
               knowledgeUnitId: "unit_payment_failures",
             },
             scopes: [
@@ -93,8 +104,8 @@ describe("claimPublication", () => {
                 },
                 documentIndex: {
                   documentIndexId: "didx_payments",
-                  sourceId: "src_payments",
-                  documentId: "doc_payments",
+                  sourceId: SRC_PAYMENTS,
+                  documentId: DOC_PAYMENTS,
                   indexVersion: "idxv_aaaa",
                 },
                 selection: {
@@ -190,15 +201,15 @@ describe("claimPublication", () => {
 
     expect(second).toEqual({
       status: "already_claimed",
-      publicationId: "pub_initial",
+      publicationId: PUB_INITIAL,
     });
-    expect(ports.processedCalls).toEqual(["pub_initial"]);
+    expect(ports.processedCalls).toEqual([PUB_INITIAL]);
   });
 
   it("rejects a publication id that cannot be resolved", async () => {
     const ports = createFakePorts([]);
 
-    await expect(claimPublication(ports, "pub_missing")).rejects.toThrow(
+    await expect(claimPublication(ports, PUB_MISSING)).rejects.toThrow(
       PublicationNotFoundError,
     );
     expect(ports.processedCalls).toEqual([]);
@@ -223,10 +234,10 @@ describe("claimPublication chain order", () => {
 
   /** The same Source's chain: second follows first. */
   function chain() {
-    const first = createIngestionPublicationFixture("pub_first");
+    const first = createIngestionPublicationFixture(PUB_FIRST);
     const second: IngestionPublication = {
-      ...createIngestionPublicationFixture("pub_second"),
-      previousPublicationId: "pub_first",
+      ...createIngestionPublicationFixture(PUB_SECOND),
+      previousPublicationId: PUB_FIRST,
     };
     return { first, second };
   }
@@ -235,7 +246,7 @@ describe("claimPublication chain order", () => {
     const { first } = chain();
     const ports = createFakePorts([first]);
 
-    const result = await consume(ports, "pub_first");
+    const result = await consume(ports, PUB_FIRST);
 
     expect(result.status).toBe("claimed");
   });
@@ -244,11 +255,11 @@ describe("claimPublication chain order", () => {
     const { first, second } = chain();
     const ports = createFakePorts([first, second]);
 
-    await consume(ports, "pub_first");
-    const result = await consume(ports, "pub_second");
+    await consume(ports, PUB_FIRST);
+    const result = await consume(ports, PUB_SECOND);
 
     expect(result.status).toBe("claimed");
-    expect(ports.processedCalls).toEqual(["pub_first", "pub_second"]);
+    expect(ports.processedCalls).toEqual([PUB_FIRST, PUB_SECOND]);
   });
 
   it("defers a successor that arrives before its predecessor", async () => {
@@ -257,17 +268,16 @@ describe("claimPublication chain order", () => {
     const { first, second } = chain();
     const ports = createFakePorts([first, second]);
 
-    const result = await consume(ports, "pub_second");
+    const result = await consume(ports, PUB_SECOND);
 
     expect(result).toEqual({
       status: "deferred",
-      publicationId: "pub_second",
-      sourceId: "src_payments",
-      awaiting: "pub_first",
+      publicationId: PUB_SECOND,
+      sourceId: SRC_PAYMENTS,
+      awaiting: PUB_FIRST,
       diagnostic: {
         code: "publication_chain_gap",
-        detail:
-          "publication pub_second follows pub_first, which has not been consumed",
+        detail: `publication ${PUB_SECOND} follows ${PUB_FIRST}, which has not been consumed`,
       },
     });
     // Nothing claimed, so the checkpoint did not move and the notification is
@@ -279,12 +289,12 @@ describe("claimPublication chain order", () => {
     const { first, second } = chain();
     const ports = createFakePorts([first, second]);
 
-    await consume(ports, "pub_second");
-    await consume(ports, "pub_first");
-    const retried = await consume(ports, "pub_second");
+    await consume(ports, PUB_SECOND);
+    await consume(ports, PUB_FIRST);
+    const retried = await consume(ports, PUB_SECOND);
 
     expect(retried.status).toBe("claimed");
-    expect(ports.processedCalls).toEqual(["pub_first", "pub_second"]);
+    expect(ports.processedCalls).toEqual([PUB_FIRST, PUB_SECOND]);
   });
 
   it("ignores producedAt when ordering the chain", async () => {
@@ -292,14 +302,14 @@ describe("claimPublication chain order", () => {
     // timestamp would order a chain that was never published.
     const { first } = chain();
     const laterButUnchained: IngestionPublication = {
-      ...createIngestionPublicationFixture("pub_unchained"),
+      ...createIngestionPublicationFixture(PUB_UNCHAINED),
       producedAt: "2099-01-01T00:00:00.000Z",
-      previousPublicationId: "pub_missing",
+      previousPublicationId: PUB_MISSING,
     };
     const ports = createFakePorts([first, laterButUnchained]);
 
-    await consume(ports, "pub_first");
-    const result = await consume(ports, "pub_unchained");
+    await consume(ports, PUB_FIRST);
+    const result = await consume(ports, PUB_UNCHAINED);
 
     expect(result.status).toBe("deferred");
   });
@@ -308,14 +318,14 @@ describe("claimPublication chain order", () => {
     // Two Publications with no predecessor claim the same place. Choosing one
     // would silently abandon what the other published.
     const { first } = chain();
-    const rival = createIngestionPublicationFixture("pub_rival");
+    const rival = createIngestionPublicationFixture(PUB_RIVAL);
     const ports = createFakePorts([first, rival]);
 
-    await consume(ports, "pub_first");
-    const result = await consume(ports, "pub_rival");
+    await consume(ports, PUB_FIRST);
+    const result = await consume(ports, PUB_RIVAL);
 
     expect(result.status).toBe("forked");
-    expect(ports.processedCalls).toEqual(["pub_first"]);
+    expect(ports.processedCalls).toEqual([PUB_FIRST]);
   });
 
   /**
@@ -328,31 +338,31 @@ describe("claimPublication chain order", () => {
    */
   it("reports a fork with its Source and a machine-readable code", async () => {
     const { first } = chain();
-    const rival = createIngestionPublicationFixture("pub_rival");
+    const rival = createIngestionPublicationFixture(PUB_RIVAL);
     const ports = createFakePorts([first, rival]);
 
-    await consume(ports, "pub_first");
-    const result = await consume(ports, "pub_rival");
+    await consume(ports, PUB_FIRST);
+    const result = await consume(ports, PUB_RIVAL);
 
     if (result.status !== "forked") {
       throw new Error(`expected a fork, got ${result.status}`);
     }
-    expect(result.sourceId).toBe("src_payments");
+    expect(result.sourceId).toBe(SRC_PAYMENTS);
     expect(result.diagnostic.code).toBe("publication_chain_forked");
     // The specific collision belongs in the detail: an operator resolving this
     // by hand needs the ids, and a code carrying them could not be grouped.
-    expect(result.diagnostic.detail).toContain("pub_rival");
+    expect(result.diagnostic.detail).toContain(PUB_RIVAL);
   });
 
   it("treats redelivery of a consumed Publication as already claimed", async () => {
     const { first } = chain();
     const ports = createFakePorts([first]);
 
-    await consume(ports, "pub_first");
-    const again = await consume(ports, "pub_first");
+    await consume(ports, PUB_FIRST);
+    const again = await consume(ports, PUB_FIRST);
 
     expect(again.status).toBe("already_claimed");
-    expect(ports.processedCalls).toEqual(["pub_first"]);
+    expect(ports.processedCalls).toEqual([PUB_FIRST]);
   });
 
   it("keeps each Source's chain independent", async () => {
@@ -364,7 +374,7 @@ describe("claimPublication chain order", () => {
     };
     const ports = createFakePorts([first, otherSource]);
 
-    await consume(ports, "pub_first");
+    await consume(ports, PUB_FIRST);
     const result = await consume(ports, otherSource.publicationId);
 
     expect(result.status).toBe("claimed");
@@ -377,17 +387,17 @@ describe("claimPublication does not record consumption itself", () => {
   // and a crash in between is unrecoverable: redelivery answers already_claimed
   // and the Cards are gone. The caller that stores them marks it instead.
   it("leaves the claim record untouched and hands back the cursor", async () => {
-    const publication = createIngestionPublicationFixture("pub_first");
+    const publication = createIngestionPublicationFixture(PUB_FIRST);
     const ports = createFakePorts([publication]);
 
-    const result = await claimPublication(ports, "pub_first");
+    const result = await claimPublication(ports, PUB_FIRST);
 
     if (result.status !== "claimed") {
       throw new Error("expected the publication to be claimed");
     }
     expect(result.cursor).toEqual({
       sourceId: publication.sourceId,
-      publicationId: "pub_first",
+      publicationId: PUB_FIRST,
     });
     expect(ports.processedCalls).toEqual([]);
   });
@@ -395,27 +405,27 @@ describe("claimPublication does not record consumption itself", () => {
   it("re-produces the versions when consumption was never recorded", async () => {
     // The failure direction this ordering chooses: a retry makes duplicate
     // drafts an operator can see, rather than knowledge that silently vanished.
-    const publication = createIngestionPublicationFixture("pub_first");
+    const publication = createIngestionPublicationFixture(PUB_FIRST);
     const ports = createFakePorts([publication]);
 
-    const first = await claimPublication(ports, "pub_first");
-    const retried = await claimPublication(ports, "pub_first");
+    const first = await claimPublication(ports, PUB_FIRST);
+    const retried = await claimPublication(ports, PUB_FIRST);
 
     expect(first.status).toBe("claimed");
     expect(retried.status).toBe("claimed");
   });
 
   it("stops re-producing once the caller records consumption", async () => {
-    const publication = createIngestionPublicationFixture("pub_first");
+    const publication = createIngestionPublicationFixture(PUB_FIRST);
     const ports = createFakePorts([publication]);
 
-    const claimed = await claimPublication(ports, "pub_first");
+    const claimed = await claimPublication(ports, PUB_FIRST);
     if (claimed.status !== "claimed") {
       throw new Error("expected the publication to be claimed");
     }
     await ports.checkpoints.markProcessed(claimed.cursor);
 
-    expect((await claimPublication(ports, "pub_first")).status).toBe(
+    expect((await claimPublication(ports, PUB_FIRST)).status).toBe(
       "already_claimed",
     );
   });

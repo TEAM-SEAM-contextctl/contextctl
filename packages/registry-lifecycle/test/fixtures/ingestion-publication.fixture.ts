@@ -1,9 +1,26 @@
+import { createHash } from "node:crypto";
+
 import {
   computePublishedKnowledgeUnitDigest,
   parseIngestionPublication,
   type IngestionPublication,
   type PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
+
+export function fixtureRootId(
+  prefix: "doc" | "obs" | "pub" | "src",
+  seed: string,
+): string {
+  const random = createHash("sha256").update(`${prefix}:${seed}`).digest("hex");
+  return `${prefix}_01890f5c-7b1a-7${random.slice(0, 3)}-8${random.slice(
+    3,
+    6,
+  )}-${random.slice(6, 18)}`;
+}
+
+const MARKDOWN_SOURCE_ID = fixtureRootId("src", "payments");
+const MARKDOWN_DOCUMENT_ID = fixtureRootId("doc", "payments");
+const MARKDOWN_OBSERVATION_ID = fixtureRootId("obs", "initial");
 
 /**
  * Seals a unit with the digest v2 derives from its own content.
@@ -22,15 +39,15 @@ function seal(
 
 /** Markdown-backed publication: the MVP shape Registry consumes end to end. */
 export function createIngestionPublicationFixture(
-  publicationId = "pub_initial",
+  publicationId = fixtureRootId("pub", "initial"),
 ): IngestionPublication {
   const unit = seal({
     id: "unit_payment_failures",
     kind: "section",
     sourceCoordinate: {
       kind: "document",
-      sourceId: "src_payments",
-      documentId: "doc_payments",
+      sourceId: MARKDOWN_SOURCE_ID,
+      documentId: MARKDOWN_DOCUMENT_ID,
       semanticUnitId: "unit_payment_failures",
     },
     // Fact names come from v2's closed vocabulary. `section.label` is what the
@@ -43,8 +60,8 @@ export function createIngestionPublicationFixture(
         kind: "managed_document",
         documentIndex: {
           documentIndexId: "didx_payments",
-          sourceId: "src_payments",
-          documentId: "doc_payments",
+          sourceId: MARKDOWN_SOURCE_ID,
+          documentId: MARKDOWN_DOCUMENT_ID,
           indexVersion: "idxv_aaaa",
         },
         selector: {
@@ -54,7 +71,7 @@ export function createIngestionPublicationFixture(
       },
     ],
     provenance: {
-      observationId: "obs_initial",
+      observationId: MARKDOWN_OBSERVATION_ID,
       producer: { id: "markdown.parser", version: "1.0.0" },
       policyVersions: {
         segmentation: "semantic-unit-v1",
@@ -66,8 +83,8 @@ export function createIngestionPublicationFixture(
   return parseIngestionPublication({
     schemaVersion: 2,
     publicationId,
-    sourceId: "src_payments",
-    observationId: "obs_initial",
+    sourceId: MARKDOWN_SOURCE_ID,
+    observationId: MARKDOWN_OBSERVATION_ID,
     producedAt: "2026-07-29T00:00:00.000Z",
     knowledgeUnits: [unit],
     changes: [
@@ -85,7 +102,9 @@ export function createIngestionPublicationFixture(
  * document scope and a narrower semantic-unit scope.
  */
 export function createMultiScopePublicationFixture(): IngestionPublication {
-  const publication = createIngestionPublicationFixture("pub_multi_scope");
+  const publication = createIngestionPublicationFixture(
+    fixtureRootId("pub", "multi-scope"),
+  );
   const [first] = publication.knowledgeUnits;
   if (first === undefined) {
     throw new Error("fixture must publish one knowledge unit");
@@ -102,8 +121,8 @@ export function createMultiScopePublicationFixture(): IngestionPublication {
         kind: "managed_document",
         documentIndex: {
           documentIndexId: "didx_payments",
-          sourceId: "src_payments",
-          documentId: "doc_payments",
+          sourceId: MARKDOWN_SOURCE_ID,
+          documentId: MARKDOWN_DOCUMENT_ID,
           indexVersion: "idxv_aaaa",
         },
         selector: { kind: "document" },
@@ -126,12 +145,14 @@ export function createMultiScopePublicationFixture(): IngestionPublication {
 
 /** PostgreSQL publication: coordinates only, no embedded content. */
 export function createSqlPublicationFixture(): IngestionPublication {
+  const sourceId = fixtureRootId("src", "payments-db");
+  const observationId = fixtureRootId("obs", "sql");
   const unit = seal({
     id: "unit_payments_table",
     kind: "table",
     sourceCoordinate: {
       kind: "sql_table",
-      sourceId: "src_payments_db",
+      sourceId,
       schema: "public",
       table: "payments",
       columns: ["created_at", "failed_reason", "status"],
@@ -151,7 +172,7 @@ export function createSqlPublicationFixture(): IngestionPublication {
       },
     ],
     provenance: {
-      observationId: "obs_sql",
+      observationId,
       producer: { id: "postgres.introspection", version: "1.0.0" },
       policyVersions: { "schema.extraction": "limited-v1" },
     },
@@ -159,9 +180,9 @@ export function createSqlPublicationFixture(): IngestionPublication {
 
   return parseIngestionPublication({
     schemaVersion: 2,
-    publicationId: "pub_sql",
-    sourceId: "src_payments_db",
-    observationId: "obs_sql",
+    publicationId: fixtureRootId("pub", "sql"),
+    sourceId,
+    observationId,
     producedAt: "2026-07-29T00:00:00.000Z",
     knowledgeUnits: [unit],
     changes: [
@@ -176,12 +197,14 @@ export function createSqlPublicationFixture(): IngestionPublication {
 
 /** OpenAPI publication: method and path coordinates only. */
 export function createHttpPublicationFixture(): IngestionPublication {
+  const sourceId = fixtureRootId("src", "payments-api");
+  const observationId = fixtureRootId("obs", "http");
   const unit = seal({
     id: "unit_get_payment",
     kind: "operation",
     sourceCoordinate: {
       kind: "http_operation",
-      sourceId: "src_payments_api",
+      sourceId,
       method: "GET",
       path: "/payments/{id}",
       operationId: "getPayment",
@@ -203,7 +226,7 @@ export function createHttpPublicationFixture(): IngestionPublication {
       },
     ],
     provenance: {
-      observationId: "obs_http",
+      observationId,
       producer: { id: "openapi.parser", version: "1.0.0" },
       policyVersions: { normalization: "openapi-v1" },
     },
@@ -211,9 +234,9 @@ export function createHttpPublicationFixture(): IngestionPublication {
 
   return parseIngestionPublication({
     schemaVersion: 2,
-    publicationId: "pub_http",
-    sourceId: "src_payments_api",
-    observationId: "obs_http",
+    publicationId: fixtureRootId("pub", "http"),
+    sourceId,
+    observationId,
     producedAt: "2026-07-29T00:00:00.000Z",
     knowledgeUnits: [unit],
     changes: [

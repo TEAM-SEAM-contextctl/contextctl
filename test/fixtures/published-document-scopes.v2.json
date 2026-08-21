@@ -5,8 +5,8 @@
     "kind": "managed_document",
     "documentIndex": {
       "documentIndexId": "didx_payments",
-      "sourceId": "src_payments",
-      "documentId": "doc_payments",
+      "sourceId": "src_01890f5c-7b1a-7001-8000-000000000001",
+      "documentId": "doc_01890f5c-7b1a-7002-8000-000000000002",
       "indexVersion": "idxv_aaaa"
     },
     "selector": { "kind": "document" }
@@ -17,8 +17,8 @@
     "kind": "managed_document",
     "documentIndex": {
       "documentIndexId": "didx_payments",
-      "sourceId": "src_payments",
-      "documentId": "doc_payments",
+      "sourceId": "src_01890f5c-7b1a-7001-8000-000000000001",
+      "documentId": "doc_01890f5c-7b1a-7002-8000-000000000002",
       "indexVersion": "idxv_aaaa"
     },
     "selector": {

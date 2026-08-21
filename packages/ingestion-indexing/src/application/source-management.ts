@@ -29,7 +29,7 @@ import {
   type SourceAdapterFaultCode,
   type SourceAdapterResolver,
   type SourceConfigurationResolver,
-  type SourceIdGenerator,
+  type SourceRootIdGenerator,
   type SourceChangeSignal,
   type SourceObservationAttempt,
 } from "../ports/source-adapter.js";
@@ -122,7 +122,7 @@ export interface SourceManagementDependencies {
   readonly adapters: SourceAdapterResolver;
   readonly configurations: SourceConfigurationResolver;
   readonly credentials: CredentialResolver;
-  readonly ids: SourceIdGenerator;
+  readonly ids: SourceRootIdGenerator;
   readonly observations: SourceObservationStore;
   readonly defaultTimeoutMs: number;
   readonly clock?: () => string;
@@ -247,6 +247,7 @@ export class SourceManagement {
           throw new SourceManagementError("adapter_failure", source.id);
         }
         const candidate = createSourceObservation({
+          id: this.#dependencies.ids.nextObservationId(),
           sourceId: source.id,
           capturedAt: attempt.capturedAt,
           contentDigest: attempt.contentDigest,

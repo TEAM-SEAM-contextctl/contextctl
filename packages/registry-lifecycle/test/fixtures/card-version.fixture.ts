@@ -1,5 +1,6 @@
 import type { CardVersion } from "../../src/domain/card-version.js";
 import type { RetrievalScope } from "../../src/domain/retrieval-scope.js";
+import { fixtureRootId } from "./ingestion-publication.fixture.js";
 
 /** Current version of the Markdown-backed Card, matching the document fixture. */
 export function createDocumentCardVersion(
@@ -10,8 +11,8 @@ export function createDocumentCardVersion(
     reference: { scopeId: "scope_payment_failures", scopeVersion: "scpv_aaaa" },
     documentIndex: {
       documentIndexId: "didx_payments",
-      sourceId: "src_payments",
-      documentId: "doc_payments",
+      sourceId: fixtureRootId("src", "payments"),
+      documentId: fixtureRootId("doc", "payments"),
       indexVersion: overrides.indexVersion ?? "idxv_aaaa",
     },
     selection: {
@@ -24,8 +25,8 @@ export function createDocumentCardVersion(
     id: "cv_document",
     cardId: "unit_payment_failures",
     lineage: {
-      publicationId: "pub_initial",
-      observationId: "obs_initial",
+      publicationId: fixtureRootId("pub", "initial"),
+      observationId: fixtureRootId("obs", "initial"),
       knowledgeUnitId: "unit_payment_failures",
     },
     scopes: [scope],
@@ -51,8 +52,8 @@ export function createSqlCardVersion(
     id: "cv_sql",
     cardId: "unit_payments_table",
     lineage: {
-      publicationId: "pub_sql",
-      observationId: "obs_sql",
+      publicationId: fixtureRootId("pub", "sql"),
+      observationId: fixtureRootId("obs", "sql"),
       knowledgeUnitId: "unit_payments_table",
     },
     scopes: [scope],
@@ -77,8 +78,8 @@ export function createHttpCardVersion(): CardVersion {
     id: "cv_http",
     cardId: "unit_get_payment",
     lineage: {
-      publicationId: "pub_http",
-      observationId: "obs_http",
+      publicationId: fixtureRootId("pub", "http"),
+      observationId: fixtureRootId("obs", "http"),
       knowledgeUnitId: "unit_get_payment",
     },
     scopes: [scope],

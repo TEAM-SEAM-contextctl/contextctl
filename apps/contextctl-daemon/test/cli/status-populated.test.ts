@@ -45,6 +45,12 @@ import { EXIT_CODES } from "../../src/cli/exit-codes.js";
 
 const execFileAsync = promisify(execFile);
 
+const SOURCE_ID = "src_01890f5c-7b1a-7001-8000-000000000001";
+const DOCUMENT_ID = "doc_01890f5c-7b1a-7002-8000-000000000002";
+const OBSERVATION_ID = "obs_01890f5c-7b1a-7003-8000-000000000003";
+const PUBLICATION_ID = "pub_01890f5c-7b1a-7004-8000-000000000004";
+const OLDER_PUBLICATION_ID = "pub_01890f5c-7b1a-7014-8000-000000000014";
+
 const INSTALLED_COMMAND = fileURLToPath(
   new URL("../../../../node_modules/.bin/contextctl", import.meta.url),
 );
@@ -72,8 +78,8 @@ function publicationFixture(producedAt: string): IngestionPublication {
     kind: "section",
     sourceCoordinate: {
       kind: "document",
-      sourceId: "src_payments",
-      documentId: "doc_payments",
+      sourceId: SOURCE_ID,
+      documentId: DOCUMENT_ID,
       semanticUnitId: "unit_payment_failures",
     },
     facts: [{ name: "section.label", value: "Payment failures" }],
@@ -84,8 +90,8 @@ function publicationFixture(producedAt: string): IngestionPublication {
         kind: "managed_document",
         documentIndex: {
           documentIndexId: "didx_payments",
-          sourceId: "src_payments",
-          documentId: "doc_payments",
+          sourceId: SOURCE_ID,
+          documentId: DOCUMENT_ID,
           indexVersion: "idxv_aaaa",
         },
         selector: {
@@ -95,7 +101,7 @@ function publicationFixture(producedAt: string): IngestionPublication {
       },
     ],
     provenance: {
-      observationId: "obs_initial",
+      observationId: OBSERVATION_ID,
       producer: { id: "markdown.parser", version: "1.0.0" },
       policyVersions: {
         segmentation: "semantic-unit-v1",
@@ -106,9 +112,9 @@ function publicationFixture(producedAt: string): IngestionPublication {
 
   return parseIngestionPublication({
     schemaVersion: 2,
-    publicationId: "pub_initial",
-    sourceId: "src_payments",
-    observationId: "obs_initial",
+    publicationId: PUBLICATION_ID,
+    sourceId: SOURCE_ID,
+    observationId: OBSERVATION_ID,
     producedAt,
     knowledgeUnits: [unit],
     changes: [
@@ -159,8 +165,8 @@ async function seededHome(options: {
     await new SqliteConsumerCheckpointStore(registry, () =>
       "2026-08-20T00:00:00.000Z",
     ).markProcessed({
-      sourceId: "src_payments",
-      publicationId: options.cursorAt ?? "pub_older",
+      sourceId: SOURCE_ID,
+      publicationId: options.cursorAt ?? OLDER_PUBLICATION_ID,
     });
   } finally {
     registry.close();
@@ -211,7 +217,7 @@ describe("contextctl status against seeded state", () => {
     // that `latestForSource` returns the committed row.
     const registry = laneOf(result.stdout, "registry");
     expect(registry.status).toBe("degraded");
-    expect(registry.detail).toContain("src_payments");
+    expect(registry.detail).toContain(SOURCE_ID);
   });
 
   it("still exits zero while Registry is behind", async () => {
@@ -241,7 +247,7 @@ describe("contextctl status against seeded state", () => {
     // which is the limit the detail states.
     const ingestion = laneOf(result.stdout, "ingestion");
     expect(ingestion.status).toBe("degraded");
-    expect(ingestion.detail).toContain("src_payments");
+    expect(ingestion.detail).toContain(SOURCE_ID);
     expect(ingestion.detail).toContain("contextctl ingest");
   });
 
@@ -256,7 +262,7 @@ describe("contextctl status against seeded state", () => {
   it("reports a caught-up Source as ready", async () => {
     // The control case. Without it every assertion above would also hold for a
     // command that had started reporting `degraded` unconditionally.
-    const home = await seededHome({ commit: true, cursorAt: "pub_initial" });
+    const home = await seededHome({ commit: true, cursorAt: PUBLICATION_ID });
 
     const result = await statusIn(home);
 

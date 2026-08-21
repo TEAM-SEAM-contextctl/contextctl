@@ -12,6 +12,10 @@ export interface SourceIdGenerator {
   nextSourceId(): string;
 }
 
+export interface SourceRootIdGenerator extends SourceIdGenerator {
+  nextObservationId(): string;
+}
+
 export interface ValidatedSourceConfiguration {
   readonly targetKey: string;
   readonly value: unknown;

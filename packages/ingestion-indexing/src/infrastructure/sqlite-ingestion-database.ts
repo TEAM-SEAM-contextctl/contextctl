@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 
-export const INGESTION_DATABASE_SCHEMA_VERSION = 6;
+import { isUuidV7Id } from "../domain/model-validation.js";
+
+export const INGESTION_DATABASE_SCHEMA_VERSION = 7;
 export const INGESTION_DATABASE_APPLICATION_ID = 0x4354584c;
 
 export interface OpenIngestionDatabaseOptions {
@@ -11,6 +13,7 @@ export interface OpenIngestionDatabaseOptions {
 
 export type IngestionDatabaseSchemaErrorCode =
   | "identity_mismatch"
+  | "identity_format_unsupported"
   | "schema_invalid"
   | "schema_newer";
 
@@ -124,6 +127,15 @@ function migrate(
   if (version === INGESTION_DATABASE_SCHEMA_VERSION) {
     assertExpectedSchema(database);
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    assertPersistedRootIdentityFormat(database);
+    return;
+  }
+  if (version === 6) {
+    assertExpectedSchema(database);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    inIngestionTransaction(database, () => {
+      finalizeUuidV7IdentityMigration(database);
+    });
     return;
   }
   if (version === 5) {
@@ -132,9 +144,7 @@ function migrate(
     inIngestionTransaction(database, () => {
       createSchemaV6(database);
       assertExpectedSchema(database);
-      database.exec(
-        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
-      );
+      finalizeUuidV7IdentityMigration(database);
     });
     return;
   }
@@ -145,9 +155,7 @@ function migrate(
       createSchemaV5(database);
       createSchemaV6(database);
       assertExpectedSchema(database);
-      database.exec(
-        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
-      );
+      finalizeUuidV7IdentityMigration(database);
     });
     return;
   }
@@ -159,9 +167,7 @@ function migrate(
       createSchemaV5(database);
       createSchemaV6(database);
       assertExpectedSchema(database);
-      database.exec(
-        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
-      );
+      finalizeUuidV7IdentityMigration(database);
     });
     return;
   }
@@ -174,9 +180,7 @@ function migrate(
       createSchemaV5(database);
       createSchemaV6(database);
       assertExpectedSchema(database);
-      database.exec(
-        `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
-      );
+      finalizeUuidV7IdentityMigration(database);
     });
     return;
   }
@@ -198,11 +202,97 @@ function migrate(
       )
       .run(stateNamespaceId, securityDomain);
     assertExpectedSchema(database);
-    database.exec(
-      `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
-    );
+    finalizeUuidV7IdentityMigration(database);
   });
 }
+
+function finalizeUuidV7IdentityMigration(database: DatabaseSync): void {
+  assertPersistedRootIdentityFormat(database);
+  database.exec(
+    `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
+  );
+}
+
+function assertPersistedRootIdentityFormat(database: DatabaseSync): void {
+  const checks = [
+    ["markdown_publication_checkpoints", "source_id", "src"],
+    ["markdown_publication_checkpoints", "document_id", "doc"],
+    ["source_observations", "observation_id", "obs"],
+    ["source_observations", "source_id", "src"],
+    ["publication_recovery_intents", "publication_id", "pub"],
+    ["publication_recovery_intents", "source_id", "src"],
+    ["publication_recovery_intents", "observation_id", "obs"],
+    ["publication_recovery_intents", "previous_publication_id", "pub"],
+    ["ingestion_publications", "publication_id", "pub"],
+    ["ingestion_publications", "source_id", "src"],
+    ["ingestion_publications", "previous_publication_id", "pub"],
+  ] as const;
+  for (const [table, column, prefix] of checks) {
+    const rows = database
+      .prepare(`SELECT ${column} AS value FROM ${table} WHERE ${column} IS NOT NULL`)
+      .all() as Array<{ readonly value?: unknown }>;
+    if (
+      rows.some(
+        ({ value }) =>
+          typeof value !== "string" || !isUuidV7Id(value, prefix),
+      )
+    ) {
+      throw new IngestionDatabaseSchemaError("identity_format_unsupported");
+    }
+  }
+  for (const [table, column] of [
+    ["index_versions", "publication_json"],
+    ["markdown_publication_checkpoints", "checkpoint_json"],
+    ["source_observations", "observation_json"],
+    ["publication_recovery_intents", "publication_json"],
+    ["ingestion_publications", "publication_json"],
+  ] as const) {
+    const rows = database.prepare(`SELECT ${column} AS value FROM ${table}`).all() as Array<{
+      readonly value?: unknown;
+    }>;
+    for (const { value } of rows) {
+      if (typeof value !== "string") {
+        throw new IngestionDatabaseSchemaError("schema_invalid");
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(value) as unknown;
+      } catch {
+        throw new IngestionDatabaseSchemaError("schema_invalid");
+      }
+      assertRootIdentityFields(parsed);
+    }
+  }
+}
+
+function assertRootIdentityFields(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) assertRootIdentityFields(item);
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  for (const [key, item] of Object.entries(value)) {
+    // Source payloads and published Fact values are external knowledge, not
+    // control-plane identity fields even when they contain the same key names.
+    if (key === "payload" || key === "facts") continue;
+    const prefix = ROOT_IDENTITY_FIELDS[key];
+    if (
+      prefix !== undefined &&
+      (typeof item !== "string" || !isUuidV7Id(item, prefix))
+    ) {
+      throw new IngestionDatabaseSchemaError("identity_format_unsupported");
+    }
+    assertRootIdentityFields(item);
+  }
+}
+
+const ROOT_IDENTITY_FIELDS: Readonly<Record<string, string>> = {
+  documentId: "doc",
+  observationId: "obs",
+  previousPublicationId: "pub",
+  publicationId: "pub",
+  sourceId: "src",
+};
 
 function createSchemaV6(database: DatabaseSync): void {
   database.exec(`

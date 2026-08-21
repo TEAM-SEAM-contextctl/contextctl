@@ -97,7 +97,7 @@ describe("SqliteConsumerCheckpointStore", () => {
     expect(claimed.status).toBe("claimed");
     expect(replayed).toEqual({
       status: "already_claimed",
-      publicationId: "pub_initial",
+      publicationId: publication.publicationId,
     });
   });
 });

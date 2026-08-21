@@ -23,6 +23,7 @@ import {
   type PublicationReadyNotifier,
   type PublishMarkdownSourceCommand,
 } from "../src/index.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
@@ -169,6 +170,7 @@ describe("MarkdownPublicationWorkflow", () => {
 
   it("stops an identical rerun before capture, embedding, and a new version", async () => {
     const embeddings = new RecordingEmbeddingPort();
+    const ids = new RecordingRootIds();
     const runtime = createLocalMarkdownPublicationRuntime({
       configurations: {
         "source.fixture": { path: STRUCTURE_FIXTURE },
@@ -179,6 +181,7 @@ describe("MarkdownPublicationWorkflow", () => {
       securityDomain: "tenant-a",
       embeddingProvider: embeddings,
       vectorIndex: new InMemoryVectorIndexAdapter(),
+      ids,
       clock: () => NOW,
     });
     const first = await runtime.workflow.publish(command());
@@ -195,6 +198,8 @@ describe("MarkdownPublicationWorkflow", () => {
       publication: { publicationId: first.publication?.publicationId },
     });
     expect(embeddings.requests).toHaveLength(embeddingCallsAfterFirst);
+    expect(ids.observationCount).toBe(1);
+    expect(ids.publicationCount).toBe(1);
     expect(runtime.readyNotifications?.notifications).toHaveLength(1);
     await expect(runtime.readyReconciler.reconcile()).resolves.toEqual([]);
     expect(
@@ -637,6 +642,33 @@ class RecordingEmbeddingPort implements EmbeddingPort {
   async embed(request: EmbeddingProviderRequest) {
     this.requests.push(request);
     return this.#delegate.embed(request);
+  }
+}
+
+class RecordingRootIds {
+  sourceCount = 0;
+  documentCount = 0;
+  observationCount = 0;
+  publicationCount = 0;
+
+  nextSourceId(): string {
+    this.sourceCount += 1;
+    return rootId("src", this.sourceCount);
+  }
+
+  nextDocumentId(): string {
+    this.documentCount += 1;
+    return rootId("doc", this.documentCount);
+  }
+
+  nextObservationId(): string {
+    this.observationCount += 1;
+    return rootId("obs", this.observationCount);
+  }
+
+  nextPublicationId(): string {
+    this.publicationCount += 1;
+    return rootId("pub", this.publicationCount);
   }
 }
 

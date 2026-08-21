@@ -9,6 +9,7 @@ import {
   type IndexManifest,
   type VectorIndexRecord,
 } from "../../src/domain/index-manifest.js";
+import { rootId } from "./root-id-fixture.js";
 
 const heading = "Payment failures";
 const paragraph = "Retry failed payments after five minutes.";
@@ -21,9 +22,9 @@ const digestD = `sha256:${"d".repeat(64)}`;
 export function createDocumentFixture(): NormalizedDocument {
   return {
     schemaVersion: 1,
-    documentId: "doc_payments",
-    sourceId: "src_payments",
-    observationId: "obs_initial",
+    documentId: rootId("doc", "payments"),
+    sourceId: rootId("src", "payments"),
+    observationId: rootId("obs", "initial"),
     mediaType: "text/markdown",
     title: "Payments runbook",
     parser: { id: "markdown-parser", version: "1.0.0" },
@@ -77,9 +78,9 @@ export function createSemanticUnitFixture(): readonly DocumentSemanticUnit[] {
     {
       id: "unit_payments",
       revisionId: "urv_aaaa",
-      sourceId: "src_payments",
-      observationId: "obs_initial",
-      documentId: "doc_payments",
+      sourceId: rootId("src", "payments"),
+      observationId: rootId("obs", "initial"),
+      documentId: rootId("doc", "payments"),
       kind: "document",
       title: "Payments runbook",
       childIds: ["unit_payment_failures"],
@@ -92,9 +93,9 @@ export function createSemanticUnitFixture(): readonly DocumentSemanticUnit[] {
     {
       id: "unit_payment_failures",
       revisionId: "urv_bbbb",
-      sourceId: "src_payments",
-      observationId: "obs_initial",
-      documentId: "doc_payments",
+      sourceId: rootId("src", "payments"),
+      observationId: rootId("obs", "initial"),
+      documentId: rootId("doc", "payments"),
       kind: "section",
       title: "Payment failures",
       parentId: "unit_payments",
@@ -113,9 +114,9 @@ export function createManagedChunkFixture(): readonly ManagedChunk[] {
     {
       id: "chk_payment_failures",
       revisionId: "crv_aaaa",
-      sourceId: "src_payments",
-      observationId: "obs_initial",
-      documentId: "doc_payments",
+      sourceId: rootId("src", "payments"),
+      observationId: rootId("obs", "initial"),
+      documentId: rootId("doc", "payments"),
       semanticUnitId: "unit_payment_failures",
       ordinal: 0,
       sourceSlices: [
@@ -157,9 +158,9 @@ export function createIndexManifestFixture(): IndexManifest {
     securityDomain: "test-tenant",
     documentIndexId: "didx_payments",
     indexVersion: "idxv_aaaa",
-    sourceId: "src_payments",
-    observationId: "obs_initial",
-    documentId: "doc_payments",
+    sourceId: rootId("src", "payments"),
+    observationId: rootId("obs", "initial"),
+    documentId: rootId("doc", "payments"),
     documentSchemaVersion: 1,
     parserVersion: "1.0.0",
     normalizationPolicyVersion: "normalize-v1",
@@ -206,9 +207,9 @@ export function createVectorRecordFixture(): readonly VectorIndexRecord[] {
         payloadSchemaVersion: 2,
         stateNamespaceId: "state_test",
         securityDomain: "test-tenant",
-        sourceId: "src_payments",
-        observationId: "obs_initial",
-        documentId: "doc_payments",
+        sourceId: rootId("src", "payments"),
+        observationId: rootId("obs", "initial"),
+        documentId: rootId("doc", "payments"),
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
         semanticUnitId: "unit_payment_failures",

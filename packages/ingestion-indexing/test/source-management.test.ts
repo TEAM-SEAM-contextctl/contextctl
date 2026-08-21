@@ -12,11 +12,12 @@ import {
   type SourceAdapterContext,
   type SourceChangeSignal,
   type SourceConfigurationResolver,
-  type SourceIdGenerator,
+  type SourceRootIdGenerator,
   type SourceObservationAttempt,
   type SourceObservationStore,
   type ValidatedSourceConfiguration,
 } from "../src/index.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const SOURCE_CONFIG = {
   locator: "https://knowledge.example.test/payments",
@@ -33,11 +34,13 @@ describe("Source Management", () => {
   it("registers, inspects and observes a Source through its adapter", async () => {
     const adapter = new FakeSourceAdapter("document");
     const observations = new InMemorySourceObservationStore();
+    const ids = new SequentialSourceIdGenerator();
     const management = createManagement(
       [adapter],
       undefined,
       undefined,
       observations,
+      ids,
     );
 
     const registered = await management.register(registerCommand());
@@ -45,7 +48,7 @@ describe("Source Management", () => {
     const observation = await management.requestObservation(inspection.source);
 
     expect(registered).toMatchObject({
-      id: "src_test1",
+      id: rootId("src", "test-1"),
       sourceType: "document",
       targetKey: "document:payments",
       lifecycleStatus: "active",
@@ -100,11 +103,13 @@ describe("Source Management", () => {
     const adapter = new FakeSourceAdapter("document");
     adapter.changeSignal = { status: "unchanged", token: "etag-1" };
     const observations = new InMemorySourceObservationStore();
+    const ids = new SequentialSourceIdGenerator();
     const management = createManagement(
       [adapter],
       undefined,
       undefined,
       observations,
+      ids,
     );
     const source = (await management.inspect(await management.register(
       registerCommand(),
@@ -125,6 +130,7 @@ describe("Source Management", () => {
     });
     expect(adapter.calls.observe).toBe(1);
     await expect(observations.count()).resolves.toBe(0);
+    expect(ids.observationCount).toBe(0);
   });
 
   it("rejects inline credentials before an adapter can connect", async () => {
@@ -393,11 +399,13 @@ describe("Source Management", () => {
     const adapter = new FakeSourceAdapter("document");
     adapter.observationError = new SourceAdapterFault("invalid_format");
     const observations = new InMemorySourceObservationStore();
+    const ids = new SequentialSourceIdGenerator();
     const management = createManagement(
       [adapter],
       undefined,
       undefined,
       observations,
+      ids,
     );
     const ready = (
       await management.inspect(await management.register(registerCommand()))
@@ -423,6 +431,7 @@ describe("Source Management", () => {
     expect(error).not.toHaveProperty("attempt");
     expect(adapter.calls.observe).toBe(1);
     await expect(observations.count()).resolves.toBe(0);
+    expect(ids.observationCount).toBe(0);
   });
 
   it("prevents observation before inspection and disables through the application boundary", async () => {
@@ -525,12 +534,13 @@ function createManagement(
   ),
   credentials: CredentialResolver = new FakeCredentialResolver(),
   observations: SourceObservationStore = new InMemorySourceObservationStore(),
+  ids: SourceRootIdGenerator = new SequentialSourceIdGenerator(),
 ): SourceManagement {
   return new SourceManagement({
     adapters: new SourceAdapterRegistry(adapters),
     configurations,
     credentials,
-    ids: new SequentialSourceIdGenerator(),
+    ids,
     observations,
     defaultTimeoutMs: 1_000,
     clock: () => CAPTURED_AT,
@@ -572,11 +582,17 @@ class FailingCredentialResolver implements CredentialResolver {
   }
 }
 
-class SequentialSourceIdGenerator implements SourceIdGenerator {
+class SequentialSourceIdGenerator implements SourceRootIdGenerator {
   #next = 1;
+  observationCount = 0;
 
   nextSourceId(): string {
-    return `src_test${this.#next++}`;
+    return rootId("src", `test-${String(this.#next++)}`);
+  }
+
+  nextObservationId(): string {
+    this.observationCount += 1;
+    return rootId("obs", `test-${String(this.observationCount)}`);
   }
 }
 

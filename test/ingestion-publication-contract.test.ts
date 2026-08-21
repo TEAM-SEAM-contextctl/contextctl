@@ -15,6 +15,11 @@ import {
 } from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
+const SOURCE_ID = "src_01890f5c-7b1a-7001-8000-000000000001";
+const OTHER_SOURCE_ID = "src_01890f5c-7b1a-7011-8000-000000000011";
+const OTHER_DOCUMENT_ID = "doc_01890f5c-7b1a-7012-8000-000000000012";
+const INITIAL_PUBLICATION_ID = "pub_01890f5c-7b1a-7004-8000-000000000004";
+
 async function loadIngestionProducerFixture(): Promise<unknown> {
   return JSON.parse(
     await readFile(
@@ -73,6 +78,22 @@ describe("IngestionPublication contract", () => {
     expect(() => parseIngestionPublication(legacy)).toThrow(
       ContractValidationError,
     );
+  });
+
+  it("rejects legacy and non-v7 root identifiers at the shared boundary", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as Record<
+      string,
+      unknown
+    >;
+    expect(() =>
+      parseIngestionPublication({ ...fixture, publicationId: "pub_legacy" }),
+    ).toThrow(ContractValidationError);
+    expect(() =>
+      parseIngestionPublication({
+        ...fixture,
+        publicationId: "pub_01890f5c-7b1a-4cc3-8a2f-123456789abc",
+      }),
+    ).toThrow(ContractValidationError);
   });
 
   it("rejects physical bindings and free-form content side channels", async () => {
@@ -171,9 +192,9 @@ describe("IngestionPublication contract", () => {
     );
     const emptyInitial = parseIngestionPublication({
       schemaVersion: 2,
-      publicationId: "pub_empty_initial",
-      sourceId: "src_empty",
-      observationId: "obs_empty",
+      publicationId: "pub_01890f5c-7b1a-7021-8000-000000000021",
+      sourceId: "src_01890f5c-7b1a-7022-8000-000000000022",
+      observationId: "obs_01890f5c-7b1a-7023-8000-000000000023",
       producedAt: "2026-08-16T00:00:00.000Z",
       knowledgeUnits: [],
       changes: [],
@@ -182,9 +203,9 @@ describe("IngestionPublication contract", () => {
 
     const current = parseIngestionPublication({
       schemaVersion: 2,
-      publicationId: "pub_all_removed",
+      publicationId: "pub_01890f5c-7b1a-7031-8000-000000000031",
       sourceId: previous.sourceId,
-      observationId: "obs_all_removed",
+      observationId: "obs_01890f5c-7b1a-7033-8000-000000000033",
       previousPublicationId: previous.publicationId,
       producedAt: "2026-08-16T00:01:00.000Z",
       knowledgeUnits: [],
@@ -206,10 +227,10 @@ describe("IngestionPublication contract", () => {
   it("canonicalizes reordered root arrays without changing retry content", () => {
     const publication = parseIngestionPublication({
       schemaVersion: 2,
-      publicationId: "pub_reordered_retry",
-      sourceId: "src_payments",
-      observationId: "obs_reordered_retry",
-      previousPublicationId: "pub_predecessor",
+      publicationId: "pub_01890f5c-7b1a-7041-8000-000000000041",
+      sourceId: SOURCE_ID,
+      observationId: "obs_01890f5c-7b1a-7043-8000-000000000043",
+      previousPublicationId: "pub_01890f5c-7b1a-7044-8000-000000000044",
       producedAt: "2026-08-16T00:01:30.000Z",
       knowledgeUnits: [],
       changes: [
@@ -237,9 +258,9 @@ describe("IngestionPublication contract", () => {
     );
     const unchanged = parseIngestionPublication({
       schemaVersion: 2,
-      publicationId: "pub_unchanged",
+      publicationId: "pub_01890f5c-7b1a-7051-8000-000000000051",
       sourceId: previous.sourceId,
-      observationId: "obs_new",
+      observationId: "obs_01890f5c-7b1a-7053-8000-000000000053",
       previousPublicationId: previous.publicationId,
       producedAt: "2026-08-16T00:02:00.000Z",
       knowledgeUnits: structuredClone(previous.knowledgeUnits),
@@ -334,7 +355,7 @@ describe("IngestionPublication contract", () => {
     if (documentIndex === undefined) {
       return;
     }
-    documentIndex.sourceId = "src_other";
+    documentIndex.sourceId = OTHER_SOURCE_ID;
 
     expect(() => parseIngestionPublication(fixture)).toThrow(
       ContractValidationError,
@@ -355,7 +376,7 @@ describe("IngestionPublication contract", () => {
     if (scope === undefined) {
       return;
     }
-    scope.documentIndex.documentId = "doc_other";
+    scope.documentIndex.documentId = OTHER_DOCUMENT_ID;
     scope.selector.semanticUnitIds = ["unit_other"];
 
     expect(() => parseIngestionPublication(fixture)).toThrow(
@@ -430,7 +451,7 @@ describe("IngestionPublication contract", () => {
     unit.kind = "table";
     unit.sourceCoordinate = {
       kind: "sql_table",
-      sourceId: "src_payments",
+      sourceId: SOURCE_ID,
       schema: "public",
       table: "payments",
       columns: ["id"],
@@ -464,7 +485,7 @@ describe("IngestionPublication contract", () => {
     unit.kind = "operation";
     unit.sourceCoordinate = {
       kind: "http_operation",
-      sourceId: "src_payments",
+      sourceId: SOURCE_ID,
       method: "GET",
       path: "/payments",
       parameters: [],
@@ -521,17 +542,17 @@ describe("IngestionPublication contract", () => {
     expect(
       parsePublicationReady({
         schemaVersion: 1,
-        publicationId: "pub_initial",
+        publicationId: INITIAL_PUBLICATION_ID,
       }),
     ).toEqual({
       schemaVersion: 1,
-      publicationId: "pub_initial",
+      publicationId: INITIAL_PUBLICATION_ID,
     });
     expect(() =>
       parsePublicationReady({
         schemaVersion: 1,
-        publicationId: "pub_initial",
-        sourceId: "src_payments",
+        publicationId: INITIAL_PUBLICATION_ID,
+        sourceId: SOURCE_ID,
       }),
     ).toThrow(ContractValidationError);
   });

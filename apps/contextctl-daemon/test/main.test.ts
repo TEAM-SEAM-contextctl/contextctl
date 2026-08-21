@@ -88,8 +88,8 @@ afterEach(() => {
  */
 const localDocumentIndex: ApprovedDocumentIndexRef = {
   documentIndexId: "didx_local",
-  sourceId: "src_local",
-  documentId: "doc_local",
+  sourceId: "src_01890f5c-7b1a-7101-8000-000000000101",
+  documentId: "doc_01890f5c-7b1a-7102-8000-000000000102",
   indexVersion: "idxv_aaaa",
 };
 
@@ -151,7 +151,7 @@ async function publishWholeDocument(runtime: DaemonRuntime): Promise<void> {
       documentIndexId: localDocumentIndex.documentIndexId,
       indexVersion: localDocumentIndex.indexVersion,
       sourceId: localDocumentIndex.sourceId,
-      observationId: "obs_local",
+      observationId: "obs_01890f5c-7b1a-7103-8000-000000000103",
       documentId: localDocumentIndex.documentId,
       documentSchemaVersion: 1,
       parserVersion: "11.0.0+gfm-4.0.1",
@@ -220,8 +220,8 @@ async function approveSingleScopeCard(
     id: versionId,
     cardId,
     lineage: {
-      publicationId: "pub_local",
-      observationId: "obs_local",
+      publicationId: "pub_01890f5c-7b1a-7104-8000-000000000104",
+      observationId: "obs_01890f5c-7b1a-7103-8000-000000000103",
       knowledgeUnitId: cardId,
     },
     scopes: [scope],

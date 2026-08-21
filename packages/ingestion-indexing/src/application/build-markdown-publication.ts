@@ -22,9 +22,10 @@ import {
   DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION,
 } from "../domain/derived-publication-keywords.js";
 import type { IndexManifest } from "../domain/index-manifest.js";
-import { canonicalJson, stableIdentity } from "../domain/revision-identity.js";
+import { canonicalJson } from "../domain/revision-identity.js";
 
 export interface BuildMarkdownPublicationInput {
+  readonly publicationId: string;
   readonly document: NormalizedDocument;
   readonly semanticUnits: readonly DocumentSemanticUnit[];
   readonly manifest: IndexManifest;
@@ -39,6 +40,7 @@ export interface BuildMarkdownPublicationInput {
 }
 
 export interface BuildEmptyMarkdownPublicationInput {
+  readonly publicationId: string;
   readonly document: NormalizedDocument;
   readonly producedAt: string;
   readonly previous?: IngestionPublication;
@@ -101,15 +103,9 @@ function buildMarkdownPublicationUnchecked(
       return currentPublished;
     })
     .sort((left, right) => compareText(left.id, right.id));
-  const publicationId = stableIdentity("pub", {
-    sourceId: input.document.sourceId,
-    observationId: input.document.observationId,
-    previousPublicationId: input.previous?.publicationId,
-    knowledgeUnits: knowledgeUnits.map((unit) => [unit.id, unit.contentDigest]),
-  });
   return parsePublicationCandidate({
     schemaVersion: 2,
-    publicationId,
+    publicationId: input.publicationId,
     sourceId: input.document.sourceId,
     observationId: input.document.observationId,
     ...(input.previous === undefined
@@ -134,15 +130,9 @@ function buildEmptyMarkdownPublicationUnchecked(
   input: BuildEmptyMarkdownPublicationInput,
 ): IngestionPublication {
   const knowledgeUnits: readonly PublishedKnowledgeUnit[] = [];
-  const publicationId = stableIdentity("pub", {
-    sourceId: input.document.sourceId,
-    observationId: input.document.observationId,
-    previousPublicationId: input.previous?.publicationId,
-    knowledgeUnits: [],
-  });
   return parsePublicationCandidate({
     schemaVersion: 2,
-    publicationId,
+    publicationId: input.publicationId,
     sourceId: input.document.sourceId,
     observationId: input.document.observationId,
     ...(input.previous === undefined

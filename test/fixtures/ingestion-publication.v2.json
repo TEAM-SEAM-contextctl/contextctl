@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "publicationId": "pub_initial",
-  "sourceId": "src_payments",
-  "observationId": "obs_initial",
+  "publicationId": "pub_01890f5c-7b1a-7004-8000-000000000004",
+  "sourceId": "src_01890f5c-7b1a-7001-8000-000000000001",
+  "observationId": "obs_01890f5c-7b1a-7003-8000-000000000003",
   "producedAt": "2026-07-29T00:00:00.000Z",
   "knowledgeUnits": [
     {
@@ -10,8 +10,8 @@
       "kind": "section",
       "sourceCoordinate": {
         "kind": "document",
-        "sourceId": "src_payments",
-        "documentId": "doc_payments",
+        "sourceId": "src_01890f5c-7b1a-7001-8000-000000000001",
+        "documentId": "doc_01890f5c-7b1a-7002-8000-000000000002",
         "semanticUnitId": "unit_payment_failures"
       },
       "facts": [
@@ -27,8 +27,8 @@
           "kind": "managed_document",
           "documentIndex": {
             "documentIndexId": "didx_payments",
-            "sourceId": "src_payments",
-            "documentId": "doc_payments",
+            "sourceId": "src_01890f5c-7b1a-7001-8000-000000000001",
+            "documentId": "doc_01890f5c-7b1a-7002-8000-000000000002",
             "indexVersion": "idxv_aaaa"
           },
           "selector": {
@@ -38,21 +38,21 @@
         }
       ],
       "provenance": {
-        "observationId": "obs_initial",
+        "observationId": "obs_01890f5c-7b1a-7003-8000-000000000003",
         "producer": { "id": "markdown.parser", "version": "1.0.0" },
         "policyVersions": {
           "chunking": "managed-chunk-v1",
           "segmentation": "semantic-unit-v1"
         }
       },
-      "contentDigest": "sha256:fdd1b3b318ec682594615228dc6f822f562e87f2cdcd38dea37f8a052a4139c0"
+      "contentDigest": "sha256:349d28137ccb082e12ab6c1efe42de52085d871975ddbdee92d496268ff56c0b"
     }
   ],
   "changes": [
     {
       "kind": "added",
       "knowledgeUnitId": "unit_payment_failures",
-      "currentContentDigest": "sha256:fdd1b3b318ec682594615228dc6f822f562e87f2cdcd38dea37f8a052a4139c0"
+      "currentContentDigest": "sha256:349d28137ccb082e12ab6c1efe42de52085d871975ddbdee92d496268ff56c0b"
     }
   ]
 }

@@ -2,7 +2,11 @@ import {
   assertValidSourceObservation,
   type SourceObservation,
 } from "../domain/source-observation.js";
-import { isId, isIsoTimestamp } from "../domain/model-validation.js";
+import {
+  isId,
+  isIsoTimestamp,
+  isUuidV7Id,
+} from "../domain/model-validation.js";
 import type {
   CommitSourceObservationInput,
   CommitSourceObservationResult,
@@ -32,8 +36,7 @@ export class InMemorySourceObservationStore implements SourceObservationStore {
       existingId === undefined ? undefined : this.#observations.get(existingId);
     if (
       existing !== undefined &&
-      (existing.id !== candidate.id ||
-        existing.sourceId !== candidate.sourceId ||
+      (existing.sourceId !== candidate.sourceId ||
         existing.contentDigest !== candidate.contentDigest)
     ) {
       throw new SourceObservationStoreConflict();
@@ -53,10 +56,11 @@ export class InMemorySourceObservationStore implements SourceObservationStore {
     }
     this.#latestBySource.set(stored.sourceId, stored.id);
     if (input.retentionLease !== undefined) {
-      this.#leases.set(leaseKey(input.retentionLease), {
+      const lease = {
         ...input.retentionLease,
         observationId: stored.id,
-      });
+      };
+      this.#leases.set(leaseKey(lease), lease);
     }
     input.signal?.throwIfAborted();
     return {
@@ -225,17 +229,17 @@ function assertCandidateInput(
 }
 
 function assertLeaseIdentity(leaseId: string, observationId: string): void {
-  if (!isId(leaseId, "lease") || !isId(observationId, "obs")) {
+  if (!isId(leaseId, "lease") || !isUuidV7Id(observationId, "obs")) {
     throw new SourceObservationStoreConflict();
   }
 }
 
 function assertObservationId(value: string): void {
-  if (!isId(value, "obs")) throw new SourceObservationStoreConflict();
+  if (!isUuidV7Id(value, "obs")) throw new SourceObservationStoreConflict();
 }
 
 function assertSourceId(value: string): void {
-  if (!isId(value, "src")) throw new SourceObservationStoreConflict();
+  if (!isUuidV7Id(value, "src")) throw new SourceObservationStoreConflict();
 }
 
 function sourceDigestKey(sourceId: string, contentDigest: string): string {

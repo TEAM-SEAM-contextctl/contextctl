@@ -19,6 +19,7 @@ import {
   createIndexManifestFixture,
   createSemanticUnitFixture,
 } from "./fixtures/document-fixture.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const NOW = "2026-08-19T00:00:00.000Z";
 
@@ -40,12 +41,14 @@ describe("Publication recovery intent", () => {
     };
 
     const ordered = buildMarkdownPublication({
+      publicationId: rootId("pub", "canonical-order"),
       document,
       semanticUnits,
       manifest,
       scopes,
     });
     const reordered = buildMarkdownPublication({
+      publicationId: rootId("pub", "canonical-order"),
       document,
       semanticUnits: [...semanticUnits].reverse(),
       manifest,
@@ -87,6 +90,7 @@ describe("Publication recovery intent", () => {
           ? new InMemoryIngestionPublicationStore()
           : new SqliteIngestionPublicationStore(database);
       const initial = buildEmptyMarkdownPublication({
+        publicationId: rootId("pub", `${adapter}-initial`),
         document: createDocumentFixture(),
         producedAt: NOW,
       });
@@ -113,9 +117,10 @@ describe("Publication recovery intent", () => {
 
       const nextDocument = {
         ...createDocumentFixture(),
-        observationId: "obs_second",
+        observationId: rootId("obs", `${adapter}-second`),
       };
       const fork = buildEmptyMarkdownPublication({
+        publicationId: rootId("pub", `${adapter}-fork`),
         document: nextDocument,
         producedAt: "2026-08-19T00:01:00.000Z",
       });
@@ -137,6 +142,7 @@ describe("Publication recovery intent", () => {
       });
 
       const next = buildEmptyMarkdownPublication({
+        publicationId: rootId("pub", `${adapter}-next`),
         document: nextDocument,
         producedAt: "2026-08-19T00:01:00.000Z",
         previous: initial,

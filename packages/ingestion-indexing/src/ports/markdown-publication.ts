@@ -71,6 +71,11 @@ export interface MarkdownPublicationCheckpointStore {
   ): Promise<MarkdownPublicationCheckpoint | undefined>;
 }
 
+export interface PublicationRootIdGenerator {
+  nextDocumentId(): string;
+  nextPublicationId(): string;
+}
+
 export interface CommitIngestionPublicationResult {
   readonly status: "already_published" | "published";
   readonly publication: IngestionPublication;

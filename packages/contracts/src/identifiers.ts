@@ -11,16 +11,28 @@ function identifier(prefix: string) {
     );
 }
 
+const UUID_V7_BODY =
+  "[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}";
+
+function uuidV7Identifier(prefix: string) {
+  return z
+    .string()
+    .regex(
+      new RegExp(`^${prefix}_${UUID_V7_BODY}$`),
+      `expected ${prefix}_ identifier with UUIDv7 body`,
+    );
+}
+
 function revision(prefix: string) {
   return z
     .string()
     .regex(new RegExp(`^${prefix}_[a-z2-7]+$`), `expected ${prefix}_ revision`);
 }
 
-export const SourceIdSchema = identifier("src");
-export const ObservationIdSchema = identifier("obs");
-export const PublicationIdSchema = identifier("pub");
-export const DocumentIdSchema = identifier("doc");
+export const SourceIdSchema = uuidV7Identifier("src");
+export const ObservationIdSchema = uuidV7Identifier("obs");
+export const PublicationIdSchema = uuidV7Identifier("pub");
+export const DocumentIdSchema = uuidV7Identifier("doc");
 export const DocumentIndexIdSchema = identifier("didx");
 export const KnowledgeUnitIdSchema = identifier("unit");
 export const SemanticUnitIdSchema = identifier("unit");

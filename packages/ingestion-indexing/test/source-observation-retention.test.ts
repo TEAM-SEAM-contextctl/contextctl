@@ -14,6 +14,7 @@ import {
   type SourceObservationStore,
 } from "../src/index.js";
 import { createDocumentFixture } from "./fixtures/document-fixture.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const databases: DatabaseSync[] = [];
 const NOW = "2026-08-18T00:00:00.000Z";
@@ -33,7 +34,10 @@ describe.each(["memory", "sqlite"] as const)(
       const mutable = original.payload as { capturedAt: string; value: string };
       mutable.value = "mutated-after-commit";
       const repeated = await store.commit({
-        observation: observation(1, "2026-08-11T00:00:00.000Z"),
+        observation: {
+          ...observation(1, "2026-08-11T00:00:00.000Z"),
+          id: rootId("obs", "retry-with-same-content"),
+        },
       });
 
       expect(first.status).toBe("stored");
@@ -41,12 +45,15 @@ describe.each(["memory", "sqlite"] as const)(
       expect(repeated.observation.capturedAt).toBe(
         "2026-08-10T00:00:00.000Z",
       );
+      expect(repeated.observation.id).toBe(first.observation.id);
       expect(repeated.observation.payload).toEqual({
         capturedAt: "2026-08-10T00:00:00.000Z",
         value: "content-1",
       });
       await expect(store.count()).resolves.toBe(1);
-      await expect(store.latestForSource("src_observationtest")).resolves.toEqual(
+      await expect(
+        store.latestForSource(rootId("src", "observation-test")),
+      ).resolves.toEqual(
         repeated.observation,
       );
     });
@@ -201,6 +208,7 @@ it("protects Observations needed by pending and current Publications", async () 
   await observations.commit({ observation: secondObservation });
 
   const firstPublication = buildEmptyMarkdownPublication({
+    publicationId: rootId("pub", "retention-first"),
     document: {
       ...createDocumentFixture(),
       sourceId: firstObservation.sourceId,
@@ -228,6 +236,7 @@ it("protects Observations needed by pending and current Publications", async () 
   ).resolves.toBe("protected");
 
   const secondPublication = buildEmptyMarkdownPublication({
+    publicationId: rootId("pub", "retention-second"),
     document: {
       ...createDocumentFixture(),
       sourceId: secondObservation.sourceId,
@@ -263,7 +272,8 @@ function openTestDatabase(): DatabaseSync {
 function observation(ordinal: number, capturedAt: string): SourceObservation {
   const hex = ordinal.toString(16).padStart(64, "0");
   return createSourceObservation({
-    sourceId: "src_observationtest",
+    id: rootId("obs", ordinal),
+    sourceId: rootId("src", "observation-test"),
     capturedAt,
     contentDigest: `sha256:${hex}`,
     payload: { capturedAt, value: `content-${String(ordinal)}` },
