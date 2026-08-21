@@ -52,6 +52,40 @@ describe("embedding composition", () => {
     expect(provider.embeddingProfile).toEqual(profile);
   });
 
+  it("injects a verified physical resource without reopening its asset path", async () => {
+    const profile = localDocumentProfile();
+    if (profile.execution.kind !== "local") {
+      throw new Error("fixture must be a local production profile");
+    }
+    const factory = new IngestionDocumentEmbeddingProviderFactory([
+      {
+        execution: profile.execution,
+        tokenCount: () => 1,
+        embed: async (texts) => ({
+          dimensions: [texts.length, profile.dimensions],
+          data: texts.flatMap(() => [1, ...new Array(profile.dimensions - 1).fill(0)]),
+        }),
+      },
+    ]);
+    const provider = factory.createLocal({
+      profile,
+      artifactDirectory: "/path/that/does/not/exist",
+    });
+
+    await expect(
+      provider.embed({
+        profile,
+        inputs: [{ key: "query", text: "alpha" }],
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual([
+      {
+        key: "query",
+        vector: [1, ...new Array(profile.dimensions - 1).fill(0)],
+      },
+    ]);
+  });
+
   describe("the four layer combinations", () => {
     it("binds both layers locally", () => {
       const documentFactory = new FakeDocumentEmbeddingProviderFactory();

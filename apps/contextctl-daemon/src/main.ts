@@ -21,6 +21,7 @@ import {
   type IndexStagingAttemptStore,
   type IngestionPublicationStore,
   type LocalMarkdownPublicationRuntime,
+  type LocalDocumentEmbeddingInferenceResource,
   type MarkdownPublicationCheckpointStore,
   type SourceObservationStore,
   type VectorIndexConnectorResolver,
@@ -202,6 +203,8 @@ export interface DaemonRuntimeOptions {
    * surface existed.
    */
   readonly embedding?: EmbeddingCompositionConfiguration;
+  /** Verified physical sessions the composition may inject into domain adapters. */
+  readonly localEmbeddingInferenceResources?: readonly LocalDocumentEmbeddingInferenceResource[];
   /**
    * Every provider binding this deployment is still on the hook for.
    *
@@ -424,7 +427,9 @@ export function createDaemonRuntime(
     artifactDirectory: options.embeddingArtifactDirectory,
     factory:
       options.documentEmbeddingFactory ??
-      new IngestionDocumentEmbeddingProviderFactory(),
+      new IngestionDocumentEmbeddingProviderFactory(
+        options.localEmbeddingInferenceResources,
+      ),
     ...(embeddingConfiguration.retainedDocumentBindings === undefined
       ? {}
       : {

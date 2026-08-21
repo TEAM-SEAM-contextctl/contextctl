@@ -1,9 +1,12 @@
+import { isDeepStrictEqual } from "node:util";
+
 import {
   isDocumentRetrievalEmbeddingProfile,
   OpenAiCompatibleEmbeddingAdapter,
   TransformersJsLocalEmbeddingAdapter,
   type EmbeddingPort,
   type EmbeddingProfile,
+  type LocalDocumentEmbeddingInferenceResource,
 } from "@contextctl/ingestion-indexing";
 import {
   isCardSelectionEmbeddingProfile,
@@ -83,6 +86,14 @@ export class EmbeddingAdapterUnavailableError extends Error {
 export class IngestionDocumentEmbeddingProviderFactory
   implements DocumentEmbeddingProviderFactory
 {
+  readonly #localResources: readonly LocalDocumentEmbeddingInferenceResource[];
+
+  constructor(
+    localResources: readonly LocalDocumentEmbeddingInferenceResource[] = [],
+  ) {
+    this.#localResources = localResources;
+  }
+
   createLocal(input: {
     readonly profile: EmbeddingProfile;
     readonly artifactDirectory: string;
@@ -94,10 +105,18 @@ export class IngestionDocumentEmbeddingProviderFactory
         "Ingestion",
       );
     }
-    return new TransformersJsLocalEmbeddingAdapter({
-      artifactDirectory: input.artifactDirectory,
-      profile: input.profile,
-    });
+    const profile = input.profile;
+    const resource = this.#localResources.find((candidate) =>
+      isDeepStrictEqual(candidate.execution, profile.execution),
+    );
+    return new TransformersJsLocalEmbeddingAdapter(
+      resource === undefined
+        ? {
+            artifactDirectory: input.artifactDirectory,
+            profile,
+          }
+        : { inferenceResource: resource, profile },
+    );
   }
 
   createRemote(input: {
