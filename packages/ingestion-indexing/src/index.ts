@@ -332,6 +332,7 @@ export {
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   LOCAL_EMBEDDING_ASSET_MANIFEST_FILE,
+  loadLocalDocumentEmbeddingInferenceResource,
   serializeLocalEmbeddingAssetManifest,
   TransformersJsLocalEmbeddingAdapter,
   verifyLocalEmbeddingAssets,
