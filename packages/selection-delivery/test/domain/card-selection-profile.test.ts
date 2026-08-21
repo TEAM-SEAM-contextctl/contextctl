@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidCardSelectionProfile,
+  CARD_EMBEDDING_L2_NORM_TOLERANCE,
   cardSelectionProfilesMatch,
+  cardSelectionVectorMatchesProfile,
+  createRemoteCardSelectionProfile,
   DEFAULT_CARD_ADMISSION_LIMITS,
   isCardSelectionEmbeddingProfile,
   type CardSelectionEmbeddingProfile,
@@ -136,5 +139,103 @@ describe("assertValidCardSelectionProfile", () => {
     expect(() => assertValidCardSelectionProfile(providerDefined)).toThrow(
       CardSelectionProfileInvariantError,
     );
+  });
+});
+
+describe("remote Card selection profiles", () => {
+  const remote = () =>
+    createRemoteCardSelectionProfile({
+      id: "card-remote-v1",
+      version: "1",
+      model: "pinned-model-2026-08-21",
+      modelRevision: "rev_0001",
+      dimensions: 384,
+      adapterVersion: "1.0.0",
+    });
+
+  it("fixes everything a deployment does not decide", () => {
+    const profile = remote();
+
+    expect(profile.execution).toEqual({
+      kind: "remote",
+      adapter: "openai-compatible",
+      adapterVersion: "1.0.0",
+      model: "pinned-model-2026-08-21",
+    });
+    expect(profile.pooling).toBe("provider_defined");
+    expect(profile.normalization).toBe("l2");
+    expect(profile.distance).toBe("cosine");
+    expect(profile.selectionTextSchemaVersion).toBe(2);
+    expect(profile.cardInputTransformVersion).toBe("card-selection-text-v2");
+    expect(profile.queryInputTransformVersion).toBe("card-selection-text-v2");
+    expect(profile.admissionLimits).toEqual(DEFAULT_CARD_ADMISSION_LIMITS);
+    expect(Object.isFrozen(profile)).toBe(true);
+    expect(() => assertValidCardSelectionProfile(profile)).not.toThrow();
+  });
+
+  it("refuses a remote profile that claims a pooling the provider performs", () => {
+    const tampered: CardSelectionEmbeddingProfile = { ...remote(), pooling: "cls" };
+    expect(() => assertValidCardSelectionProfile(tampered)).toThrow(/provider_defined/);
+  });
+
+  it("refuses a remote profile whose execution names another model than the profile", () => {
+    const profile = remote();
+    const tampered: CardSelectionEmbeddingProfile = {
+      ...profile,
+      execution: { ...profile.execution, model: "other-model" } as typeof profile.execution,
+    };
+    expect(() => assertValidCardSelectionProfile(tampered)).toThrow(/same model/);
+  });
+
+  it("refuses a production profile without a model revision or adapter version", () => {
+    expect(() =>
+      createRemoteCardSelectionProfile({
+        id: "card-remote-v1",
+        version: "1",
+        model: "m",
+        modelRevision: " ",
+        dimensions: 3,
+        adapterVersion: "1.0.0",
+      }),
+    ).toThrow(/model revision/);
+    expect(() =>
+      createRemoteCardSelectionProfile({
+        id: "card-remote-v1",
+        version: "1",
+        model: "m",
+        modelRevision: "r",
+        dimensions: 3,
+        adapterVersion: "",
+      }),
+    ).toThrow(/adapter version/);
+  });
+
+  it("still refuses provider_defined pooling on a local profile", () => {
+    const tampered: CardSelectionEmbeddingProfile = {
+      ...TEST_PRODUCTION_CARD_PROFILE,
+      pooling: "provider_defined",
+    };
+    expect(() => assertValidCardSelectionProfile(tampered)).toThrow(/cls or mean/);
+  });
+});
+
+describe("cardSelectionVectorMatchesProfile", () => {
+  const profile = { ...TEST_CARD_PROFILE, dimensions: 3 };
+
+  it("accepts a finite unit vector of the declared width", () => {
+    expect(cardSelectionVectorMatchesProfile(profile, [1, 0, 0])).toBe(true);
+    expect(cardSelectionVectorMatchesProfile(profile, [0.6, 0.8, 0])).toBe(true);
+  });
+
+  it("refuses the wrong width, a non-finite component, a zero vector and an unnormalized one", () => {
+    expect(cardSelectionVectorMatchesProfile(profile, [1, 0])).toBe(false);
+    expect(cardSelectionVectorMatchesProfile(profile, [1, Number.NaN, 0])).toBe(false);
+    expect(cardSelectionVectorMatchesProfile(profile, [0, 0, 0])).toBe(false);
+    expect(cardSelectionVectorMatchesProfile(profile, [1, 1, 1])).toBe(false);
+  });
+
+  it("tolerates rounding within the stated band", () => {
+    expect(cardSelectionVectorMatchesProfile(profile, [1 + CARD_EMBEDDING_L2_NORM_TOLERANCE / 2, 0, 0])).toBe(true);
+    expect(cardSelectionVectorMatchesProfile(profile, [1 + CARD_EMBEDDING_L2_NORM_TOLERANCE * 2, 0, 0])).toBe(false);
   });
 });
