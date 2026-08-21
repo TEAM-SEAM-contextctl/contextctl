@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   openIngestionDatabase,
+  SqliteIndexPublicationStore,
   SqliteIngestionPublicationStore,
 } from "@contextctl/ingestion-indexing";
 import {
@@ -120,6 +121,7 @@ beforeEach(async () => {
     database,
     cards,
     publications: new SqliteIngestionPublicationStore(ingestionDatabase),
+    indexPublications: new SqliteIndexPublicationStore(ingestionDatabase),
     close: () => {
       ingestionDatabase.close();
       database.close();

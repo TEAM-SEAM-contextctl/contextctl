@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
+
+import { DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE } from "@contextctl/ingestion-indexing";
 
 import {
   buildReachabilityReport,
@@ -48,6 +51,17 @@ type IngestRefusal = Extract<
   RegistryIntakeResult,
   { readonly status: "deferred" | "forked" }
 >;
+import {
+  CARD_SELECTION_EMBEDDING_PROFILE,
+  DEFAULT_SECURITY_DOMAIN,
+} from "../main.js";
+import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
+import { readEmbeddingCompositionConfiguration } from "../embedding/configuration.js";
+import {
+  computeRequiredEmbeddingBindings,
+  NO_PUBLISHED_SCOPES,
+} from "../embedding/required-bindings.js";
+import type { EmbeddingObservation } from "../embedding/readiness.js";
 import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
 import {
   addSource,
@@ -456,6 +470,66 @@ function operatorPorts(cli: RegistryOnlyRuntime): OperatorCommandPorts {
   };
 }
 
+
+/**
+ * How the two embedding layers are configured, and what that still requires.
+ *
+ * Reads live state rather than trusting the configuration alone. Both layers can
+ * be pointed at a hosted provider while an approved Card still names a Scope
+ * whose index was published under the local profile, and that index can only be
+ * searched with vectors from the profile it was built under — so the artifact
+ * requirement outlives the setting that created it. Reporting from configuration
+ * alone would tell such an operator they can delete a model their daemon opens
+ * on every query touching that Scope.
+ *
+ * Every failure is caught and reported rather than thrown. This is the command
+ * an operator runs when something is already wrong, and a configuration error in
+ * one layer must not hide the other three lanes. The caught message is the
+ * binding errors' own, which are built from codes and variable names and carry
+ * no endpoint contents and no credential.
+ */
+async function observeEmbeddingBindings(
+  cli: RegistryOnlyRuntime,
+  environment: Readonly<Partial<Record<string, string>>>,
+  ingestionDatabase: string,
+): Promise<EmbeddingObservation> {
+  const securityDomain =
+    environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
+  try {
+    const configuration = readEmbeddingCompositionConfiguration(
+      environment,
+      securityDomain,
+    );
+    const required = await computeRequiredEmbeddingBindings({
+      documentProfile: DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+      cardProfile: CARD_SELECTION_EMBEDDING_PROFILE,
+      catalog: new RegistryApprovedCardCatalog(cli.cards),
+      // Only opened when it already exists. `cli.indexPublications` creates the
+      // file on first touch, and a status probe that created Ingestion's
+      // database in order to report on it would be writing to answer a read. No
+      // database means nothing was ever published, so no approved Card can be
+      // reaching a Scope, which is exactly what the empty lookup answers.
+      publications: existsSync(ingestionDatabase)
+        ? cli.indexPublications
+        : NO_PUBLISHED_SCOPES,
+    });
+    return {
+      status: "composed",
+      documentMode: configuration.document.mode,
+      cardMode: configuration.card.mode,
+      requiresLocalAssets: required.needsLocalAssets,
+      restoredProfiles: required.documentProfiles
+        .slice(1)
+        .map((profile) => `${profile.id} ${profile.version}`),
+    };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /* ---------------------------------------------------------- lane status */
 
 /**
@@ -485,6 +559,11 @@ export async function runStatus(
     registry,
     ingestion: await observeIngestion(cli, registry),
     vectorIndex: observeVectorIndex(context.environment),
+    embedding: await observeEmbeddingBindings(
+      cli,
+      context.environment,
+      paths.ingestionDatabase,
+    ),
   };
   const report = judgeLanes(observation);
   const stdout = command.json
