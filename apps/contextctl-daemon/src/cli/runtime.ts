@@ -84,6 +84,16 @@ export interface RegistryOnlyRuntime {
    * decision commands stay runnable on a machine with no model.
    */
   readonly publications: SqliteIngestionPublicationStore;
+  /**
+   * Indexing's own Scope catalog, for the status surface.
+   *
+   * Needed to answer whether a local artifact is still required: an approved
+   * Card names a Scope, and only this catalog says which Embedding Profile the
+   * index behind that Scope was published under. Without it the question can
+   * only be answered from configuration, which describes what an operator wants
+   * next rather than what the daemon is still on the hook for.
+   */
+  readonly indexPublications: SqliteIndexPublicationStore;
   close(): void;
 }
 
@@ -107,21 +117,38 @@ export function openRegistryOnlyRuntime(input: {
   // never read — a file an operator then has to wonder about.
   let ingestionDatabase: DatabaseSync | undefined;
   let publications: SqliteIngestionPublicationStore | undefined;
+  let indexPublications: SqliteIndexPublicationStore | undefined;
+
+  // Both Ingestion-backed stores share one connection, opened by whichever is
+  // touched first. Two `openIngestionDatabase` calls against one file would each
+  // run the namespace check and the migration, and the second would be doing so
+  // against state the first had already moved.
+  const openIngestion = (): DatabaseSync => {
+    if (ingestionDatabase === undefined) {
+      mkdirSync(dirname(paths.ingestionDatabase), { recursive: true });
+      ingestionDatabase = openIngestionDatabase({
+        location: paths.ingestionDatabase,
+        stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+        securityDomain: DEFAULT_SECURITY_DOMAIN,
+      });
+    }
+    return ingestionDatabase;
+  };
 
   return {
     database,
     cards: new SqliteCardStore(database),
     get publications(): SqliteIngestionPublicationStore {
       if (publications === undefined) {
-        mkdirSync(dirname(paths.ingestionDatabase), { recursive: true });
-        ingestionDatabase = openIngestionDatabase({
-          location: paths.ingestionDatabase,
-          stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-          securityDomain: DEFAULT_SECURITY_DOMAIN,
-        });
-        publications = new SqliteIngestionPublicationStore(ingestionDatabase);
+        publications = new SqliteIngestionPublicationStore(openIngestion());
       }
       return publications;
+    },
+    get indexPublications(): SqliteIndexPublicationStore {
+      if (indexPublications === undefined) {
+        indexPublications = new SqliteIndexPublicationStore(openIngestion());
+      }
+      return indexPublications;
     },
     close: () => {
       ingestionDatabase?.close();

@@ -38,6 +38,16 @@ function healthy(overrides: Partial<StatusObservation> = {}): StatusObservation 
       probedSources: ["src_payments"],
       incompleteSources: [],
     },
+    // The historical default: one local model serving both layers. Every
+    // pre-existing case in this file was written against that deployment, so it
+    // stays the baseline and the remote combinations are stated explicitly.
+    embedding: {
+      status: "composed",
+      documentMode: "local",
+      cardMode: "local",
+      requiresLocalAssets: true,
+      restoredProfiles: [],
+    },
     ...overrides,
   };
 }
