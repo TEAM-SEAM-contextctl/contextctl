@@ -1,6 +1,9 @@
 import type { ApprovedCard, ApprovedScopeReference } from "./card-catalog.js";
 import { canonicalDigest } from "./canonical-digest.js";
-import { SelectionScopeInvariantError } from "./errors.js";
+import {
+  SelectionPlanInvariantError,
+  SelectionScopeInvariantError,
+} from "./errors.js";
 import type { SelectionMode } from "./hybrid-ranking.js";
 import type { CandidateScore } from "./query-scoring.js";
 import {
@@ -272,6 +275,153 @@ export function planSelectedScopes(
     items: [...byItemKey.values()].map(freezeItem).sort(compareItems),
     managedTargets: [...targets.values()].sort(compareTargets),
   };
+}
+
+/**
+ * Re-derives every key and every correspondence a finished plan claims, and
+ * refuses the plan if any of them does not hold (SOT L2358).
+ *
+ * Checking the *existence* of keys is not enough: a plan whose `itemKey` was
+ * computed from one guide and whose `guide` was later replaced still has a
+ * key. So each key is recomputed from the fields it is defined over —
+ * `itemKey` from the guide, `targetKey` from the reference and the bound — and
+ * compared. Beyond the keys: every item's `selectedBy` is non-empty and free of
+ * repeats, the union of all `selectedBy` is exactly the set of Cards the
+ * ranking admitted (no item selected by a Card that was deferred or rejected,
+ * no admitted Card that selects nothing), every managed item points at a target
+ * the plan lists with the same reference and bound, every listed target is
+ * pointed at, and no Scope reference appears under two definitions. When the
+ * caller knows the query it was asked, the plan has to echo it byte for byte.
+ *
+ * Run by Selection before a plan leaves it and by Delivery before a plan is
+ * assembled, so the same rules stand on both sides of the read the plan
+ * authorises. Nothing here repairs a plan; a plan that fails is refused whole,
+ * because the fix for a key that does not match is not a better key but a
+ * plan built correctly.
+ */
+export function verifySelectionPlan(
+  plan: SelectionPlan,
+  expected: { readonly query?: string } = {},
+): void {
+  if (expected.query !== undefined && plan.query !== expected.query) {
+    throw new SelectionPlanInvariantError(
+      "plan query does not match the query it was asked",
+    );
+  }
+
+  const itemKeys = new Set<string>();
+  const itemKeyByScopeRef = new Map<string, string>();
+  const referencedTargetKeys = new Set<string>();
+  const selectedUnion = new Set<string>();
+
+  for (const item of plan.items) {
+    const itemKey = retrievalGuideKey(item.guide);
+    if (itemKey !== item.itemKey) {
+      throw new SelectionPlanInvariantError(
+        `item ${item.itemKey} does not match the digest of its guide`,
+      );
+    }
+    if (itemKeys.has(item.itemKey)) {
+      throw new SelectionPlanInvariantError(
+        `item ${item.itemKey} appears twice in one plan`,
+      );
+    }
+    itemKeys.add(item.itemKey);
+
+    const scopeKey = scopeRefKey(item.guide.scopeRef);
+    const known = itemKeyByScopeRef.get(scopeKey);
+    if (known !== undefined && known !== item.itemKey) {
+      throw new SelectionPlanInvariantError(
+        `scope ${item.guide.scopeRef.scopeId}@${item.guide.scopeRef.scopeVersion} appears under two definitions in one plan`,
+      );
+    }
+    itemKeyByScopeRef.set(scopeKey, item.itemKey);
+
+    if (item.selectedBy.length === 0) {
+      throw new SelectionPlanInvariantError(
+        `item ${item.itemKey} was selected by no Card`,
+      );
+    }
+    const seenOnItem = new Set<string>();
+    for (const reference of item.selectedBy) {
+      const key = cardRefKey(reference);
+      if (seenOnItem.has(key)) {
+        throw new SelectionPlanInvariantError(
+          `card ${reference.cardId} version ${reference.versionId} is listed twice on item ${item.itemKey}`,
+        );
+      }
+      seenOnItem.add(key);
+      selectedUnion.add(key);
+    }
+
+    if (isManagedPlannedItem(item)) {
+      const targetKey = managedTargetKey(item.guide.scopeRef, item.guide.limit);
+      if (targetKey !== item.execution.targetKey) {
+        throw new SelectionPlanInvariantError(
+          `item ${item.itemKey} names target ${item.execution.targetKey}, but its guide digests to ${targetKey}`,
+        );
+      }
+      const target = plan.managedTargets.find(
+        (candidate) => candidate.targetKey === targetKey,
+      );
+      if (
+        target === undefined ||
+        target.limit !== item.guide.limit ||
+        target.scopeRef.scopeId !== item.guide.scopeRef.scopeId ||
+        target.scopeRef.scopeVersion !== item.guide.scopeRef.scopeVersion
+      ) {
+        throw new SelectionPlanInvariantError(
+          `item ${item.itemKey} points at target ${targetKey}, which the plan does not list with the same scope and bound`,
+        );
+      }
+      referencedTargetKeys.add(targetKey);
+    }
+  }
+
+  const targetKeys = new Set<string>();
+  for (const target of plan.managedTargets) {
+    if (managedTargetKey(target.scopeRef, target.limit) !== target.targetKey) {
+      throw new SelectionPlanInvariantError(
+        `target ${target.targetKey} does not match the digest of its scope and bound`,
+      );
+    }
+    if (targetKeys.has(target.targetKey)) {
+      throw new SelectionPlanInvariantError(
+        `target ${target.targetKey} appears twice in one plan`,
+      );
+    }
+    targetKeys.add(target.targetKey);
+    if (!referencedTargetKeys.has(target.targetKey)) {
+      throw new SelectionPlanInvariantError(
+        `target ${target.targetKey} is listed but no item reads it`,
+      );
+    }
+  }
+
+  const admitted = new Set<string>();
+  for (const outcome of plan.summary.selection.outcomes) {
+    if (outcome.verdict === "admit") {
+      admitted.add(cardRefKey(outcome));
+    }
+  }
+  for (const key of selectedUnion) {
+    if (!admitted.has(key)) {
+      throw new SelectionPlanInvariantError(
+        `an item is selected by ${key.replace("\u0000", " version ")}, which the ranking did not admit`,
+      );
+    }
+  }
+  for (const key of admitted) {
+    if (!selectedUnion.has(key)) {
+      throw new SelectionPlanInvariantError(
+        `admitted ${key.replace("\u0000", " version ")} selects no item`,
+      );
+    }
+  }
+}
+
+function cardRefKey(reference: ApprovedCardReference): string {
+  return `${reference.cardId}\u0000${reference.versionId}`;
 }
 
 /**

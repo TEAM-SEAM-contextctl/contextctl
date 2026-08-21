@@ -93,6 +93,7 @@ export {
   ManagedResolutionInvariantError,
   SelectionCandidateInvariantError,
   SelectionModeInvariantError,
+  SelectionPlanInvariantError,
   SelectionScopeInvariantError,
   SelectionThresholdsInvariantError,
 } from "./domain/errors.js";
@@ -123,6 +124,7 @@ export {
   managedTargetKey,
   planSelectedScopes,
   SELECTION_PLANNING_POLICY_VERSION,
+  verifySelectionPlan,
   type ApprovedCardReference,
   type ManagedDocumentResolutionTarget,
   type PlannedDelegatedItem,

@@ -22,6 +22,24 @@ export class ContextBudgetInvariantError extends Error {
   }
 }
 
+/**
+ * Thrown when a finished plan does not hold together.
+ *
+ * A plan is consumed twice — by the executor that reads its targets and by the
+ * assembly that files the results — and both trust its keys. A key that no
+ * longer matches the fields it was derived from, a Card listed twice on one
+ * item, an item selected by a Card the ranking never admitted, a target no
+ * item points at: each means the plan was built or altered outside the rules
+ * this domain states, and reading anything on the strength of it would be an
+ * access nobody decided on.
+ */
+export class SelectionPlanInvariantError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SelectionPlanInvariantError";
+  }
+}
+
 /** Thrown when a selected Scope cannot be resolved into a retrievable target. */
 export class SelectionScopeInvariantError extends Error {
   constructor(message: string) {

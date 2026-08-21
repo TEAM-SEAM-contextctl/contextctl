@@ -7,6 +7,7 @@ import {
   ManagedResolutionInvariantError,
   SelectionCandidateInvariantError,
   SelectionModeInvariantError,
+  SelectionPlanInvariantError,
   SelectionScopeInvariantError,
   SelectionThresholdsInvariantError,
 } from "../domain/errors.js";
@@ -222,6 +223,7 @@ export function toResolveContextErrorCode(
     cause instanceof SelectionThresholdsInvariantError ||
     cause instanceof SelectionCandidateInvariantError ||
     cause instanceof SelectionScopeInvariantError ||
+    cause instanceof SelectionPlanInvariantError ||
     cause instanceof ManagedResolutionInvariantError ||
     cause instanceof CanonicalDigestInvariantError ||
     cause instanceof CardSelectionProfileInvariantError ||
