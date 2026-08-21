@@ -12,6 +12,7 @@ import {
   type ContextCard,
   type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
+import { CARD_SELECTION_EMBEDDING_PROFILE } from "@contextctl/selection-delivery";
 
 import type { CliCommand } from "./arguments.js";
 import { EXIT_CODES, operatorExitCode, type ExitCode } from "./exit-codes.js";
@@ -51,10 +52,7 @@ type IngestRefusal = Extract<
   RegistryIntakeResult,
   { readonly status: "deferred" | "forked" }
 >;
-import {
-  CARD_SELECTION_EMBEDDING_PROFILE,
-  DEFAULT_SECURITY_DOMAIN,
-} from "../main.js";
+import { DEFAULT_SECURITY_DOMAIN } from "../main.js";
 import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
 import { readEmbeddingCompositionConfiguration } from "../embedding/configuration.js";
 import {
