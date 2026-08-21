@@ -25,6 +25,12 @@ import {
   type CandidateScore,
 } from "../domain/query-scoring.js";
 import {
+  applyPolicyContext,
+  DEFAULT_POLICY_CONTEXT,
+  type PolicyApplication,
+  type PolicyContext,
+} from "../domain/policy-context.js";
+import {
   planningLimitViolations,
   planSelectedScopes,
   SELECTION_PLANNING_LIMITS,
@@ -162,6 +168,17 @@ export interface SelectContextOptions {
    */
   readonly chunkLimitPerScope?: number;
   readonly semantic?: SemanticSelectionPolicy;
+  /**
+   * What this deployment permits a query to reach. Defaults to
+   * `DEFAULT_POLICY_CONTEXT` — retrieval only, sensitive Cards denied.
+   *
+   * Configuration injected by the Composition Root, like `thresholds` and
+   * `semantic` beside it, and for the same reason stated more sharply: a
+   * request type that could carry this field would be a caller granting itself
+   * access. `ResolveContextRequest` has no such field, and must not gain one
+   * (SOT L88: not the query, not an MCP argument, not a CLI flag).
+   */
+  readonly policy?: PolicyContext;
 }
 
 /**
@@ -196,8 +213,25 @@ export async function selectContext(
   }
 
   const cards = await ports.catalog.listApprovedCards();
-  const lexical = scoreCardsAgainstQuery(queryText, cards);
-  const scored = await scoreWithSemantics(ports, options, queryText, cards, lexical);
+  // Before either candidate search and before any score exists. A Card the
+  // policy keeps out is absent from the lexical set and from the semantic
+  // search alike, so it can neither be ranked nor take a top-K place an
+  // eligible Card should have had; and it is absent from the verdicts, so the
+  // counts a consumer sees describe only what was evaluated (SOT L88, L1424,
+  // L2486). A catalog whose policies cannot be read is refused here as a whole.
+  const policy = applyPolicyContext(
+    cards,
+    options.policy ?? DEFAULT_POLICY_CONTEXT,
+  );
+  const lexical = scoreCardsAgainstQuery(queryText, policy.eligible);
+  const scored = await scoreWithSemantics(
+    ports,
+    options,
+    queryText,
+    cards,
+    policy,
+    lexical,
+  );
   // `undefined` rather than a local default: the threshold band is
   // `judgeCandidates`' own decision and must not be restated here, or the two
   // defaults would drift apart silently.
@@ -221,6 +255,7 @@ export async function selectContext(
       candidates: scored.candidates,
       selection,
       mode: scored.mode,
+      policy: { context: policy.context, excluded: policy.excluded },
     },
     items: planned.items,
     managedTargets: planned.managedTargets,
@@ -252,13 +287,14 @@ async function scoreWithSemantics(
   ports: SelectContextPorts,
   options: SelectContextOptions,
   queryText: string,
-  cards: readonly ApprovedCard[],
+  catalog: readonly ApprovedCard[],
+  policy: PolicyApplication,
   lexical: readonly CandidateScore[],
 ): Promise<ScoredCandidates> {
   const semantic = ports.semantic;
-  const policy = options.semantic ?? {};
+  const degradation = options.semantic ?? {};
   const degrade = (reason: string): ScoredCandidates => {
-    if (policy.allowLexicalDegraded ?? true) {
+    if (degradation.allowLexicalDegraded ?? true) {
       return { mode: "lexical_degraded", candidates: lexical };
     }
     throw new CardEmbeddingUnavailableError(reason);
@@ -267,17 +303,32 @@ async function scoreWithSemantics(
   if (semantic === undefined) {
     return degrade("no Card embedding provider is bound to this deployment");
   }
-  if (cards.length === 0) {
+  if (catalog.length === 0) {
     // An empty catalog has no candidate index to be accurate about, and
     // embedding a query no vector could be compared against would cost a model
     // call to produce a ranking over nothing. SOT allows exactly this case to
     // report as degraded when the policy permits it.
     return degrade("the catalog holds no approved Card to build an index from");
   }
+  if (policy.eligible.length === 0) {
+    // Every approved Card is kept out by policy. Not a degradation and not an
+    // error: the hybrid policy applied in full and simply had nothing to rank,
+    // which SOT L2486 names as a `hybrid` run whose call condition skipped the
+    // semantic call, and L2525 as an ordinary empty answer. No query vector is
+    // built, because there is no eligible vector to compare it against — and
+    // the degradation policy is not consulted, because a deployment that
+    // forbids lexical answers has not forbidden empty ones.
+    return { mode: "hybrid", candidates: [] };
+  }
 
   try {
     assertValidCardSelectionProfile(semantic.profile);
-    const entries = cards.map(buildCardSelectionEntry);
+    // Over the whole approved catalog, not the eligible part. The index is a
+    // derived artefact of the catalog and must stay one: keyed on the eligible
+    // set it would be rebuilt — every Card re-embedded — each time the policy
+    // changed, and `covers` could no longer say whether this snapshot is
+    // current. The policy is applied at search time instead, below.
+    const entries = catalog.map(buildCardSelectionEntry);
     const snapshotVersion = catalogSnapshotVersion(entries, semantic.profile);
     const index = await semantic.index.acquire({
       entries,
@@ -305,11 +356,20 @@ async function scoreWithSemantics(
       mode: "hybrid",
       candidates: rankHybridCandidates({
         lexical,
+        // Pre-filtered inside the exact scan, before the cut: an ineligible
+        // Card is never compared, so it cannot hold one of the `semanticTopK`
+        // places. Filtering the returned list instead would be the post-filter
+        // SOT L88 forbids.
         semantic: index.topK(
           queryVector,
-          policy.semanticTopK ?? DEFAULT_SEMANTIC_TOP_K,
+          degradation.semanticTopK ?? DEFAULT_SEMANTIC_TOP_K,
+          {
+            eligibleVersionIds: new Set(
+              policy.eligible.map((card) => card.versionId),
+            ),
+          },
         ),
-        lexicalTopK: policy.lexicalTopK ?? DEFAULT_LEXICAL_TOP_K,
+        lexicalTopK: degradation.lexicalTopK ?? DEFAULT_LEXICAL_TOP_K,
       }),
     };
   } catch (cause: unknown) {

@@ -32,6 +32,7 @@ import {
   resolveCardMeaningBackend,
   type CardMeaningBackend,
 } from "./meaning-generator.js";
+import { resolvePolicyContext } from "./policy-context.js";
 import { resolveContextctlPaths, type ContextctlPaths } from "./paths.js";
 import { readSourcesFile, toSourceConfigurations } from "./sources-file.js";
 import { resolveVectorBackend, type VectorBackend } from "../vector-backend.js";
@@ -192,6 +193,7 @@ export async function buildCliRuntime(
   try {
     runtime = createDaemonRuntime(
       cliRuntimeOptions({
+        environment: input.environment,
         paths,
         sourceConfigurations,
         ingestionDatabase,
@@ -229,6 +231,14 @@ export async function buildCliRuntime(
  * or installing 390MB of weights.
  */
 export function cliRuntimeOptions(input: {
+  /**
+   * Read here for the access policy, and only for that. The other settings
+   * arrive already resolved because each has a failure the caller answers
+   * specially; the policy has one resolver and one answer, and resolving it
+   * inside this function is what makes `query` and `serve` — the two callers —
+   * unable to read it differently.
+   */
+  readonly environment: Readonly<Partial<Record<string, string>>>;
   readonly paths: ContextctlPaths;
   readonly sourceConfigurations: Readonly<Record<string, { readonly path: string }>>;
   readonly ingestionDatabase: DatabaseSync;
@@ -252,6 +262,7 @@ export function cliRuntimeOptions(input: {
     sourceConfigurations: input.sourceConfigurations,
     vectorIndex: input.vectorBackend.vectorIndex,
     meanings: input.meaningBackend.generator,
+    policy: resolvePolicyContext(input.environment),
     ingestionStores: {
       observations: new SqliteSourceObservationStore(ingestionDatabase),
       checkpoints: new SqliteMarkdownPublicationCheckpointStore(ingestionDatabase),

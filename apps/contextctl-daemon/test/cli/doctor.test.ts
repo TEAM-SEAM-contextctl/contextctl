@@ -413,6 +413,7 @@ describe("runDiagnosis / report", () => {
       "embedding-assets",
       "vector-backend",
       "card-meaning",
+      "policy-context",
     ]);
   });
 
@@ -559,5 +560,54 @@ describe("card-meaning reports the URL the adapter will request", () => {
     });
 
     expect(JSON.stringify(report)).not.toContain("sk-super-secret");
+  });
+});
+
+describe("policy-context reports what the access policy will do", () => {
+  it("is ok under the default and says that sensitive Cards are excluded", async () => {
+    const home = await makeHome();
+    const step = stepNamed(
+      await runDiagnosis({ environment: { CONTEXTCTL_HOME: home } }),
+      "policy-context",
+    );
+
+    expect(step.status).toBe("ok");
+    expect(step.detail).toContain("제외");
+    expect(step.detail).toContain("deny");
+  });
+
+  it("warns under allow and states the consequence, not only the variable", async () => {
+    const home = await makeHome();
+    const report = await runDiagnosis({
+      environment: { CONTEXTCTL_HOME: home, CONTEXTCTL_SENSITIVE_ACCESS: "allow" },
+    });
+    const step = stepNamed(report, "policy-context");
+
+    expect(step.status).toBe("warn");
+    // The reader learns what happens — sensitive Cards reach queries on every
+    // surface — rather than having to infer it from a variable name.
+    expect(step.detail).toContain("민감");
+    expect(step.detail).toContain("질의에 노출");
+    expect(step.detail).toContain("MCP");
+    expect(step.remedy).toContain("deny");
+    // A warning, not a failure: the operator chose it. (The report as a whole
+    // is not healthy in a bare home — no assets are installed — so the step's
+    // own status is what this asserts.)
+    expect(step.status).not.toBe("fail");
+  });
+
+  it("fails on a value the runtime will refuse to start on", async () => {
+    const home = await makeHome();
+    const report = await runDiagnosis({
+      environment: { CONTEXTCTL_HOME: home, CONTEXTCTL_SENSITIVE_ACCESS: "Allow" },
+    });
+    const step = stepNamed(report, "policy-context");
+
+    expect(step.status).toBe("fail");
+    expect(step.detail).toContain("sensitive_access_invalid");
+    expect(step.remedy).toContain("deny 또는 allow");
+    expect(report.steps.filter((each) => each.status === "fail").map((each) => each.name)).toContain(
+      "policy-context",
+    );
   });
 });

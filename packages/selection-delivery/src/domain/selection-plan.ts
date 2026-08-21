@@ -5,6 +5,11 @@ import {
   SelectionScopeInvariantError,
 } from "./errors.js";
 import type { SelectionMode } from "./hybrid-ranking.js";
+import {
+  assertValidPolicyContext,
+  type PolicyContext,
+  type PolicyExclusion,
+} from "./policy-context.js";
 import type { CandidateScore } from "./query-scoring.js";
 import {
   buildRetrievalGuide,
@@ -112,6 +117,24 @@ export interface SelectionPlanSummary {
    * it was, so it says so once and the response transcribes it.
    */
   readonly mode: SelectionMode;
+  /**
+   * The policy this selection ran under and the Cards it kept out of scoring.
+   *
+   * On the plan and not on the response: the response's counts describe the
+   * Cards that were evaluated, and a Card the policy excluded was not (SOT
+   * L2486). The exclusions are named here so that an operator reading the plan
+   * can tell a Card the policy refused from a Card the threshold rejected —
+   * the two look identical from the outside, and only one of them is a
+   * question about the catalog.
+   */
+  readonly policy: SelectionPolicySummary;
+}
+
+/** Which policy applied, and what it decided before any score existed. */
+export interface SelectionPolicySummary {
+  readonly context: PolicyContext;
+  /** Cards kept out before scoring, in catalog order. Empty when none were. */
+  readonly excluded: readonly PolicyExclusion[];
 }
 
 /**
@@ -506,6 +529,35 @@ export function verifySelectionPlan(
     if (!selectedUnion.has(key)) {
       throw new SelectionPlanInvariantError(
         `admitted ${key.replace("\u0000", " version ")} selects no item`,
+      );
+    }
+  }
+
+  // A Card the policy kept out must be absent from everything downstream of
+  // the filter: it was never scored, so it cannot be a candidate; never
+  // judged, so it cannot have a verdict; and never admitted, so it cannot
+  // select an item. Each of the three is checked rather than inferred from
+  // the one before, because a tampered plan can break them independently.
+  assertValidPolicyContext(plan.summary.policy.context);
+  const excluded = new Set(plan.summary.policy.excluded.map(cardRefKey));
+  for (const candidate of plan.summary.candidates) {
+    if (excluded.has(cardRefKey(candidate))) {
+      throw new SelectionPlanInvariantError(
+        `card ${candidate.cardId} version ${candidate.versionId} was scored although the policy excluded it`,
+      );
+    }
+  }
+  for (const outcome of plan.summary.selection.outcomes) {
+    if (excluded.has(cardRefKey(outcome))) {
+      throw new SelectionPlanInvariantError(
+        `card ${outcome.cardId} version ${outcome.versionId} was judged although the policy excluded it`,
+      );
+    }
+  }
+  for (const key of selectedUnion) {
+    if (excluded.has(key)) {
+      throw new SelectionPlanInvariantError(
+        `an item is selected by ${key.replace("\u0000", " version ")}, which the policy excluded`,
       );
     }
   }
