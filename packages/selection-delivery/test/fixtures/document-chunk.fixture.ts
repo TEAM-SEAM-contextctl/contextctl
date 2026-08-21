@@ -14,7 +14,7 @@ export function createRefundPolicyChunks(): readonly FixtureChunk[] {
     {
       chunkId: "chunk_refund_window",
       chunkRevisionId: "chunkrev_refund_window_v1",
-      semanticUnitId: "unit_refund_window",
+      semanticUnitId: "unit_01890f5c-7b1a-7989-86c3-07e34e599ac5",
       documentId: "doc_refund_policy",
       contentDigest: "digest_refund_window",
       text: "환불 가능 기간: 구매일로부터 14일 이내에는 단순 변심으로도 환불할 수 있다.",
@@ -22,7 +22,7 @@ export function createRefundPolicyChunks(): readonly FixtureChunk[] {
     {
       chunkId: "chunk_refund_excluded",
       chunkRevisionId: "chunkrev_refund_excluded_v1",
-      semanticUnitId: "unit_refund_excluded",
+      semanticUnitId: "unit_01890f5c-7b1a-7821-8b5b-f84cd5d1d3bc",
       documentId: "doc_refund_policy",
       contentDigest: "digest_refund_excluded",
       text: "환불 불가 상품: 개봉한 식품, 맞춤 제작 상품, 사용 흔적이 있는 전자제품은 환불할 수 없다.",
@@ -30,7 +30,7 @@ export function createRefundPolicyChunks(): readonly FixtureChunk[] {
     {
       chunkId: "chunk_shipping_fee",
       chunkRevisionId: "chunkrev_shipping_fee_v1",
-      semanticUnitId: "unit_shipping_fee",
+      semanticUnitId: "unit_01890f5c-7b1a-7aba-8bc1-735b53ebf418",
       documentId: "doc_refund_policy",
       contentDigest: "digest_shipping_fee",
       text: "배송비 처리: 단순 변심 환불의 반품 배송비는 구매자가 부담한다.",

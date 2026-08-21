@@ -32,7 +32,7 @@ import {
   type SemanticUnitIdSource,
   type VectorIndexPort,
 } from "../src/index.js";
-import { rootId } from "./fixtures/root-id-fixture.js";
+import { rootId, structuralId } from "./fixtures/root-id-fixture.js";
 
 const PROFILE: EmbeddingProfile = {
   id: "document-test",
@@ -332,7 +332,7 @@ describe("incremental reindex publication", () => {
     )!;
     const headingIds = Array.from(
       { length: 9 },
-      (_unused, index) => `blk_factlimit${String(index)}`,
+      (_unused, index) => `blk_01890f5c-7b1a-7906-8dbb-b418f825669c${String(index)}`,
     );
     const document = {
       ...snapshot.document,
@@ -577,15 +577,15 @@ function createSnapshot(
 
 function sequentialBlockIds(seed: string): BlockIdSource {
   let next = 0;
-  return { nextBlockId: () => `blk_${seed}_${String(next++)}` };
+  return { nextBlockId: () => structuralId("blk", `${seed}_${String(next++)}`) };
 }
 
 function sequentialUnitIds(seed: string): SemanticUnitIdSource {
   let next = 0;
-  return { nextUnitId: () => `unit_${seed}_${String(next++)}` };
+  return { nextUnitId: () => structuralId("unit", `${seed}_${String(next++)}`) };
 }
 
 function sequentialChunkIds(seed: string): ManagedChunkIdSource {
   let next = 0;
-  return { nextChunkId: () => `chk_${seed}_${String(next++)}` };
+  return { nextChunkId: () => structuralId("chk", `${seed}_${String(next++)}`) };
 }

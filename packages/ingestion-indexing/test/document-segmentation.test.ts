@@ -10,6 +10,7 @@ import {
   evaluateBoundaries,
   repeatedTopic,
 } from "./fixtures/semantic-segmentation-fixture.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 describe("document semantic segmentation", () => {
   it("preserves nested heading ownership before applying lexical boundaries", () => {
@@ -33,15 +34,15 @@ describe("document semantic segmentation", () => {
     const deployments = units.find((unit) => unit.title === "Deployments");
 
     expect(validateDocumentSemanticUnits(document, units)).toEqual([]);
-    expect(root?.blockIds).toEqual(["blk_0"]);
+    expect(root?.blockIds).toEqual(["blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad"]);
     expect(payments).toMatchObject({
       parentId: root?.id,
-      blockIds: ["blk_1", "blk_2"],
+      blockIds: ["blk_01890f5c-7b1a-7b3a-85b7-a9cc87b36bea", "blk_01890f5c-7b1a-71b4-819d-86052dbd208e"],
       boundary: { kind: "explicit_heading" },
     });
     expect(retries).toMatchObject({
       parentId: payments?.id,
-      blockIds: ["blk_3", "blk_4"],
+      blockIds: ["blk_01890f5c-7b1a-7e93-8105-2e02ca1e5930", "blk_01890f5c-7b1a-7a78-8504-16aef15e3c80"],
     });
     expect(deployments?.parentId).toBe(root?.id);
     expect(payments?.childIds).toContain(retries?.id);
@@ -62,9 +63,9 @@ describe("document semantic segmentation", () => {
     expect(second).toEqual(first);
     expect(lexical).toHaveLength(3);
     expect(lexical.map((unit) => unit.blockIds)).toEqual([
-      ["blk_0", "blk_1", "blk_2"],
-      ["blk_3", "blk_4", "blk_5"],
-      ["blk_6", "blk_7", "blk_8"],
+      ["blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad", "blk_01890f5c-7b1a-7b3a-85b7-a9cc87b36bea", "blk_01890f5c-7b1a-71b4-819d-86052dbd208e"],
+      ["blk_01890f5c-7b1a-7e93-8105-2e02ca1e5930", "blk_01890f5c-7b1a-7a78-8504-16aef15e3c80", "blk_01890f5c-7b1a-71b5-81be-aff12a892cc8"],
+      ["blk_01890f5c-7b1a-7127-89be-9a177f5805f9", "blk_01890f5c-7b1a-7171-8196-1028e1ec84d8", "blk_01890f5c-7b1a-76d4-8a2b-fc1fc4994876"],
     ]);
     expect(
       lexical.every(
@@ -209,13 +210,13 @@ describe("document semantic segmentation", () => {
     });
     const segment = units.find((unit) => unit.kind === "segment");
 
-    expect(segment?.blockIds).toEqual(["blk_0"]);
+    expect(segment?.blockIds).toEqual(["blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad"]);
     expect(segment?.boundary.kind).toBe("size_fallback");
     expect(segment?.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "oversized_atomic_block",
-          blockIds: ["blk_0"],
+          blockIds: ["blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad"],
         }),
       ]),
     );
@@ -367,7 +368,7 @@ function sequentialUnitIds(): SemanticUnitIdSource {
   return {
     nextUnitId: () => {
       sequence += 1;
-      return `unit_${sequence.toString().padStart(4, "0")}`;
+      return structuralId("unit", sequence.toString().padStart(4, "0"));
     },
   };
 }

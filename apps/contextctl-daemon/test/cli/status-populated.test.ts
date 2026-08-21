@@ -74,13 +74,13 @@ function seal(
 /** One Markdown-backed Publication, produced two hours before `now`. */
 function publicationFixture(producedAt: string): IngestionPublication {
   const unit = seal({
-    id: "unit_payment_failures",
+    id: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     kind: "section",
     sourceCoordinate: {
       kind: "document",
       sourceId: SOURCE_ID,
       documentId: DOCUMENT_ID,
-      semanticUnitId: "unit_payment_failures",
+      semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     },
     facts: [{ name: "section.label", value: "Payment failures" }],
     publishedScopes: [
@@ -96,7 +96,7 @@ function publicationFixture(producedAt: string): IngestionPublication {
         },
         selector: {
           kind: "semantic_units",
-          semanticUnitIds: ["unit_payment_failures"],
+          semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
         },
       },
     ],

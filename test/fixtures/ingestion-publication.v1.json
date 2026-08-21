@@ -6,13 +6,13 @@
   "producedAt": "2026-07-29T00:00:00.000Z",
   "knowledgeUnits": [
     {
-      "id": "unit_payment_failures",
+      "id": "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       "kind": "section",
       "sourceCoordinate": {
         "kind": "document",
         "sourceId": "src_payments",
         "documentId": "doc_payments",
-        "semanticUnitId": "unit_payment_failures"
+        "semanticUnitId": "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"
       },
       "evidence": [
         {
@@ -35,7 +35,7 @@
           },
           "selector": {
             "kind": "semantic_units",
-            "semanticUnitIds": ["unit_payment_failures"]
+            "semanticUnitIds": ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"]
           }
         }
       ],
@@ -56,7 +56,7 @@
   "changes": [
     {
       "kind": "added",
-      "knowledgeUnitId": "unit_payment_failures",
+      "knowledgeUnitId": "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       "currentContentDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     }
   ]

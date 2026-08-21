@@ -30,8 +30,8 @@
     "selector": {
       "kind": "semantic_units",
       "semanticUnitIds": [
-        "unit_payment_failures",
-        "unit_payment_retries"
+        "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
+        "unit_01890f5c-7b1a-73b6-8dd0-7dfcef840b4f"
       ]
     }
   }

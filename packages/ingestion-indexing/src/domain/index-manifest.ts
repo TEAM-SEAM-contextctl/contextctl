@@ -13,6 +13,7 @@ import {
   isId,
   isIsoTimestamp,
   isRevisionId,
+  isUuidV7Id,
   issue,
   type ModelValidationIssue,
 } from "./model-validation.js";
@@ -216,9 +217,9 @@ export function validateIndexManifest(
   validateNonEmpty(manifest.stateNamespaceId, "stateNamespaceId", issues);
   validateNonEmpty(manifest.securityDomain, "securityDomain", issues);
   validateRevision(manifest.indexVersion, "idxv", "indexVersion", issues);
-  validateId(manifest.sourceId, "src", "sourceId", issues);
-  validateId(manifest.observationId, "obs", "observationId", issues);
-  validateId(manifest.documentId, "doc", "documentId", issues);
+  validateUuidV7Id(manifest.sourceId, "src", "sourceId", issues);
+  validateUuidV7Id(manifest.observationId, "obs", "observationId", issues);
+  validateUuidV7Id(manifest.documentId, "doc", "documentId", issues);
   validateDigest(manifest.recordSetDigest, "recordSetDigest", issues);
   validateNonEmpty(manifest.parserVersion, "parserVersion", issues);
   validateNonEmpty(
@@ -638,7 +639,7 @@ function validateRevisionMap(
   }
 
   for (const [id, revision] of Object.entries(actual)) {
-    validateId(id, idPrefix, `${path}.${id}`, issues);
+    validateUuidV7Id(id, idPrefix, `${path}.${id}`, issues);
     validateRevision(revision, revisionPrefix, `${path}.${id}`, issues);
     if (expected.get(id) !== revision) {
       issues.push(
@@ -669,14 +670,14 @@ function validateChunkBindings(
   }
   for (const [chunkId, binding] of Object.entries(actual)) {
     const path = `chunkBindings.${chunkId}`;
-    validateId(chunkId, "chk", path, issues);
+    validateUuidV7Id(chunkId, "chk", path, issues);
     validateRevision(
       binding.chunkRevisionId,
       "crv",
       `${path}.chunkRevisionId`,
       issues,
     );
-    validateId(
+    validateUuidV7Id(
       binding.semanticUnitId,
       "unit",
       `${path}.semanticUnitId`,
@@ -713,6 +714,23 @@ function validateId(
 ): void {
   if (!isId(value, prefix)) {
     issues.push(issue("invalid_id", path, `expected ${prefix}_ identifier`));
+  }
+}
+
+function validateUuidV7Id(
+  value: string,
+  prefix: string,
+  path: string,
+  issues: ModelValidationIssue[],
+): void {
+  if (!isUuidV7Id(value, prefix)) {
+    issues.push(
+      issue(
+        "invalid_id",
+        path,
+        `expected ${prefix}_ identifier with UUIDv7 body`,
+      ),
+    );
   }
 }
 

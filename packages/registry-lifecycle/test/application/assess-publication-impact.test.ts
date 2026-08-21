@@ -69,7 +69,7 @@ function createUpdatePublication(): IngestionPublication {
     changes: [
       {
         kind: "updated",
-        knowledgeUnitId: "unit_payment_failures",
+        knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         previousContentDigest: digest,
         currentContentDigest: unit.contentDigest,
         changedFields: ["facts"],
@@ -90,7 +90,7 @@ function createRemovalPublication(): IngestionPublication {
     changes: [
       {
         kind: "removed",
-        knowledgeUnitId: "unit_payment_failures",
+        knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         previousContentDigest: digest,
       },
     ],
@@ -107,13 +107,13 @@ describe("assessPublicationImpact", () => {
 
     expect(result.impacts).toEqual([
       {
-        cardId: "unit_payment_failures",
+        cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         decision: "review",
         reasons: [
           {
             rule: "change.facts",
             message:
-              "knowledge unit unit_payment_failures: the observed facts the card text was written from are no longer the same",
+              "knowledge unit unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd: the observed facts the card text was written from are no longer the same",
           },
         ],
       },
@@ -122,7 +122,7 @@ describe("assessPublicationImpact", () => {
       {
         id: "ev_1",
         kind: "card_impact_assessed",
-        cardId: "unit_payment_failures",
+        cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         occurredAt: "2026-08-03T00:00:00.000Z",
         publicationId: fixtureRootId("pub", "second"),
         decision: "review",
@@ -130,7 +130,7 @@ describe("assessPublicationImpact", () => {
           {
             rule: "change.facts",
             message:
-              "knowledge unit unit_payment_failures: the observed facts the card text was written from are no longer the same",
+              "knowledge unit unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd: the observed facts the card text was written from are no longer the same",
           },
         ],
       },
@@ -158,7 +158,7 @@ describe("assessPublicationImpact", () => {
     );
 
     expect(result.impacts.map((impact) => impact.cardId)).toEqual([
-      "unit_payment_failures",
+      "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     ]);
     expect(result.events).toHaveLength(1);
   });

@@ -11,6 +11,7 @@ import {
 } from "../src/index.js";
 import { validateDocumentSemanticUnits } from "../src/domain/document-model.js";
 import { createSegmentationDocument } from "./fixtures/semantic-segmentation-fixture.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 describe("Semantic Unit lineage", () => {
   it("inherits equivalent Unit identities and keeps revisions stable", () => {
@@ -44,7 +45,7 @@ describe("Semantic Unit lineage", () => {
 
   it("inherits a clearly edited Unit and advances only affected revisions", () => {
     const previousDocument = paragraphDocument(["a", "b", "c"]);
-    const currentDocument = editBlock(observeAgain(previousDocument), "blk_b");
+    const currentDocument = editBlock(observeAgain(previousDocument), "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a");
     const previousUnits = segmentNormalizedDocument({
       document: previousDocument,
       ids: sequentialUnitIds("old"),
@@ -76,7 +77,7 @@ describe("Semantic Unit lineage", () => {
     ]);
     const currentDocument = editBlock(
       observeAgain(previousDocument),
-      "blk_0",
+      "blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad",
       "Payment recovery",
     );
     const previousUnits = segmentNormalizedDocument({
@@ -116,7 +117,7 @@ describe("Semantic Unit lineage", () => {
     ]);
     const currentDocument = reorderBlocks(
       observeAgain(previousDocument),
-      ["blk_2", "blk_3", "blk_0", "blk_1"],
+      ["blk_01890f5c-7b1a-71b4-819d-86052dbd208e", "blk_01890f5c-7b1a-7e93-8105-2e02ca1e5930", "blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad", "blk_01890f5c-7b1a-7b3a-85b7-a9cc87b36bea"],
     );
     const previousUnits = segmentNormalizedDocument({
       document: previousDocument,
@@ -151,10 +152,10 @@ describe("Semantic Unit lineage", () => {
   it("inherits a dominant split survivor but gives the secondary Unit a new ID", () => {
     const previousDocument = paragraphDocument(["a", "b", "c", "d"]);
     const currentDocument = observeAgain(previousDocument);
-    const previousUnits = unitTree(previousDocument, "old", [["blk_a", "blk_b", "blk_c", "blk_d"]]);
+    const previousUnits = unitTree(previousDocument, "old", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"]]);
     const currentUnits = unitTree(currentDocument, "new", [
-      ["blk_a", "blk_b", "blk_c"],
-      ["blk_d"],
+      ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e"],
+      ["blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
     ]);
     const result = reconcileSemanticUnitLineage({
       previousDocument,
@@ -165,10 +166,10 @@ describe("Semantic Unit lineage", () => {
     const previousSegment = previousUnits[1];
 
     expect(result.units[1]?.id).toBe(previousSegment?.id);
-    expect(result.units[2]?.id).toBe("unit_new_2");
+    expect(result.units[2]?.id).toBe("unit_01890f5c-7b1a-7922-8169-6a3d26e6d45d");
     expect(result.decisions).toContainEqual({
       kind: "created",
-      unitId: "unit_new_2",
+      unitId: "unit_01890f5c-7b1a-7922-8169-6a3d26e6d45d",
       reason: "split",
     });
   });
@@ -177,11 +178,11 @@ describe("Semantic Unit lineage", () => {
     const previousDocument = paragraphDocument(["a", "b", "c", "d"]);
     const currentDocument = observeAgain(previousDocument);
     const previousUnits = unitTree(previousDocument, "old", [
-      ["blk_a", "blk_b", "blk_c"],
-      ["blk_d"],
+      ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e"],
+      ["blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
     ]);
     const currentUnits = unitTree(currentDocument, "new", [
-      ["blk_a", "blk_b", "blk_c", "blk_d"],
+      ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
     ]);
     const result = reconcileSemanticUnitLineage({
       previousDocument,
@@ -190,17 +191,17 @@ describe("Semantic Unit lineage", () => {
       currentUnits,
     });
 
-    expect(result.units[1]?.id).toBe("unit_old_1");
+    expect(result.units[1]?.id).toBe("unit_01890f5c-7b1a-718c-89bd-bdead3aa03a3");
     expect(result.decisions).toContainEqual({
       kind: "inherited",
-      unitId: "unit_old_1",
-      provisionalUnitId: "unit_new_1",
+      unitId: "unit_01890f5c-7b1a-718c-89bd-bdead3aa03a3",
+      provisionalUnitId: "unit_01890f5c-7b1a-700d-88d6-44fbfc911b43",
       match: "block_jaccard",
       score: 0.75,
     });
     expect(result.decisions).toContainEqual({
       kind: "removed",
-      unitId: "unit_old_2",
+      unitId: "unit_01890f5c-7b1a-72c9-852d-c4cc8a27693d",
       reason: "merge",
     });
   });
@@ -211,23 +212,23 @@ describe("Semantic Unit lineage", () => {
     const split = reconcileSemanticUnitLineage({
       previousDocument,
       previousUnits: unitTree(previousDocument, "old", [
-        ["blk_a", "blk_b", "blk_c", "blk_d"],
+        ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
       ]),
       currentDocument,
       currentUnits: unitTree(currentDocument, "split", [
-        ["blk_a", "blk_b"],
-        ["blk_c", "blk_d"],
+        ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a"],
+        ["blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
       ]),
     });
     const merge = reconcileSemanticUnitLineage({
       previousDocument,
       previousUnits: unitTree(previousDocument, "prior", [
-        ["blk_a", "blk_b"],
-        ["blk_c", "blk_d"],
+        ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a"],
+        ["blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
       ]),
       currentDocument,
       currentUnits: unitTree(currentDocument, "merged", [
-        ["blk_a", "blk_b", "blk_c", "blk_d"],
+        ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
       ]),
     });
 
@@ -241,14 +242,14 @@ describe("Semantic Unit lineage", () => {
     expect(
       [...split.units, ...merge.units]
         .filter((unit) => unit.kind === "segment")
-        .every((unit) => !unit.id.startsWith("unit_old_") && !unit.id.startsWith("unit_prior_")),
+        .every((unit) => !unit.id.startsWith("unit_01890f5c-7b1a-724d-86f2-c12caae3df82") && !unit.id.startsWith("unit_01890f5c-7b1a-7a80-8e57-9e0125a6b4e6")),
     ).toBe(true);
   });
 
   it("applies the 0.60 Block-ID Jaccard threshold and reports deletion", () => {
     const previousDocument = paragraphDocument(["a", "b", "c", "d"]);
     const previousUnits = unitTree(previousDocument, "old", [
-      ["blk_a", "blk_b", "blk_c", "blk_d"],
+      ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-75b2-84f5-71a56585f7a2"],
     ]);
     const atThresholdDocument = paragraphDocument(["a", "b", "c", "x"], "obs_threshold");
     const belowThresholdDocument = paragraphDocument(
@@ -260,7 +261,7 @@ describe("Semantic Unit lineage", () => {
       previousUnits,
       currentDocument: atThresholdDocument,
       currentUnits: unitTree(atThresholdDocument, "threshold", [
-        ["blk_a", "blk_b", "blk_c", "blk_x"],
+        ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-7e2b-858c-9b2c1d425f77"],
       ]),
     });
     const belowThreshold = reconcileSemanticUnitLineage({
@@ -268,20 +269,20 @@ describe("Semantic Unit lineage", () => {
       previousUnits,
       currentDocument: belowThresholdDocument,
       currentUnits: unitTree(belowThresholdDocument, "below", [
-        ["blk_a", "blk_b", "blk_c", "blk_x", "blk_y"],
+        ["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e", "blk_01890f5c-7b1a-7e2b-858c-9b2c1d425f77", "blk_01890f5c-7b1a-709d-8d7f-465bde434b69"],
       ]),
     });
 
-    expect(atThreshold.units[1]?.id).toBe("unit_old_1");
-    expect(belowThreshold.units[1]?.id).toBe("unit_below_1");
+    expect(atThreshold.units[1]?.id).toBe("unit_01890f5c-7b1a-718c-89bd-bdead3aa03a3");
+    expect(belowThreshold.units[1]?.id).toBe("unit_01890f5c-7b1a-70b6-8c30-911ceb117a3c");
     expect(belowThreshold.decisions).toContainEqual({
       kind: "created",
-      unitId: "unit_below_1",
+      unitId: "unit_01890f5c-7b1a-70b6-8c30-911ceb117a3c",
       reason: "ambiguous",
     });
     expect(belowThreshold.decisions).toContainEqual({
       kind: "removed",
-      unitId: "unit_old_1",
+      unitId: "unit_01890f5c-7b1a-718c-89bd-bdead3aa03a3",
       reason: "ambiguous",
     });
   });
@@ -291,19 +292,19 @@ describe("Semantic Unit lineage", () => {
     const currentDocument = paragraphDocument(["x", "y"], "obs_current");
     const result = reconcileSemanticUnitLineage({
       previousDocument,
-      previousUnits: unitTree(previousDocument, "old", [["blk_a", "blk_b"]]),
+      previousUnits: unitTree(previousDocument, "old", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a"]]),
       currentDocument,
-      currentUnits: unitTree(currentDocument, "new", [["blk_x", "blk_y"]]),
+      currentUnits: unitTree(currentDocument, "new", [["blk_01890f5c-7b1a-7e2b-858c-9b2c1d425f77", "blk_01890f5c-7b1a-709d-8d7f-465bde434b69"]]),
     });
 
     expect(result.decisions).toContainEqual({
       kind: "created",
-      unitId: "unit_new_1",
+      unitId: "unit_01890f5c-7b1a-700d-88d6-44fbfc911b43",
       reason: "new",
     });
     expect(result.decisions).toContainEqual({
       kind: "removed",
-      unitId: "unit_old_1",
+      unitId: "unit_01890f5c-7b1a-718c-89bd-bdead3aa03a3",
       reason: "deleted",
     });
   });
@@ -311,8 +312,8 @@ describe("Semantic Unit lineage", () => {
   it("rejects malformed lineage inputs before remapping identity", () => {
     const previousDocument = paragraphDocument(["a"]);
     const currentDocument = observeAgain(previousDocument);
-    const previousUnits = unitTree(previousDocument, "same", [["blk_a"]]);
-    const currentUnits = unitTree(currentDocument, "same", [["blk_a"]]);
+    const previousUnits = unitTree(previousDocument, "same", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819"]]);
+    const currentUnits = unitTree(currentDocument, "same", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819"]]);
 
     expect(() =>
       reconcileSemanticUnitLineage({
@@ -327,7 +328,7 @@ describe("Semantic Unit lineage", () => {
   it("rejects mixed segmentation policy versions within one Unit snapshot", () => {
     const previousDocument = paragraphDocument(["a"]);
     const currentDocument = observeAgain(previousDocument);
-    const currentUnits = unitTree(currentDocument, "new", [["blk_a"]]).map(
+    const currentUnits = unitTree(currentDocument, "new", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819"]]).map(
       (unit, index) =>
         index === 1
           ? { ...unit, segmentationPolicyVersion: "semantic-unit-v2" }
@@ -337,7 +338,7 @@ describe("Semantic Unit lineage", () => {
     expect(() =>
       reconcileSemanticUnitLineage({
         previousDocument,
-        previousUnits: unitTree(previousDocument, "old", [["blk_a"]]),
+        previousUnits: unitTree(previousDocument, "old", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819"]]),
         currentDocument,
         currentUnits,
       }),
@@ -349,11 +350,11 @@ describe("Semantic Unit lineage", () => {
   it("starts new Unit lineage when the segmentation policy changes", () => {
     const previousDocument = paragraphDocument(["a", "b"]);
     const currentDocument = observeAgain(previousDocument);
-    const previousUnits = unitTree(previousDocument, "old", [["blk_a", "blk_b"]]);
+    const previousUnits = unitTree(previousDocument, "old", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a"]]);
     const currentUnits = unitTree(
       currentDocument,
       "new",
-      [["blk_a", "blk_b"]],
+      [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a"]],
       "semantic-unit-v2",
     );
     const result = reconcileSemanticUnitLineage({
@@ -364,8 +365,8 @@ describe("Semantic Unit lineage", () => {
     });
 
     expect(result.units.map((unit) => unit.id)).toEqual([
-      "unit_new_root",
-      "unit_new_1",
+      "unit_01890f5c-7b1a-7fc3-879b-81e9240447ed",
+      "unit_01890f5c-7b1a-700d-88d6-44fbfc911b43",
     ]);
     expect(
       result.decisions.every(
@@ -380,9 +381,9 @@ describe("Semantic Unit lineage", () => {
     const currentDocument = observeAgain(previousDocument);
     const input = {
       previousDocument,
-      previousUnits: unitTree(previousDocument, "old", [["blk_a", "blk_b", "blk_c"]]),
+      previousUnits: unitTree(previousDocument, "old", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e"]]),
       currentDocument,
-      currentUnits: unitTree(currentDocument, "new", [["blk_a", "blk_b", "blk_c"]]),
+      currentUnits: unitTree(currentDocument, "new", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a", "blk_01890f5c-7b1a-7e8f-871d-20678d1d1b9e"]]),
     };
 
     expect(reconcileSemanticUnitLineage(input)).toEqual(
@@ -395,9 +396,9 @@ describe("Semantic Unit lineage", () => {
     const currentDocument = observeAgain(previousDocument);
     const result = reconcileSemanticUnitLineage({
       previousDocument,
-      previousUnits: unitTree(previousDocument, "old", [["blk_a", "blk_b"]]),
+      previousUnits: unitTree(previousDocument, "old", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a"]]),
       currentDocument,
-      currentUnits: unitTree(currentDocument, "new", [["blk_a", "blk_b"]]),
+      currentUnits: unitTree(currentDocument, "new", [["blk_01890f5c-7b1a-77c7-8729-6d1cbbef6819", "blk_01890f5c-7b1a-7317-89a0-1a4401dffc4a"]]),
     });
 
     expect(validateDocumentSemanticUnits(currentDocument, result.units)).toEqual(
@@ -415,7 +416,7 @@ function paragraphDocument(
   );
   const blocks = base.blocks.map((block, index) => ({
     ...block,
-    id: `blk_${names[index]}`,
+    id: structuralId("blk", names[index] ?? index),
     sectionPath: [],
   }));
   return {
@@ -493,8 +494,10 @@ function unitTree(
   groups: readonly (readonly string[])[],
   segmentationPolicyVersion = "semantic-unit-v1",
 ): readonly DocumentSemanticUnit[] {
-  const rootId = `unit_${prefix}_root`;
-  const childIds = groups.map((_, index) => `unit_${prefix}_${index + 1}`);
+  const rootId = structuralId("unit", `${prefix}_root`);
+  const childIds = groups.map((_, index) =>
+    structuralId("unit", `${prefix}_${index + 1}`),
+  );
   const common = {
     sourceId: document.sourceId,
     observationId: document.observationId,
@@ -515,7 +518,7 @@ function unitTree(
     },
     ...groups.map((blockIds, index): DocumentSemanticUnit => ({
       ...common,
-      id: childIds[index] ?? "unit_missing",
+      id: childIds[index] ?? "unit_01890f5c-7b1a-7a13-8fd3-6939fe7fa688",
       revisionId: validUnitRevision("b"),
       kind: "segment",
       parentId: rootId,
@@ -540,7 +543,7 @@ function sequentialUnitIds(prefix: string): SemanticUnitIdSource {
   return {
     nextUnitId: () => {
       sequence += 1;
-      return `unit_${prefix}_${sequence}`;
+      return structuralId("unit", `${prefix}_${sequence}`);
     },
   };
 }

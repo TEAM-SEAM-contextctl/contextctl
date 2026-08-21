@@ -7,7 +7,7 @@ import {
   type EmbeddingProfile,
   type VectorIndexRecord,
 } from "../src/index.js";
-import { rootId } from "./fixtures/root-id-fixture.js";
+import { rootId, structuralId } from "./fixtures/root-id-fixture.js";
 
 const qdrantUrl = process.env.CONTEXTCTL_QDRANT_URL;
 const integration = qdrantUrl === undefined ? describe.skip : describe;
@@ -59,7 +59,7 @@ integration("QdrantVectorIndexAdapter integration", () => {
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
         documentId: rootId("doc", "payments"),
-        semanticUnitIds: ["unit_refunds"],
+        semanticUnitIds: ["unit_01890f5c-7b1a-74cb-87b1-6c88b18a4d78"],
       },
       queryVector: [1, 0, 0],
       limit: 10,
@@ -185,8 +185,8 @@ function record(
       documentId: rootId("doc", document),
       documentIndexId,
       indexVersion,
-      semanticUnitId: `unit_${unit}`,
-      chunkId: `chk_${revision}`,
+      semanticUnitId: structuralId("unit", unit),
+      chunkId: structuralId("chk", revision),
       chunkRevisionId,
       contentDigest: sha256Digest(retrievalText),
     },

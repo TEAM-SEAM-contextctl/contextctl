@@ -12,7 +12,7 @@ const documentCoordinate: PublishedSourceCoordinate = {
   kind: "document",
   sourceId: "src_payments",
   documentId: "doc_payments",
-  semanticUnitId: "unit_payment_failures",
+  semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
 };
 
 const sqlCoordinate: PublishedSourceCoordinate = {
@@ -43,7 +43,7 @@ const documentScope: ManagedDocumentScope = {
   },
   selection: {
     kind: "semantic_units",
-    semanticUnitIds: ["unit_payment_failures"],
+    semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
   },
 };
 
@@ -135,7 +135,7 @@ describe("groundCardVersion", () => {
   it("rejects a semantic selection that omits the observed unit", () => {
     const scope: RetrievalScope = {
       ...documentScope,
-      selection: { kind: "semantic_units", semanticUnitIds: ["unit_other"] },
+      selection: { kind: "semantic_units", semanticUnitIds: ["unit_01890f5c-7b1a-7211-8c3c-e592509dc531"] },
     };
 
     expect(

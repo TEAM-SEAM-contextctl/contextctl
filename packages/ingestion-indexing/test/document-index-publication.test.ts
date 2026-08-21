@@ -23,6 +23,7 @@ import {
   createManagedChunkFixture,
   createSemanticUnitFixture,
 } from "./fixtures/document-fixture.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 const profile: EmbeddingProfile = {
   id: "publication-test",
@@ -77,7 +78,7 @@ describe("DocumentIndexPublisher", () => {
       { kind: "document" },
       {
         kind: "semantic_units",
-        semanticUnitIds: ["unit_payment_failures", "unit_payments"],
+        semanticUnitIds: ["unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7", "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
       },
     ]);
     expect(JSON.stringify(result.scopes)).not.toMatch(
@@ -224,8 +225,8 @@ describe("DocumentIndexPublisher", () => {
   it("canonicalizes semantic Scope group order", async () => {
     const firstCommand = createCommand(1);
     const semanticScopes = [
-      { semanticUnitIds: ["unit_payments"] },
-      { semanticUnitIds: ["unit_payment_failures"] },
+      { semanticUnitIds: ["unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7"] },
+      { semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"] },
     ];
     const firstPublisher = createPublisher({
       vectorIndex: new InMemoryVectorIndexAdapter(),
@@ -440,7 +441,7 @@ describe("DocumentIndexPublisher", () => {
     await expect(
       publisher.publish({
         ...createCommand(1),
-        semanticScopes: [{ semanticUnitIds: ["unit_not_in_manifest"] }],
+        semanticScopes: [{ semanticUnitIds: ["unit_01890f5c-7b1a-772b-8dc4-967beb45f238"] }],
       }),
     ).rejects.toBeInstanceOf(PublishedDocumentScopeError);
   });
@@ -527,7 +528,7 @@ function createCommand(chunkCount: number): PublishDocumentIndexCommand {
     connectorId: "vector.main",
     securityDomain: "tenant-a",
     semanticScopes: [
-      { semanticUnitIds: ["unit_payments", "unit_payment_failures"] },
+      { semanticUnitIds: ["unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7", "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"] },
     ],
   };
 }
@@ -535,19 +536,30 @@ function createCommand(chunkCount: number): PublishDocumentIndexCommand {
 function createChunk(index: number, chunkCount: number): ManagedChunk {
   const base = createManagedChunkFixture()[0]!;
   const suffix = String.fromCharCode("a".charCodeAt(0) + index).repeat(4);
+  const chunkId = structuralId("chk", `publication-${String(index)}`);
   return {
     ...base,
-    id: `chk_payment_failures_${index}`,
+    id: chunkId,
     revisionId: `crv_${suffix}`,
     ordinal: index,
     text: base.text,
     contentDigest: sha256Digest(base.text),
     ...(index === 0
       ? {}
-      : { previousChunkId: `chk_payment_failures_${index - 1}` }),
+      : {
+          previousChunkId: structuralId(
+            "chk",
+            `publication-${String(index - 1)}`,
+          ),
+        }),
     ...(index === chunkCount - 1
       ? {}
-      : { nextChunkId: `chk_payment_failures_${index + 1}` }),
+      : {
+          nextChunkId: structuralId(
+            "chk",
+            `publication-${String(index + 1)}`,
+          ),
+        }),
   };
 }
 

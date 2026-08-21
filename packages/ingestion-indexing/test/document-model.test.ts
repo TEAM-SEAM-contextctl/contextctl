@@ -40,7 +40,7 @@ describe("ingestion document model", () => {
     const invalidUnits = [
       {
         ...root,
-        blockIds: ["blk_payment_failures"],
+        blockIds: ["blk_01890f5c-7b1a-7fe8-88b6-6988509d5b03"],
       },
       {
         ...section,
@@ -61,7 +61,7 @@ describe("ingestion document model", () => {
     const invalid = {
       ...document,
       blocks: document.blocks.map((block) =>
-        block.id === "blk_retry_policy"
+        block.id === "blk_01890f5c-7b1a-70a2-8eda-f1f23edb9f60"
           ? { ...block, sectionPath: [block.id] }
           : block,
       ),
@@ -120,7 +120,7 @@ describe("ingestion index manifest", () => {
     const manifest = {
       ...createIndexManifestFixture(),
       recordCount: 2,
-      chunkRevisions: { chk_payment_failures: "crv_bbbb" },
+      chunkRevisions: { "chk_01890f5c-7b1a-7537-8d35-9bf8d4ab697a": "crv_bbbb" },
     };
 
     const codes = validateIndexManifest({

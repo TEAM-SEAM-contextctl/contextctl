@@ -18,6 +18,7 @@ import {
   type NormalizedDocument,
   type SemanticUnitIdSource,
 } from "../src/index.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 const PROFILE: EmbeddingProfile = {
   id: "document-test",
@@ -228,15 +229,15 @@ function createSnapshot(
 
 function sequentialBlockIds(seed: string): BlockIdSource {
   let next = 0;
-  return { nextBlockId: () => `blk_${seed}_${String(next++)}` };
+  return { nextBlockId: () => structuralId("blk", `${seed}_${String(next++)}`) };
 }
 
 function sequentialUnitIds(seed: string): SemanticUnitIdSource {
   let next = 0;
-  return { nextUnitId: () => `unit_${seed}_${String(next++)}` };
+  return { nextUnitId: () => structuralId("unit", `${seed}_${String(next++)}`) };
 }
 
 function sequentialChunkIds(seed: string): ManagedChunkIdSource {
   let next = 0;
-  return { nextChunkId: () => `chk_${seed}_${String(next++)}` };
+  return { nextChunkId: () => structuralId("chk", `${seed}_${String(next++)}`) };
 }

@@ -59,12 +59,12 @@ describe("analyzeCardImpact", () => {
   it("ignores a change that belongs to another knowledge unit", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_unrelated", ["facts"]),
+      updated("unit_01890f5c-7b1a-7da8-8d34-611484d6d2b0", ["facts"]),
       undefined,
     );
 
     expect(impact).toEqual({
-      cardId: "unit_payment_failures",
+      cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       decision: "none",
       reasons: [],
     });
@@ -73,7 +73,7 @@ describe("analyzeCardImpact", () => {
   it("marks an edited paragraph for review", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_payment_failures", ["facts"]),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["facts"]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
@@ -84,7 +84,7 @@ describe("analyzeCardImpact", () => {
   it("disables a card whose document was deleted", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      removed("unit_payment_failures"),
+      removed("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"),
       undefined,
     );
 
@@ -95,7 +95,7 @@ describe("analyzeCardImpact", () => {
   it("disables a card whose API operation was deleted", () => {
     const impact = analyzeCardImpact(
       createHttpCardVersion(),
-      removed("unit_get_payment"),
+      removed("unit_01890f5c-7b1a-7e07-8297-3b51cb4b4083"),
       undefined,
     );
 
@@ -118,7 +118,7 @@ describe("analyzeCardImpact", () => {
 
     const impact = analyzeCardImpact(
       createSqlCardVersion(),
-      updated("unit_payments_table", ["source.coordinate"]),
+      updated("unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba", ["source.coordinate"]),
       widened,
     );
 
@@ -140,7 +140,7 @@ describe("analyzeCardImpact", () => {
 
     const impact = analyzeCardImpact(
       createSqlCardVersion(),
-      updated("unit_payments_table", ["source.coordinate"]),
+      updated("unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba", ["source.coordinate"]),
       narrowed,
     );
 
@@ -154,7 +154,7 @@ describe("analyzeCardImpact", () => {
     // freshly generated index, which is how an embedding model change surfaces.
     const impact = analyzeCardImpact(
       createDocumentCardVersion({ indexVersion: "idxv_zzzz" }),
-      updated("unit_payment_failures", ["facts"]),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["facts"]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
@@ -165,10 +165,10 @@ describe("analyzeCardImpact", () => {
   it("blocks a card whose table was replaced by another coordinate kind", () => {
     const impact = analyzeCardImpact(
       createSqlCardVersion(),
-      updated("unit_payments_table", ["kind"]),
+      updated("unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba", ["kind"]),
       {
         ...onlyUnit(createHttpPublicationFixture()),
-        id: "unit_payments_table",
+        id: "unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba",
       },
     );
 
@@ -179,7 +179,7 @@ describe("analyzeCardImpact", () => {
   it("blocks when an added or updated unit is missing from the publication", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_payment_failures", ["facts"]),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["facts"]),
       undefined,
     );
 
@@ -192,14 +192,14 @@ describe("analyzeCardImpact", () => {
       createDocumentCardVersion(),
       {
         kind: "added",
-        knowledgeUnitId: "unit_payment_failures",
+        knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         currentContentDigest: digest,
       },
       onlyUnit(createIngestionPublicationFixture()),
     );
 
     expect(impact).toEqual({
-      cardId: "unit_payment_failures",
+      cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       decision: "none",
       reasons: [],
     });
@@ -223,7 +223,7 @@ describe("analyzeCardImpact", () => {
   ] as const)("reports %s as %s", (field, rule) => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_payment_failures", [field]),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", [field]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
@@ -234,12 +234,12 @@ describe("analyzeCardImpact", () => {
   it("reports nothing for a provenance-only change", () => {
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_payment_failures", ["provenance"]),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["provenance"]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
     expect(impact).toEqual({
-      cardId: "unit_payment_failures",
+      cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       decision: "none",
       reasons: [],
     });
@@ -253,7 +253,7 @@ describe("analyzeCardImpact", () => {
     // it moved between; the declared field name only says something differs.
     const impact = analyzeCardImpact(
       createDocumentCardVersion({ indexVersion: "idxv_zzzz" }),
-      updated("unit_payment_failures", ["published.scopes"]),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["published.scopes"]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
@@ -266,7 +266,7 @@ describe("analyzeCardImpact", () => {
     // change is the only thing that would tell an operator the range moved.
     const impact = analyzeCardImpact(
       createDocumentCardVersion(),
-      updated("unit_payment_failures", ["published.scopes"]),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["published.scopes"]),
       onlyUnit(createIngestionPublicationFixture()),
     );
 
@@ -275,7 +275,7 @@ describe("analyzeCardImpact", () => {
 
   it("is deterministic: the same input yields the same decision", () => {
     const version = createSqlCardVersion();
-    const change = updated("unit_payments_table", ["source.coordinate"]);
+    const change = updated("unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba", ["source.coordinate"]);
     const unit = onlyUnit(createSqlPublicationFixture());
 
     expect(analyzeCardImpact(version, change, unit)).toEqual(

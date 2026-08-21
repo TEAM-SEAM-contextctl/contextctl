@@ -250,7 +250,7 @@ describe("planSelectedScopes", () => {
       const whole = managed();
       const narrowed: ApprovedScope = {
         ...whole,
-        selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+        selection: { kind: "semantic_units", semanticUnitIds: ["unit_01890f5c-7b1a-7989-86c3-07e34e599ac5"] },
       };
 
       // Same `(scopeId, scopeVersion)`, different selector: the catalog is
@@ -320,7 +320,7 @@ describe("planSelectedScopes", () => {
       const whole = managed();
       const narrowed: ApprovedScope = {
         ...whole,
-        selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+        selection: { kind: "semantic_units", semanticUnitIds: ["unit_01890f5c-7b1a-7989-86c3-07e34e599ac5"] },
       };
 
       expect(() =>
@@ -332,7 +332,7 @@ describe("planSelectedScopes", () => {
       const whole = managed();
       const narrowed: ApprovedScope = {
         ...whole,
-        selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+        selection: { kind: "semantic_units", semanticUnitIds: ["unit_01890f5c-7b1a-7989-86c3-07e34e599ac5"] },
       };
 
       // No priority between the two definitions: the order of the admitted

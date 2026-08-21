@@ -20,7 +20,8 @@ import {
 import { type ModelValidationIssue } from "./model-validation.js";
 import { revisionIdentity } from "./revision-identity.js";
 
-const CHUNK_ID_PATTERN = /^chk_[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/;
+const CHUNK_ID_PATTERN =
+  /^chk_[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 export interface ManagedChunkIdSource {
   nextChunkId(): string;

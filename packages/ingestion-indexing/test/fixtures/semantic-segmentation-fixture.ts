@@ -5,6 +5,7 @@ import {
   type DocumentBlock,
   type NormalizedDocument,
 } from "../../src/index.js";
+import { structuralId } from "./root-id-fixture.js";
 
 export type SegmentationFixtureBlock =
   | {
@@ -34,7 +35,7 @@ export function createSegmentationDocument(
   let offset = 0;
 
   for (const [order, specification] of specifications.entries()) {
-    const id = `blk_${order}`;
+    const id = structuralId("blk", order);
     if (specification.kind === "heading") {
       while ((headings.at(-1)?.level ?? 0) >= specification.level) {
         headings.pop();

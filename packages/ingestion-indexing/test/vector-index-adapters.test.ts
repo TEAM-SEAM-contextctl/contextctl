@@ -10,6 +10,7 @@ import {
   type VectorIndexPort,
   type VectorIndexRecord,
 } from "../src/index.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 const profile: EmbeddingProfile = {
   id: "vector-test",
@@ -47,19 +48,19 @@ describe("VectorIndexPort contract", () => {
     });
 
     const wholeDocument = await search(adapter, prepared.accessHandle);
-    const oneUnit = await search(adapter, prepared.accessHandle, ["unit_refunds"]);
+    const oneUnit = await search(adapter, prepared.accessHandle, ["unit_01890f5c-7b1a-74cb-87b1-6c88b18a4d78"]);
     const severalUnits = await search(adapter, prepared.accessHandle, [
-      "unit_refunds",
-      "unit_shipping",
+      "unit_01890f5c-7b1a-74cb-87b1-6c88b18a4d78",
+      "unit_01890f5c-7b1a-7da6-8af6-ec349f7998e3",
     ]);
-    const missing = await search(adapter, prepared.accessHandle, ["unit_missing"]);
+    const missing = await search(adapter, prepared.accessHandle, ["unit_01890f5c-7b1a-7a13-8fd3-6939fe7fa688"]);
 
     expect(wholeDocument.map((hit) => hit.metadata.documentId)).toEqual([
       "doc_payments",
       "doc_payments",
     ]);
     expect(oneUnit.map((hit) => hit.metadata.semanticUnitId)).toEqual([
-      "unit_refunds",
+      "unit_01890f5c-7b1a-74cb-87b1-6c88b18a4d78",
     ]);
     expect(severalUnits).toHaveLength(2);
     expect(missing).toEqual([]);
@@ -281,7 +282,7 @@ describe("Qdrant vector index adapter", () => {
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
         documentId: "doc_payments",
-        semanticUnitIds: ["unit_refunds", "unit_shipping"],
+        semanticUnitIds: ["unit_01890f5c-7b1a-74cb-87b1-6c88b18a4d78", "unit_01890f5c-7b1a-7da6-8af6-ec349f7998e3"],
       },
       queryVector: [1, 0, 0],
       limit: 4,
@@ -310,7 +311,7 @@ describe("Qdrant vector index adapter", () => {
         { key: "documentId", match: { value: "doc_payments" } },
         {
           key: "semanticUnitId",
-          match: { any: ["unit_refunds", "unit_shipping"] },
+          match: { any: ["unit_01890f5c-7b1a-74cb-87b1-6c88b18a4d78", "unit_01890f5c-7b1a-7da6-8af6-ec349f7998e3"] },
         },
       ],
     });
@@ -578,8 +579,8 @@ function record(
       documentId: `doc_${document}`,
       documentIndexId,
       indexVersion,
-      semanticUnitId: `unit_${unit}`,
-      chunkId: `chk_${revision}`,
+      semanticUnitId: structuralId("unit", unit),
+      chunkId: structuralId("chk", revision),
       chunkRevisionId,
       contentDigest: sha256Digest(retrievalText),
     },

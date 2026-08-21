@@ -91,12 +91,12 @@ describe("SqliteCardStore approved catalog", () => {
   });
 
   it("returns meaning, policy, and scopes inline for an approved card", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     expect((await store.listApprovedCards()).cards).toEqual([
       {
-        cardId: "unit_a",
+        cardId: "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
         versionId: "cv_a",
         meaning,
         policy,
@@ -106,31 +106,31 @@ describe("SqliteCardStore approved catalog", () => {
   });
 
   it("omits a card that has never been approved", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
 
     expect((await store.listApprovedCards()).cards).toEqual([]);
   });
 
   it("drops a card once it is withdrawn", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
-    await disableCard(ports, "unit_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
+    await disableCard(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", decision);
 
     expect((await store.listApprovedCards()).cards).toEqual([]);
   });
 
   it("serves only the current version when a card has several", async () => {
-    const card = cardWith("unit_a", "cv_a");
+    const card = cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a");
     const second: CardVersion = {
       ...createDocumentCardVersion(),
       id: "cv_b",
-      cardId: "unit_a",
+      cardId: "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
     };
     await store.saveCard(
       withCardVersions(card, appendCardVersion(card.versions, second)),
       [],
     );
-    await approveCardVersion(ports, "unit_a", "cv_b", decision);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_b", decision);
 
     const catalog = await store.listApprovedCards();
     expect(catalog.cards).toHaveLength(1);
@@ -165,17 +165,17 @@ describe("SqliteCardStore approved catalog", () => {
     // The size rules run at grounding, so an over-limit version is stored as
     // rejected and can never be promoted. What matters here is that the Card
     // does not stop serving while that is true.
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
-    const card = await store.findCard("unit_a");
+    const card = await store.findCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1");
     if (card === undefined) {
       throw new Error("card should exist");
     }
     const oversized: CardVersion = {
       ...createDocumentCardVersion(),
       id: "cv_oversized",
-      cardId: "unit_a",
+      cardId: "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       validationState: "rejected",
     };
     await store.saveCard(
@@ -184,7 +184,7 @@ describe("SqliteCardStore approved catalog", () => {
     );
 
     await expect(
-      approveCardVersion(ports, "unit_a", "cv_oversized", decision),
+      approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_oversized", decision),
     ).rejects.toThrow();
 
     const snapshot = await store.listApprovedCards();
@@ -193,8 +193,8 @@ describe("SqliteCardStore approved catalog", () => {
   });
 
   it("gives the same snapshot version to two reads of an unchanged catalog", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const first = await store.listApprovedCards();
     const second = await store.listApprovedCards();
@@ -203,11 +203,11 @@ describe("SqliteCardStore approved catalog", () => {
   });
 
   it("changes the snapshot version when a Card stops serving", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
     const serving = await store.listApprovedCards();
 
-    await disableCard(ports, "unit_a", decision);
+    await disableCard(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", decision);
     const withdrawn = await store.listApprovedCards();
 
     expect(withdrawn.catalogSnapshotVersion).not.toBe(
@@ -230,8 +230,8 @@ describe("SqliteCardStore approved catalog", () => {
   });
 
   it("leaves an already serving card untouched when a later promotion is refused", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const oversizedId = `unit_${"b".repeat(256)}`;
     await store.saveCard(cardWith(oversizedId, "cv_big"), []);
@@ -241,6 +241,6 @@ describe("SqliteCardStore approved catalog", () => {
 
     const snapshot = await store.listApprovedCards();
     expect(snapshot.cards).toHaveLength(1);
-    expect(snapshot.cards[0]?.cardId).toBe("unit_a");
+    expect(snapshot.cards[0]?.cardId).toBe("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1");
   });
 });

@@ -674,7 +674,11 @@ function nextAvailableBlockId(
 ): string {
   for (let attempt = 0; attempt < 1_024; attempt += 1) {
     const generated = ids.nextBlockId();
-    if (!/^blk_[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/.test(generated)) {
+    if (
+      !/^blk_[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+        generated,
+      )
+    ) {
       throw new DocumentCaptureError("invalid_block_id");
     }
     if (!allocatedIds.has(generated) && !previousIds.has(generated)) {

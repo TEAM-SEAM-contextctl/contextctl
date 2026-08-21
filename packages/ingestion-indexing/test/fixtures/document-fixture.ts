@@ -34,11 +34,11 @@ export function createDocumentFixture(): NormalizedDocument {
     completeness: { status: "complete", diagnostics: [] },
     blocks: [
       {
-        id: "blk_payment_failures",
+        id: "blk_01890f5c-7b1a-7fe8-88b6-6988509d5b03",
         revisionId: "brv_aaaa",
         kind: "heading",
         order: 0,
-        sectionPath: ["blk_payment_failures"],
+        sectionPath: ["blk_01890f5c-7b1a-7fe8-88b6-6988509d5b03"],
         text: heading,
         analysisText: heading.toLowerCase(),
         contentDigest: digestB,
@@ -52,11 +52,11 @@ export function createDocumentFixture(): NormalizedDocument {
         structure: { kind: "heading", level: 1 },
       },
       {
-        id: "blk_retry_policy",
+        id: "blk_01890f5c-7b1a-70a2-8eda-f1f23edb9f60",
         revisionId: "brv_bbbb",
         kind: "paragraph",
         order: 1,
-        sectionPath: ["blk_payment_failures"],
+        sectionPath: ["blk_01890f5c-7b1a-7fe8-88b6-6988509d5b03"],
         text: paragraph,
         analysisText: paragraph.toLowerCase(),
         contentDigest: digestC,
@@ -76,14 +76,14 @@ export function createDocumentFixture(): NormalizedDocument {
 export function createSemanticUnitFixture(): readonly DocumentSemanticUnit[] {
   return [
     {
-      id: "unit_payments",
+      id: "unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7",
       revisionId: "urv_aaaa",
       sourceId: rootId("src", "payments"),
       observationId: rootId("obs", "initial"),
       documentId: rootId("doc", "payments"),
       kind: "document",
       title: "Payments runbook",
-      childIds: ["unit_payment_failures"],
+      childIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
       blockIds: [],
       boundary: { kind: "document_root" },
       contentDigest: digestA,
@@ -91,16 +91,16 @@ export function createSemanticUnitFixture(): readonly DocumentSemanticUnit[] {
       diagnostics: [],
     },
     {
-      id: "unit_payment_failures",
+      id: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       revisionId: "urv_bbbb",
       sourceId: rootId("src", "payments"),
       observationId: rootId("obs", "initial"),
       documentId: rootId("doc", "payments"),
       kind: "section",
       title: "Payment failures",
-      parentId: "unit_payments",
+      parentId: "unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7",
       childIds: [],
-      blockIds: ["blk_payment_failures", "blk_retry_policy"],
+      blockIds: ["blk_01890f5c-7b1a-7fe8-88b6-6988509d5b03", "blk_01890f5c-7b1a-70a2-8eda-f1f23edb9f60"],
       boundary: { kind: "explicit_heading" },
       contentDigest: digestD,
       segmentationPolicyVersion: "semantic-unit-v1",
@@ -112,22 +112,22 @@ export function createSemanticUnitFixture(): readonly DocumentSemanticUnit[] {
 export function createManagedChunkFixture(): readonly ManagedChunk[] {
   return [
     {
-      id: "chk_payment_failures",
+      id: "chk_01890f5c-7b1a-7537-8d35-9bf8d4ab697a",
       revisionId: "crv_aaaa",
       sourceId: rootId("src", "payments"),
       observationId: rootId("obs", "initial"),
       documentId: rootId("doc", "payments"),
-      semanticUnitId: "unit_payment_failures",
+      semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       ordinal: 0,
       sourceSlices: [
         {
-          blockId: "blk_payment_failures",
+          blockId: "blk_01890f5c-7b1a-7fe8-88b6-6988509d5b03",
           startOffset: 0,
           endOffset: heading.length,
           separatorBefore: "",
         },
         {
-          blockId: "blk_retry_policy",
+          blockId: "blk_01890f5c-7b1a-70a2-8eda-f1f23edb9f60",
           startOffset: 0,
           endOffset: paragraph.length,
           separatorBefore: "\n\n",
@@ -145,9 +145,9 @@ export function createManagedChunkFixture(): readonly ManagedChunk[] {
 
 export function createIndexManifestFixture(): IndexManifest {
   const chunkBindings = {
-    chk_payment_failures: {
+    "chk_01890f5c-7b1a-7537-8d35-9bf8d4ab697a": {
       chunkRevisionId: "crv_aaaa",
-      semanticUnitId: "unit_payment_failures",
+      semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       semanticUnitRevisionId: "urv_bbbb",
       contentDigest: sha256Digest(chunkText),
     },
@@ -179,11 +179,11 @@ export function createIndexManifestFixture(): IndexManifest {
     },
     payloadSchemaVersion: 2,
     semanticUnitRevisions: {
-      unit_payments: "urv_aaaa",
-      unit_payment_failures: "urv_bbbb",
+      "unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7": "urv_aaaa",
+      "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd": "urv_bbbb",
     },
     chunkRevisions: {
-      chk_payment_failures: "crv_aaaa",
+      "chk_01890f5c-7b1a-7537-8d35-9bf8d4ab697a": "crv_aaaa",
     },
     chunkBindings,
     recordCount: 1,
@@ -212,8 +212,8 @@ export function createVectorRecordFixture(): readonly VectorIndexRecord[] {
         documentId: rootId("doc", "payments"),
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
-        semanticUnitId: "unit_payment_failures",
-        chunkId: "chk_payment_failures",
+        semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
+        chunkId: "chk_01890f5c-7b1a-7537-8d35-9bf8d4ab697a",
         chunkRevisionId: "crv_aaaa",
         contentDigest: sha256Digest(chunkText),
       },

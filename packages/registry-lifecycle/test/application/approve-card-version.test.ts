@@ -26,7 +26,7 @@ import { SqliteCardStore } from "../../src/infrastructure/sqlite/sqlite-card-sto
 import { SqliteLifecycleEventStore } from "../../src/infrastructure/sqlite/sqlite-lifecycle-event-store.js";
 import { createDocumentCardVersion } from "../fixtures/card-version.fixture.js";
 
-const cardId = "unit_payment_failures";
+const cardId = "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd";
 
 const decision: OperatorDecision = {
   decidedBy: "operator@example.test",
@@ -236,10 +236,10 @@ describe("operator card decisions", () => {
 
   it("reports a decision naming a card that does not exist", async () => {
     await expect(
-      approveCardVersion(ports, "unit_missing", "cv_1", decision),
+      approveCardVersion(ports, "unit_01890f5c-7b1a-7a13-8fd3-6939fe7fa688", "cv_1", decision),
     ).rejects.toThrow(CardNotFoundError);
     await expect(
-      disableCard(ports, "unit_missing", decision),
+      disableCard(ports, "unit_01890f5c-7b1a-7a13-8fd3-6939fe7fa688", decision),
     ).rejects.toThrow(CardNotFoundError);
   });
 

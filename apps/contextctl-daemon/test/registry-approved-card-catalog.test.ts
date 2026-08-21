@@ -43,7 +43,7 @@ const documentScope: RetrievalScope = {
   },
   selection: {
     kind: "semantic_units",
-    semanticUnitIds: ["unit_payment_failures"],
+    semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
   },
 };
 
@@ -140,26 +140,26 @@ describe("RegistryApprovedCardCatalog", () => {
   });
 
   it("serves a card whose current version is approved", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const approved = await catalog.listApprovedCards();
 
     expect(approved).toHaveLength(1);
-    expect(approved[0]?.cardId).toBe("unit_a");
+    expect(approved[0]?.cardId).toBe("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1");
     expect(approved[0]?.versionId).toBe("cv_a");
   });
 
   it("omits a card that has never been approved", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
 
     expect(await catalog.listApprovedCards()).toEqual([]);
   });
 
   it("omits a card once it is withdrawn", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
-    await disableCard(ports, "unit_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
+    await disableCard(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", decision);
 
     expect(await catalog.listApprovedCards()).toEqual([]);
   });
@@ -169,8 +169,8 @@ describe("RegistryApprovedCardCatalog", () => {
   });
 
   it("carries every meaning and policy field across unchanged", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a"), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a"), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const approved = await catalog.listApprovedCards();
 
@@ -187,8 +187,8 @@ describe("RegistryApprovedCardCatalog", () => {
   });
 
   it("translates a managed document scope down to its index reference and selection", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a", [documentScope]), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", [documentScope]), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const approved = await catalog.listApprovedCards();
 
@@ -212,7 +212,7 @@ describe("RegistryApprovedCardCatalog", () => {
         },
         selection: {
           kind: "semantic_units",
-          semanticUnitIds: ["unit_payment_failures"],
+          semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
         },
       },
     ]);
@@ -224,8 +224,8 @@ describe("RegistryApprovedCardCatalog", () => {
       kind: "managed_document",
       selection: { kind: "document" },
     };
-    await store.saveCard(cardWith("unit_a", "cv_a", [wholeDocument]), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", [wholeDocument]), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const approved = await catalog.listApprovedCards();
 
@@ -256,8 +256,8 @@ describe("RegistryApprovedCardCatalog", () => {
    * input Scopes would fail.
    */
   it("translates sql and http scopes, carrying every coordinate across", async () => {
-    await store.saveCard(cardWith("unit_a", "cv_a", [sqlScope, httpScope]), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", [sqlScope, httpScope]), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const approved = await catalog.listApprovedCards();
 
@@ -310,8 +310,8 @@ describe("RegistryApprovedCardCatalog", () => {
       // has nowhere else it could legally appear.
       parameters: [{ location: "query", name: "status", required: false }],
     };
-    await store.saveCard(cardWith("unit_a", "cv_a", [unnamedOperation]), []);
-    await approveCardVersion(ports, "unit_a", "cv_a", decision);
+    await store.saveCard(cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", [unnamedOperation]), []);
+    await approveCardVersion(ports, "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "cv_a", decision);
 
     const approved = await catalog.listApprovedCards();
 
@@ -331,7 +331,7 @@ describe("RegistryApprovedCardCatalog", () => {
 
   it("builds new objects instead of passing the store's entries through", async () => {
     const entry: CardCatalogEntry = {
-      cardId: "unit_a",
+      cardId: "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       versionId: "cv_a",
       meaning,
       policy,
@@ -369,7 +369,7 @@ describe("RegistryApprovedCardCatalog", () => {
       },
       selection: {
         kind: "semantic_units",
-        semanticUnitIds: ["unit_payment_failures"],
+        semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
       },
     });
     expect(approved[0]?.scopes[1]).toEqual(sqlScope);

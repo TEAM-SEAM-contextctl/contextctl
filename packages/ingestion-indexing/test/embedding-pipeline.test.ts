@@ -11,6 +11,7 @@ import {
   type ReusableChunkEmbedding,
 } from "../src/index.js";
 import { createManagedChunkFixture } from "./fixtures/document-fixture.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 const profile: EmbeddingProfile = {
   id: "ci-profile",
@@ -336,12 +337,12 @@ function createChunks(count: number): readonly ManagedChunk[] {
   const base = requiredChunk(createManagedChunkFixture(), 0);
   return Array.from({ length: count }, (_unused, index) => ({
     ...base,
-    id: `chk_${index}`,
+    id: structuralId("chk", index),
     revisionId: `crv_${String.fromCharCode(97 + index).repeat(8)}`,
     sourceId: `src_${index}`,
     observationId: `obs_${index}`,
     documentId: `doc_${index}`,
-    semanticUnitId: `unit_${index}`,
+    semanticUnitId: structuralId("unit", index),
     ordinal: 0,
   }));
 }
