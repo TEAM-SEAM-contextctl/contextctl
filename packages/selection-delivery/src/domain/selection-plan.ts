@@ -1,5 +1,5 @@
 import type { ApprovedCard, ApprovedScopeReference } from "./card-catalog.js";
-import { canonicalDigest } from "./canonical-digest.js";
+import { canonicalDigest, canonicalJson } from "./canonical-digest.js";
 import {
   SelectionPlanInvariantError,
   SelectionScopeInvariantError,
@@ -27,6 +27,41 @@ import type { SelectionResult } from "./selection-verdict.js";
  * two under another, without any Card's verdict changing.
  */
 export const SELECTION_PLANNING_POLICY_VERSION = "selection-planning-v1" as const;
+
+/**
+ * The absolute ceilings of `selection-planning-v1`, which no caller can raise.
+ *
+ * A plan is a read plan, and each ceiling bounds one dimension of what a
+ * single query may cause: how many Cards may answer it, how many items the
+ * answer may carry, how many managed reads it may issue, how many chunks each
+ * read may return, how many Card–item associations travel in `selectedBy`, and
+ * how many bytes of public guide the answer may serialize. They are stated as
+ * one record so that raising any of them is a change to the policy version
+ * rather than to a number somebody found in a function.
+ *
+ * `guideBytes` is measured over RFC 8785 canonical JSON in UTF-8, summed across
+ * every item's public guide — the bytes the guides actually occupy on the wire,
+ * not a character count that would undercount anything outside ASCII.
+ *
+ * The values are the SOT's (L1470): 32 / 128 / 64 / 8 / 256 / 64 KiB.
+ */
+export const SELECTION_PLANNING_LIMITS = {
+  admittedCards: 32,
+  items: 128,
+  managedTargets: 64,
+  chunksPerTarget: 8,
+  selectedByTotal: 256,
+  guideBytes: 64 * 1024,
+} as const;
+
+export type SelectionPlanningLimit = keyof typeof SELECTION_PLANNING_LIMITS;
+
+/** One ceiling a plan crossed, with the number it reached. */
+export interface PlanningLimitViolation {
+  readonly limit: SelectionPlanningLimit;
+  readonly allowed: number;
+  readonly actual: number;
+}
 
 /**
  * What one query selected, and what still has to be executed to answer it.
@@ -275,6 +310,62 @@ export function planSelectedScopes(
     items: [...byItemKey.values()].map(freezeItem).sort(compareItems),
     managedTargets: [...targets.values()].sort(compareTargets),
   };
+}
+
+/**
+ * Every `selection-planning-v1` ceiling the plan is over, after merging.
+ *
+ * Measured on the merged plan rather than on the raw Card list, because the
+ * SOT bounds what a query *causes* and merging is what decides that: two
+ * Cards on one Scope are one item and one read. `admittedCount` is the one
+ * figure the plan itself no longer shows — admitted Cards that merged onto
+ * shared items are not countable from the items — so it is handed in.
+ *
+ * A list rather than a boolean or a first hit, so an operator reading the
+ * refusal sees every dimension that was crossed in one message instead of
+ * fixing one and discovering the next. An empty list is a plan within policy.
+ * Nothing is trimmed to fit: the caller either executes the plan or refuses
+ * it whole, which is the SOT's rule — "Guide, selectedBy나 대상을 조용히
+ * 자르지 않고 Plan 실행 전에 selection_plan_limit_exceeded로 실패한다".
+ */
+export function planningLimitViolations(
+  admittedCount: number,
+  plan: Pick<SelectionPlan, "items" | "managedTargets">,
+): readonly PlanningLimitViolation[] {
+  const selectedByTotal = plan.items.reduce(
+    (total, item) => total + item.selectedBy.length,
+    0,
+  );
+  const guideBytes = plan.items.reduce(
+    (total, item) => total + utf8ByteLength(canonicalJson(item.guide)),
+    0,
+  );
+  const widestTarget = plan.managedTargets.reduce(
+    (widest, target) => Math.max(widest, target.limit),
+    0,
+  );
+
+  const measured: readonly [SelectionPlanningLimit, number][] = [
+    ["admittedCards", admittedCount],
+    ["items", plan.items.length],
+    ["managedTargets", plan.managedTargets.length],
+    ["chunksPerTarget", widestTarget],
+    ["selectedByTotal", selectedByTotal],
+    ["guideBytes", guideBytes],
+  ];
+
+  return measured
+    .filter(([limit, actual]) => actual > SELECTION_PLANNING_LIMITS[limit])
+    .map(([limit, actual]) => ({
+      limit,
+      allowed: SELECTION_PLANNING_LIMITS[limit],
+      actual,
+    }));
+}
+
+/** UTF-8 length without `Buffer`, which this package does not otherwise touch. */
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 /**

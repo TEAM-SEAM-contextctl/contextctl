@@ -25,7 +25,9 @@ import {
   type CandidateScore,
 } from "../domain/query-scoring.js";
 import {
+  planningLimitViolations,
   planSelectedScopes,
+  SELECTION_PLANNING_LIMITS,
   verifySelectionPlan,
   type SelectionPlan,
 } from "../domain/selection-plan.js";
@@ -45,6 +47,7 @@ import {
   EmptyQueryError,
   QueryInputLimitExceededError,
   ResolveContextFailure,
+  SelectionPlanLimitExceededError,
 } from "./errors.js";
 
 export {
@@ -62,8 +65,14 @@ export {
  * while this caps each Scope's share of the ranking that feeds it. The value is
  * deliberately above `DEFAULT_CONTEXT_BUDGET.maxChunks / 2`, so two Scopes can
  * still fill the budget between them.
+ *
+ * Not a number of its own: it *is* the `selection-planning-v1` ceiling on
+ * chunks per target. The default is the maximum the policy allows, and a
+ * deployment may set `chunkLimitPerScope` lower but never higher — a higher
+ * value is refused at planning as `selection_plan_limit_exceeded`.
  */
-export const DEFAULT_CHUNK_LIMIT_PER_SCOPE = 8;
+export const DEFAULT_CHUNK_LIMIT_PER_SCOPE =
+  SELECTION_PLANNING_LIMITS.chunksPerTarget;
 
 /**
  * How many Cards each path contributes to the union that is ranked on both
@@ -142,12 +151,12 @@ export interface SelectContextOptions {
   readonly thresholds?: SelectionThresholds;
   /**
    * Chunks requested per managed document Scope. Defaults to
-   * `DEFAULT_CHUNK_LIMIT_PER_SCOPE`.
+   * `DEFAULT_CHUNK_LIMIT_PER_SCOPE`, which is also the most the policy allows.
    *
-   * Not validated here: it is transcribed onto the guide, and the executor
-   * already defines what a non-positive bound means, so a caller-supplied value
-   * is forwarded exactly as given rather than re-judged against an invariant
-   * this domain does not own. It does affect identity — the bound is part of
+   * A value above `SELECTION_PLANNING_LIMITS.chunksPerTarget` is refused at
+   * planning as `selection_plan_limit_exceeded`; a non-positive value is
+   * transcribed onto the guide as given, because the executor already defines
+   * what such a bound means. It does affect identity — the bound is part of
    * both `itemKey` and `targetKey` — so two runs under different limits produce
    * different plans by construction.
    */
@@ -198,6 +207,13 @@ export async function selectContext(
     admitted,
     options.chunkLimitPerScope ?? DEFAULT_CHUNK_LIMIT_PER_SCOPE,
   );
+  // After merging and before anything is executed: the plan's real size is
+  // only known once same-Scope Cards have collapsed onto shared items, and a
+  // plan over policy must not be trimmed to fit or read at all (SOT L1470).
+  const violations = planningLimitViolations(admitted.length, planned);
+  if (violations.length > 0) {
+    throw new SelectionPlanLimitExceededError(violations);
+  }
 
   const plan: SelectionPlan = {
     query: queryText,
