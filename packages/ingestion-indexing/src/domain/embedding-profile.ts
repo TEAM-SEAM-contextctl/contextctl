@@ -41,6 +41,9 @@ export type DocumentEmbeddingExecution =
   | LocalDocumentEmbeddingExecution
   | RemoteDocumentEmbeddingExecution;
 
+export const DOCUMENT_EMBEDDING_INPUT_TRANSFORM_VERSION = "identity-v1";
+export const QUERY_EMBEDDING_INPUT_TRANSFORM_VERSION = "identity-v1";
+
 /**
  * Complete vector-semantics boundary for a production document index.
  *
@@ -126,6 +129,30 @@ export function validateDocumentRetrievalEmbeddingProfile(
     `${path}.queryInputTransformVersion`,
     issues,
   );
+  if (
+    profile.documentInputTransformVersion !==
+    DOCUMENT_EMBEDDING_INPUT_TRANSFORM_VERSION
+  ) {
+    issues.push(
+      issue(
+        "invalid_value",
+        `${path}.documentInputTransformVersion`,
+        "document embedding input transform is unsupported",
+      ),
+    );
+  }
+  if (
+    profile.queryInputTransformVersion !==
+    QUERY_EMBEDDING_INPUT_TRANSFORM_VERSION
+  ) {
+    issues.push(
+      issue(
+        "invalid_value",
+        `${path}.queryInputTransformVersion`,
+        "query embedding input transform is unsupported",
+      ),
+    );
+  }
   validatePositiveInteger(
     profile.modelMaxTokens,
     `${path}.modelMaxTokens`,
@@ -250,6 +277,36 @@ export function documentEmbeddingProfileChangeRequiresFullRebuild(
   return !embeddingProfilesMatch(previous, next);
 }
 
+/** Applies the profile-pinned transform before document text leaves Indexing. */
+export function transformDocumentEmbeddingInput(
+  profile: DocumentRetrievalEmbeddingProfile,
+  text: string,
+): string {
+  assertValidEmbeddingProfile(profile);
+  if (
+    profile.documentInputTransformVersion !==
+    DOCUMENT_EMBEDDING_INPUT_TRANSFORM_VERSION
+  ) {
+    throw new TypeError("document embedding input transform is unsupported");
+  }
+  return text;
+}
+
+/** Applies the profile-pinned transform before query text leaves Indexing. */
+export function transformQueryEmbeddingInput(
+  profile: DocumentRetrievalEmbeddingProfile,
+  text: string,
+): string {
+  assertValidEmbeddingProfile(profile);
+  if (
+    profile.queryInputTransformVersion !==
+    QUERY_EMBEDDING_INPUT_TRANSFORM_VERSION
+  ) {
+    throw new TypeError("query embedding input transform is unsupported");
+  }
+  return text;
+}
+
 function validateDocumentEmbeddingExecution(
   profile: DocumentRetrievalEmbeddingProfile,
   path: string,
@@ -362,6 +419,15 @@ function validateDocumentEmbeddingExecution(
           "relationship_mismatch",
           `${path}.execution.model`,
           "remote execution model must match the profile model",
+        ),
+      );
+    }
+    if (profile.pooling !== "provider_defined") {
+      issues.push(
+        issue(
+          "invalid_value",
+          `${path}.pooling`,
+          "remote embeddings require provider-defined pooling",
         ),
       );
     }

@@ -1,10 +1,19 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  OpenAiCompatibleEmbeddingAdapter,
   QdrantVectorIndexAdapter,
+  createLocalMarkdownPublicationRuntime,
   createVectorRecordId,
   sha256Digest,
   type EmbeddingProfile,
+  type DocumentRetrievalEmbeddingProfile,
   type VectorIndexRecord,
 } from "../src/index.js";
 import { rootId, structuralId } from "./fixtures/root-id-fixture.js";
@@ -154,11 +163,184 @@ integration("QdrantVectorIndexAdapter integration", () => {
       }),
     ).toHaveLength(1);
   }, integrationTestTimeoutMs);
+
+  it("publishes and searches one immutable Scope through a pinned remote provider", async () => {
+    const fixtureDirectory = await mkdtemp(
+      join(tmpdir(), "contextctl-remote-embedding-"),
+    );
+    const markdownPath = join(fixtureDirectory, "remote.md");
+    await writeFile(
+      markdownPath,
+      "# 결제 운영\n\n## 재시도\n\n결제 실패는 세 번까지 재시도합니다.\n",
+      "utf8",
+    );
+    const requests: Array<{ model: string; inputCount: number }> = [];
+    const server = fixedEmbeddingServer(requests);
+    const endpoint = await listen(server);
+    const remoteSecurityDomain = `remote-${String(Date.now())}`;
+    const remoteProfile: DocumentRetrievalEmbeddingProfile = {
+      id: "document-fixed-remote-v1",
+      version: "1",
+      model: "fixed-remote-model-2026-08-21",
+      modelRevision: "sha256:fixed-remote-model-revision",
+      execution: {
+        kind: "remote",
+        adapter: "openai-compatible",
+        adapterVersion: "1.0.0",
+        model: "fixed-remote-model-2026-08-21",
+      },
+      dimensions: 3,
+      pooling: "provider_defined",
+      normalization: "l2",
+      distance: "cosine",
+      documentInputTransformVersion: "identity-v1",
+      queryInputTransformVersion: "identity-v1",
+      modelMaxTokens: 8_192,
+      admissionLimit: {
+        textMeasureProfileVersion: "unicode-estimate-v1",
+        maxUnits: 480,
+      },
+      maxInputTokens: 480,
+      textMeasureProfileVersion: "unicode-estimate-v1",
+    };
+
+    try {
+      const embeddingProvider = new OpenAiCompatibleEmbeddingAdapter({
+        endpoint,
+        profile: remoteProfile,
+        headers: { authorization: "Bearer integration-secret" },
+      });
+      const runtime = createLocalMarkdownPublicationRuntime({
+        configurations: { "source.remote": { path: markdownPath } },
+        embeddingProfile: remoteProfile,
+        embeddingProvider,
+        embeddingProviderId: "remote.integration",
+        vectorIndex: new QdrantVectorIndexAdapter({ url: requiredUrl() }),
+        connectorId: "vector.qdrant.remote",
+        stateNamespaceId: `state-remote-${String(Date.now())}`,
+        securityDomain: remoteSecurityDomain,
+      });
+      const published = await runtime.workflow.publish({
+        source: {
+          sourceType: "markdown",
+          displayName: "Remote embedding fixture",
+          configReference: "source.remote",
+          polling: { enabled: false },
+        },
+        connectorId: "vector.qdrant.remote",
+        securityDomain: remoteSecurityDomain,
+      });
+      const scope = published.publication?.knowledgeUnits
+        .flatMap((unit) => unit.publishedScopes)
+        .find((candidate) => candidate.kind === "managed_document");
+      if (scope === undefined) throw new Error("managed Scope was not published");
+
+      const hits = await runtime.search.search({
+        queryText: "결제 실패 재시도",
+        securityDomain: remoteSecurityDomain,
+        scopeRef: {
+          scopeId: scope.scopeId,
+          scopeVersion: scope.scopeVersion,
+        },
+        limit: 3,
+      });
+
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits.some((hit) => hit.text.includes("재시도"))).toBe(true);
+      expect(requests.length).toBeGreaterThanOrEqual(2);
+      expect(requests.every((request) => request.model === remoteProfile.model))
+        .toBe(true);
+      expect(requests.every((request) => request.inputCount > 0)).toBe(true);
+    } finally {
+      await close(server);
+      await rm(fixtureDirectory, { recursive: true, force: true });
+    }
+  }, integrationTestTimeoutMs);
 });
 
 function requiredUrl(): string {
   if (qdrantUrl === undefined) throw new Error("CONTEXTCTL_QDRANT_URL is required");
   return qdrantUrl;
+}
+
+function fixedEmbeddingServer(
+  requests: Array<{ model: string; inputCount: number }>,
+): Server {
+  return createServer(async (request, response) => {
+    try {
+      if (
+        request.method !== "POST" ||
+        request.url !== "/v1/embeddings" ||
+        request.headers.authorization !== "Bearer integration-secret"
+      ) {
+        response.writeHead(404).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      for await (const chunk of request) {
+        const buffer = Buffer.from(chunk);
+        bytes += buffer.length;
+        if (bytes > 1024 * 1024) {
+          response.writeHead(413).end();
+          return;
+        }
+        chunks.push(buffer);
+      }
+      const payload = JSON.parse(
+        Buffer.concat(chunks).toString("utf8"),
+      ) as unknown;
+      if (
+        !isRecord(payload) ||
+        typeof payload.model !== "string" ||
+        !Array.isArray(payload.input) ||
+        payload.input.some((text) => typeof text !== "string")
+      ) {
+        response.writeHead(400).end();
+        return;
+      }
+      requests.push({
+        model: payload.model,
+        inputCount: payload.input.length,
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          model: payload.model,
+          data: payload.input.map((_text, index) => ({
+            index,
+            embedding: [1, 0, 0],
+          })),
+        }),
+      );
+    } catch {
+      response.writeHead(500).end();
+    }
+  });
+}
+
+async function listen(server: Server): Promise<string> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo | null;
+  if (address === null) throw new Error("embedding fixture did not listen");
+  return `http://127.0.0.1:${String(address.port)}/v1/embeddings`;
+}
+
+async function close(server: Server): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function record(

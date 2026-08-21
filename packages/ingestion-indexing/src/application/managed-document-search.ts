@@ -11,6 +11,8 @@ import {
 } from "../domain/document-indexing-policy.js";
 import {
   embeddingVectorMatchesProfile,
+  isDocumentRetrievalEmbeddingProfile,
+  transformQueryEmbeddingInput,
   type EmbeddingProfile,
 } from "../domain/embedding-profile.js";
 import { canonicalJson } from "../domain/revision-identity.js";
@@ -459,7 +461,14 @@ async function embedQuery(
   try {
     outputs = await binding.provider.embed({
       profile,
-      inputs: [{ key: QUERY_EMBEDDING_KEY, text: queryText }],
+      inputs: [
+        {
+          key: QUERY_EMBEDDING_KEY,
+          text: isDocumentRetrievalEmbeddingProfile(profile)
+            ? transformQueryEmbeddingInput(profile, queryText)
+            : queryText,
+        },
+      ],
       signal,
     });
   } catch (error) {
