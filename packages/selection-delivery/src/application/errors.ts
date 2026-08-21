@@ -11,6 +11,10 @@ import {
   SelectionScopeInvariantError,
   SelectionThresholdsInvariantError,
 } from "../domain/errors.js";
+import {
+  SELECTION_PLANNING_POLICY_VERSION,
+  type PlanningLimitViolation,
+} from "../domain/selection-plan.js";
 
 /**
  * The request-level failure channel.
@@ -158,6 +162,36 @@ export class QueryInputLimitExceededError extends ResolveContextFailure {
 }
 
 /**
+ * Thrown when a plan is over one or more `selection-planning-v1` ceilings.
+ *
+ * Raised after merging and before anything is executed, which is the only
+ * honest moment: earlier, the plan's real size is not known; later, a read has
+ * already been issued on a plan that policy says may not run. Nothing is
+ * trimmed to fit. A Guide list cut to size would tell a consumer it had every
+ * Scope the query selected when it did not, and a `selectedBy` cut to size
+ * would erase which Card authorised a read — both quieter than a refusal and
+ * both wrong. 422 and not retriable: the same query against the same catalog
+ * plans the same size.
+ *
+ * Every crossed ceiling travels on the error, so an operator sees the whole
+ * picture once rather than one dimension per attempt.
+ */
+export class SelectionPlanLimitExceededError extends ResolveContextFailure {
+  readonly violations: readonly PlanningLimitViolation[];
+
+  constructor(violations: readonly PlanningLimitViolation[]) {
+    super(
+      "selection_plan_limit_exceeded",
+      `plan exceeds ${SELECTION_PLANNING_POLICY_VERSION}: ${violations
+        .map((violation) => `${violation.limit} ${violation.actual} > ${violation.allowed}`)
+        .join(", ")}`,
+    );
+    this.name = "SelectionPlanLimitExceededError";
+    this.violations = violations;
+  }
+}
+
+/**
  * Thrown when the semantic path is unusable and the policy does not permit a
  * lexical answer.
  *
@@ -195,11 +229,14 @@ export class CardEmbeddingUnavailableError extends ResolveContextFailure {
  * promises nothing.
  *
  * Codes with no throw site — `overloaded`, `deadline_exceeded`,
- * `selection_catalog_unavailable`, `selection_plan_limit_exceeded` — are absent
- * on purpose. Each is declared in the vocabulary and each has a status and a
- * `retriable`, but nothing in this package raises them yet, and inventing a
- * throw site to make the mapping look complete would ship a code no condition
- * actually stands behind.
+ * `selection_catalog_unavailable` — are absent on purpose. Each is declared in
+ * the vocabulary and each has a status and a `retriable`, but nothing in this
+ * package raises them yet (they are the daemon's admission lane and deadline,
+ * and a catalog port that cannot answer), and inventing a throw site to make
+ * the mapping look complete would ship a code no condition actually stands
+ * behind. `selection_plan_limit_exceeded` is raised by
+ * `SelectionPlanLimitExceededError` after planning, and like every other
+ * `ResolveContextFailure` it carries its own code.
  */
 export function toResolveContextErrorCode(
   cause: unknown,
