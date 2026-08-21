@@ -129,6 +129,70 @@ describe("verifySelectionPlan", () => {
     expect(() => verifySelectionPlan(tampered)).toThrow(SelectionPlanInvariantError);
   });
 
+  it("refuses a candidate the policy excluded", async () => {
+    const plan = await demoPlan();
+    const [candidate] = plan.summary.candidates;
+    if (candidate === undefined) {
+      throw new Error("expected a candidate");
+    }
+    const tampered: SelectionPlan = {
+      ...plan,
+      summary: {
+        ...plan.summary,
+        policy: {
+          ...plan.summary.policy,
+          excluded: [
+            { cardId: candidate.cardId, versionId: candidate.versionId, reason: "sensitive_denied" },
+          ],
+        },
+      },
+    };
+
+    // A Card the policy kept out was never scored; a plan that both excludes
+    // and scores it is lying about one of the two.
+    expect(() => verifySelectionPlan(tampered)).toThrow(SelectionPlanInvariantError);
+    expect(() => verifySelectionPlan(tampered)).toThrow(/scored although the policy excluded it/);
+  });
+
+  it("refuses an item selected by a Card the policy excluded", async () => {
+    const plan = await demoPlan();
+    const item = managedItem(plan);
+    const [selector] = item.selectedBy;
+    const tampered: SelectionPlan = {
+      ...plan,
+      summary: {
+        ...plan.summary,
+        // Scrubbed from the layers above so that only the item betrays it.
+        candidates: plan.summary.candidates.filter((each) => each.cardId !== selector.cardId),
+        selection: {
+          ...plan.summary.selection,
+          outcomes: plan.summary.selection.outcomes.filter(
+            (each) => each.cardId !== selector.cardId,
+          ),
+        },
+        policy: {
+          ...plan.summary.policy,
+          excluded: [{ ...selector, reason: "usage_not_allowed" }],
+        },
+      },
+    };
+
+    expect(() => verifySelectionPlan(tampered)).toThrow(SelectionPlanInvariantError);
+  });
+
+  it("refuses a policy context outside the type", async () => {
+    const plan = await demoPlan();
+    const tampered = {
+      ...plan,
+      summary: {
+        ...plan.summary,
+        policy: { ...plan.summary.policy, context: { usage: "retrieval", sensitiveAccess: "maybe" } },
+      },
+    } as unknown as SelectionPlan;
+
+    expect(() => verifySelectionPlan(tampered)).toThrow();
+  });
+
   it("refuses a target no item reads", async () => {
     const plan = await demoPlan();
     const [target] = plan.managedTargets;
