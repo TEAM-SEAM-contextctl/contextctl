@@ -33,6 +33,7 @@ import {
   StaticVectorIndexConnectorRegistry,
   UuidSourceIdGenerator,
   UuidV7RootIdGenerator,
+  assertDocumentEmbeddingProviderCoverage,
   createLocalMarkdownPublicationRuntime,
   createSourceObservation,
   openIngestionDatabase,
@@ -1049,6 +1050,55 @@ describe("durable Index control plane", () => {
       code: "index_catalog_corrupt",
     });
     expect(vectorIndex.searchCalls).toBe(0);
+    database.close();
+  });
+
+  it("refuses provider removal while an approved Scope still reaches its profile", async () => {
+    const fixture = await createTemporaryFixture();
+    const database = openTestDatabase(fixture.databasePath);
+    const vectorIndex = new RecordingVectorIndex(
+      new InMemoryVectorIndexAdapter(),
+    );
+    const embeddings = new RecordingEmbeddingPort(
+      new DeterministicEmbeddingAdapter(),
+    );
+    const runtime = createDurableRuntime(
+      fixture.markdownPath,
+      database,
+      vectorIndex,
+      embeddings,
+    );
+    const result = await runtime.workflow.publish(command());
+    const scope = requiredManagedScope(
+      requiredValue(result.publication).knowledgeUnits[0]?.publishedScopes[0],
+    );
+    const reachableScopes = [scopeRef(scope), scopeRef(scope)];
+
+    const requirements = await assertDocumentEmbeddingProviderCoverage({
+      securityDomain: "tenant-a",
+      reachableScopes,
+      publications: runtime.indexPublications,
+      embeddingProviders: providerRegistry(embeddings),
+    });
+
+    expect(requirements).toEqual([
+      {
+        providerId: "provider.durable-test",
+        embeddingProfile: profile,
+        scopeRefs: [scopeRef(scope)],
+      },
+    ]);
+    await expect(
+      assertDocumentEmbeddingProviderCoverage({
+        securityDomain: "tenant-a",
+        reachableScopes,
+        publications: runtime.indexPublications,
+        embeddingProviders: new StaticQueryEmbeddingProviderRegistry([]),
+      }),
+    ).rejects.toMatchObject({
+      code: "embedding_provider_not_allowed",
+      retriable: false,
+    });
     database.close();
   });
 

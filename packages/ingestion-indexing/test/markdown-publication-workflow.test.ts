@@ -14,10 +14,13 @@ import {
   DeterministicEmbeddingAdapter,
   InMemoryVectorIndexAdapter,
   InMemoryMarkdownPublicationCheckpointStore,
+  OpenAiCompatibleEmbeddingAdapter,
   PublicationReadyReconciler,
+  StaticQueryEmbeddingProviderRegistry,
   createLocalMarkdownPublicationRuntime,
   type EmbeddingPort,
   type EmbeddingProviderRequest,
+  type DocumentRetrievalEmbeddingProfile,
   type MarkdownPublicationCheckpoint,
   type MarkdownPublicationCheckpointStore,
   type PublicationReadyNotifier,
@@ -43,6 +46,27 @@ const profile = {
   maxInputTokens: 480,
   textMeasureProfileVersion: "unicode-estimate-v1",
 };
+const remoteProfile: DocumentRetrievalEmbeddingProfile = {
+  ...profile,
+  id: "markdown-remote-vertical-slice",
+  model: "fixed-remote-model-2026-08-21",
+  modelRevision: "sha256:fixed-remote-model-revision",
+  execution: {
+    kind: "remote",
+    adapter: "openai-compatible",
+    adapterVersion: "1.0.0",
+    model: "fixed-remote-model-2026-08-21",
+  },
+  pooling: "provider_defined",
+  normalization: "l2",
+  documentInputTransformVersion: "identity-v1",
+  queryInputTransformVersion: "identity-v1",
+  modelMaxTokens: 8_192,
+  admissionLimit: {
+    textMeasureProfileVersion: "unicode-estimate-v1",
+    maxUnits: 480,
+  },
+};
 
 afterEach(async () => {
   await Promise.all(
@@ -64,6 +88,114 @@ describe("MarkdownPublicationWorkflow", () => {
         securityDomain: "tenant-a",
       } as unknown as Parameters<typeof createLocalMarkdownPublicationRuntime>[0]),
     ).toThrow("an explicit vector index is required");
+  });
+
+  it("requires a custom query registry to retain the exact active provider", () => {
+    const active = new RecordingEmbeddingPort();
+    const other = new RecordingEmbeddingPort();
+    const priorProfile = { ...profile, version: "0.9.0" };
+    const retained = new StaticQueryEmbeddingProviderRegistry([
+      {
+        securityDomain: "tenant-a",
+        embeddingProfile: profile,
+        providerId: "provider.active",
+        provider: active,
+      },
+      {
+        securityDomain: "tenant-a",
+        embeddingProfile: priorProfile,
+        providerId: "provider.prior",
+        provider: other,
+      },
+    ]);
+
+    expect(() =>
+      createLocalMarkdownPublicationRuntime({
+        configurations: {},
+        embeddingProfile: profile,
+        embeddingProvider: active,
+        embeddingProviderId: "provider.active",
+        queryEmbeddingProviders: retained,
+        connectorId: "vector.local",
+        stateNamespaceId: "state_test",
+        securityDomain: "tenant-a",
+        vectorIndex: new InMemoryVectorIndexAdapter(),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      createLocalMarkdownPublicationRuntime({
+        configurations: {},
+        embeddingProfile: profile,
+        embeddingProvider: other,
+        queryEmbeddingProviders: retained,
+        connectorId: "vector.local",
+        stateNamespaceId: "state_test",
+        securityDomain: "tenant-a",
+        vectorIndex: new InMemoryVectorIndexAdapter(),
+      }),
+    ).toThrow(/exact active provider binding/);
+  });
+
+  it("publishes and searches through a profile-bound remote provider without local assets", async () => {
+    const requests: Array<{ model: string; inputCount: number }> = [];
+    const remote = new OpenAiCompatibleEmbeddingAdapter({
+      endpoint: "https://embedding.example.test/v1/embeddings",
+      profile: remoteProfile,
+      headers: { authorization: "Bearer test-secret" },
+      fetch: (async (_input, init) => {
+        const payload = JSON.parse(String(init?.body)) as {
+          readonly model: string;
+          readonly input: readonly string[];
+        };
+        requests.push({
+          model: payload.model,
+          inputCount: payload.input.length,
+        });
+        return Response.json({
+          model: payload.model,
+          data: payload.input.map((_text, index) => ({
+            index,
+            embedding: [1, 0, 0, 0, 0, 0, 0, 0],
+          })),
+        });
+      }) as typeof globalThis.fetch,
+    });
+    const runtime = createLocalMarkdownPublicationRuntime({
+      configurations: {
+        "source.fixture": { path: STRUCTURE_FIXTURE },
+      },
+      embeddingProfile: remoteProfile,
+      embeddingProvider: remote,
+      embeddingProviderId: "remote.markdown-test",
+      connectorId: "vector.remote",
+      stateNamespaceId: "state_remote_test",
+      securityDomain: "tenant-a",
+      vectorIndex: new InMemoryVectorIndexAdapter(),
+      clock: () => NOW,
+    });
+
+    const published = await runtime.workflow.publish({
+      ...command(),
+      connectorId: "vector.remote",
+    });
+    const scope = requiredPublication(published.publication).knowledgeUnits
+      .flatMap((unit) => unit.publishedScopes)
+      .find((candidate) => candidate.kind === "managed_document");
+    if (scope === undefined) throw new Error("managed Scope is missing");
+    const hits = await runtime.search.search({
+      queryText: "결제 재시도",
+      securityDomain: "tenant-a",
+      scopeRef: {
+        scopeId: scope.scopeId,
+        scopeVersion: scope.scopeVersion,
+      },
+      limit: 3,
+    });
+
+    expect(hits.length).toBeGreaterThan(0);
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(requests.every((request) => request.model === remoteProfile.model))
+      .toBe(true);
   });
 
   it("runs a real Markdown Source through ready Publication and managed search", async () => {

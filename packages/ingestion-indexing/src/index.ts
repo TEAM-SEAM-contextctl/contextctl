@@ -103,6 +103,16 @@ export {
   type ReusableChunkEmbedding,
 } from "./application/embed-managed-chunks.js";
 export {
+  assertProductionEmbeddingProvider,
+} from "./application/document-embedding-provider-binding.js";
+export {
+  assertDocumentEmbeddingProviderCoverage,
+  DocumentEmbeddingProviderCoverageError,
+  type DocumentEmbeddingProviderCoverageErrorCode,
+  type DocumentEmbeddingProviderCoverageInput,
+  type RequiredDocumentEmbeddingProvider,
+} from "./application/document-embedding-provider-coverage.js";
+export {
   DocumentIndexPublisher,
   DocumentIndexPublicationError,
   DEFAULT_INDEX_STAGING_PUBLICATION_LEASE_MS,
@@ -161,10 +171,14 @@ export {
 export {
   assertValidEmbeddingProfile,
   documentEmbeddingProfileChangeRequiresFullRebuild,
+  DOCUMENT_EMBEDDING_INPUT_TRANSFORM_VERSION,
   EMBEDDING_L2_NORM_TOLERANCE,
   embeddingProfilesMatch,
   embeddingVectorMatchesProfile,
   isDocumentRetrievalEmbeddingProfile,
+  QUERY_EMBEDDING_INPUT_TRANSFORM_VERSION,
+  transformDocumentEmbeddingInput,
+  transformQueryEmbeddingInput,
   validateDocumentRetrievalEmbeddingProfile,
   validateEmbeddingProfile,
   type DocumentEmbeddingExecution,
@@ -314,7 +328,6 @@ export {
   type OpenAiCompatibleEmbeddingAdapterOptions,
 } from "./infrastructure/openai-compatible-embedding-adapter.js";
 export {
-  assertProductionEmbeddingProvider,
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
@@ -326,6 +339,7 @@ export {
   type LocalEmbeddingAssetManifest,
   type LocalFeatureExtractionRuntime,
   type LocalFeatureExtractionRuntimeFactory,
+  type LocalDocumentEmbeddingInferenceResource,
   type TransformersJsLocalEmbeddingAdapterOptions,
 } from "./infrastructure/transformers-js-local-embedding-adapter.js";
 export {

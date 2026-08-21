@@ -1,8 +1,9 @@
-import { EmbeddingPipeline, type EmbeddingPipelinePolicy } from "../application/embed-managed-chunks.js";
 import {
   FailedIndexStagingCleanup,
   type FailedIndexStagingCleanupPolicy,
 } from "../application/cleanup-failed-index-staging.js";
+import { assertProductionEmbeddingProvider } from "../application/document-embedding-provider-binding.js";
+import { EmbeddingPipeline, type EmbeddingPipelinePolicy } from "../application/embed-managed-chunks.js";
 import { ManagedDocumentSearch } from "../application/managed-document-search.js";
 import { MarkdownCapture } from "../application/markdown-capture.js";
 import { MarkdownPublicationWorkflow } from "../application/markdown-publication-workflow.js";
@@ -27,6 +28,7 @@ import type {
 } from "../ports/markdown-publication.js";
 import type { IndexPublicationStore } from "../ports/index-publication-store.js";
 import type { IndexStagingAttemptStore } from "../ports/index-staging-attempt.js";
+import type { QueryEmbeddingProviderResolver } from "../ports/managed-document-search.js";
 import type { SourceObservationStore } from "../ports/source-observation.js";
 import type {
   CredentialResolver,
@@ -48,7 +50,6 @@ import {
   StaticQueryEmbeddingProviderRegistry,
   StaticVectorIndexConnectorRegistry,
 } from "./static-managed-search-registries.js";
-import { assertProductionEmbeddingProvider } from "./transformers-js-local-embedding-adapter.js";
 import { UuidV7RootIdGenerator } from "./uuid-v7-root-id-generator.js";
 import {
   UuidV7StructuralIdGenerator,
@@ -64,6 +65,13 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly securityDomain: string;
   /** Explicit provider bound to the exact document and query profile. */
   readonly embeddingProvider: EmbeddingPort;
+  /** Stable runtime binding ID for the active provider. */
+  readonly embeddingProviderId?: string;
+  /**
+   * Optional resolver containing the active binding and every older profile
+   * that remains reachable from an approved Scope.
+   */
+  readonly queryEmbeddingProviders?: QueryEmbeddingProviderResolver;
   /** Explicit vector index; tests may inject the in-memory adapter deliberately. */
   readonly vectorIndex: VectorIndexPort;
   readonly readyNotifier?: PublicationReadyNotifier;
@@ -124,6 +132,12 @@ export function createLocalMarkdownPublicationRuntime(
     );
   }
   if (
+    options.embeddingProviderId !== undefined &&
+    options.embeddingProviderId.trim() === ""
+  ) {
+    throw new TypeError("embedding provider ID must not be empty");
+  }
+  if (
     options.indexPublications !== undefined &&
     options.stagingAttempts === undefined
   ) {
@@ -169,6 +183,31 @@ export function createLocalMarkdownPublicationRuntime(
   const vectorIndexes = new StaticVectorIndexConnectorRegistry([
     { connectorId: options.connectorId, vectorIndex },
   ]);
+  const embeddingProviderId =
+    options.embeddingProviderId ??
+    `${options.embeddingProvider.providerKind ?? "test"}.${options.securityDomain}.${options.embeddingProfile.id}`;
+  const embeddingProviders =
+    options.queryEmbeddingProviders ??
+    new StaticQueryEmbeddingProviderRegistry([
+      {
+        securityDomain: options.securityDomain,
+        embeddingProfile: options.embeddingProfile,
+        providerId: embeddingProviderId,
+        provider: embeddingProvider,
+      },
+    ]);
+  const activeQueryBinding = embeddingProviders.resolve({
+    securityDomain: options.securityDomain,
+    embeddingProfile: options.embeddingProfile,
+  });
+  if (
+    activeQueryBinding === undefined ||
+    activeQueryBinding.provider !== embeddingProvider
+  ) {
+    throw new TypeError(
+      "query embedding providers must contain the exact active provider binding",
+    );
+  }
   const parser = new RemarkMarkdownParser();
   const embeddingPipeline = new EmbeddingPipeline({
     provider: embeddingProvider,
@@ -214,14 +253,7 @@ export function createLocalMarkdownPublicationRuntime(
   return {
     workflow,
     search: new ManagedDocumentSearch({
-      embeddingProviders: new StaticQueryEmbeddingProviderRegistry([
-        {
-          securityDomain: options.securityDomain,
-          embeddingProfile: options.embeddingProfile,
-          providerId: `local.${options.securityDomain}.${options.embeddingProfile.id}`,
-          provider: embeddingProvider,
-        },
-      ]),
+      embeddingProviders,
       vectorIndexes,
       publications: indexPublications,
     }),

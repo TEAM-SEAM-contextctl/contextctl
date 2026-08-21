@@ -21,6 +21,7 @@ import {
   verifyLocalEmbeddingAssets,
   type DocumentRetrievalEmbeddingProfile,
   type LocalEmbeddingAssetManifest,
+  type LocalDocumentEmbeddingExecution,
   type LocalFeatureExtractionRuntime,
   type LocalFeatureExtractionRuntimeFactory,
 } from "../src/index.js";
@@ -124,6 +125,16 @@ describe("document retrieval embedding profile", () => {
     ).toContainEqual(
       expect.objectContaining({ path: "embeddingProfile.execution.artifactPath" }),
     );
+    expect(
+      validateEmbeddingProfile({
+        ...DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+        queryInputTransformVersion: "implicit-provider-default",
+      } as DocumentRetrievalEmbeddingProfile),
+    ).toContainEqual(
+      expect.objectContaining({
+        path: "embeddingProfile.queryInputTransformVersion",
+      }),
+    );
   });
 });
 
@@ -157,6 +168,44 @@ describe("Transformers.js local embedding adapter", () => {
     ]);
     await adapter.ready();
     expect(factory.loads).toHaveLength(1);
+  });
+
+  it("accepts only an execution-matched minimal inference resource", async () => {
+    const fixture = await createAssetFixture();
+    const execution = fixture.profile.execution;
+    if (execution.kind !== "local") {
+      throw new Error("fixture must use local execution");
+    }
+    const resource = new RecordingRuntime();
+    resource.execution = execution;
+    const adapter = new TransformersJsLocalEmbeddingAdapter({
+      profile: fixture.profile,
+      inferenceResource: resource,
+    });
+
+    await expect(
+      adapter.embed({
+        profile: fixture.profile,
+        inputs: [{ key: "query", text: "공유 세션 질의" }],
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual([{ key: "query", vector: [1, 0, 0] }]);
+    expect(resource.texts).toEqual([["공유 세션 질의"]]);
+
+    expect(
+      () =>
+        new TransformersJsLocalEmbeddingAdapter({
+          profile: fixture.profile,
+          inferenceResource: {
+            execution: {
+              ...execution,
+              artifactSha256: "f".repeat(64),
+            },
+            tokenCount: (text) => resource.tokenCount(text),
+            embed: (texts, options) => resource.embed(texts, options),
+          },
+        }),
+    ).toThrow(/does not match/);
   });
 
   it("fails closed for a missing, changed, or escaping asset", async () => {
@@ -336,13 +385,18 @@ class RecordingRuntimeFactory implements LocalFeatureExtractionRuntimeFactory {
   readonly loads: unknown[] = [];
   readonly runtime = new RecordingRuntime();
 
-  async load(input: unknown): Promise<LocalFeatureExtractionRuntime> {
+  async load(input: {
+    readonly artifactDirectory: string;
+    readonly execution: LocalDocumentEmbeddingExecution;
+  }): Promise<LocalFeatureExtractionRuntime> {
     this.loads.push(input);
+    this.runtime.execution = input.execution;
     return this.runtime;
   }
 }
 
 class RecordingRuntime implements LocalFeatureExtractionRuntime {
+  execution = {} as LocalDocumentEmbeddingExecution;
   readonly texts: string[][] = [];
   readonly options: unknown[] = [];
   readonly tokenCounts = new Map<string, number>();

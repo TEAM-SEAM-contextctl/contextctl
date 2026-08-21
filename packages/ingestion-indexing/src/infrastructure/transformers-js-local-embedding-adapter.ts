@@ -115,7 +115,16 @@ export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE: DocumentRetrievalEmbe
     textMeasureProfileVersion: "unicode-estimate-v1",
   });
 
-export interface LocalFeatureExtractionRuntime {
+/**
+ * Minimal, stateless inference resource consumed by the document adapter.
+ *
+ * The daemon may inject the same physical object into another domain adapter
+ * when its execution semantics match. This object is deliberately not an
+ * `EmbeddingPort`: profile checks, input transforms, output validation and
+ * domain faults remain in this adapter.
+ */
+export interface LocalDocumentEmbeddingInferenceResource {
+  readonly execution: LocalDocumentEmbeddingExecution;
   tokenCount(text: string): number;
   embed(
     texts: readonly string[],
@@ -129,6 +138,10 @@ export interface LocalFeatureExtractionRuntime {
   }>;
 }
 
+/** Pre-release compatibility alias for existing resource factories. */
+export type LocalFeatureExtractionRuntime =
+  LocalDocumentEmbeddingInferenceResource;
+
 export interface LocalFeatureExtractionRuntimeFactory {
   load(input: {
     readonly artifactDirectory: string;
@@ -137,33 +150,64 @@ export interface LocalFeatureExtractionRuntimeFactory {
 }
 
 export interface TransformersJsLocalEmbeddingAdapterOptions {
-  readonly artifactDirectory: string;
+  /** Creates and verifies a private local resource when supplied. */
+  readonly artifactDirectory?: string;
   readonly profile?: DocumentRetrievalEmbeddingProfile;
   readonly runtimeFactory?: LocalFeatureExtractionRuntimeFactory;
+  /** Uses a composition-owned, already verified physical resource. */
+  readonly inferenceResource?: LocalDocumentEmbeddingInferenceResource;
 }
 
 /** Offline-only production adapter backed by a verified Transformers.js ONNX model. */
 export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
   readonly providerKind = "local" as const;
-  readonly #artifactDirectory: string;
+  readonly embeddingProfile: DocumentRetrievalEmbeddingProfile;
+  readonly #artifactDirectory: string | undefined;
   readonly #profile: DocumentRetrievalEmbeddingProfile;
-  readonly #runtimeFactory: LocalFeatureExtractionRuntimeFactory;
+  readonly #runtimeFactory: LocalFeatureExtractionRuntimeFactory | undefined;
   #runtime: Promise<LocalFeatureExtractionRuntime> | undefined;
 
   constructor(options: TransformersJsLocalEmbeddingAdapterOptions) {
-    if (!isAbsolute(options.artifactDirectory)) {
-      throw new TypeError("embedding artifact directory must be absolute");
-    }
     const profile =
       options.profile ?? DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
     assertValidEmbeddingProfile(profile);
     if (profile.execution.kind !== "local") {
       throw new TypeError("local embedding adapter requires a local profile");
     }
+    const hasDirectory = options.artifactDirectory !== undefined;
+    const hasResource = options.inferenceResource !== undefined;
+    if (hasDirectory === hasResource) {
+      throw new TypeError(
+        "local embedding adapter requires exactly one inference resource source",
+      );
+    }
+    if (
+      options.runtimeFactory !== undefined &&
+      options.artifactDirectory === undefined
+    ) {
+      throw new TypeError(
+        "a local embedding runtime factory requires an artifact directory",
+      );
+    }
+    if (
+      options.artifactDirectory !== undefined &&
+      !isAbsolute(options.artifactDirectory)
+    ) {
+      throw new TypeError("embedding artifact directory must be absolute");
+    }
+    this.embeddingProfile = freezeDocumentProfile(profile);
+    this.#profile = this.embeddingProfile;
     this.#artifactDirectory = options.artifactDirectory;
-    this.#profile = structuredClone(profile);
-    this.#runtimeFactory =
-      options.runtimeFactory ?? new TransformersJsRuntimeFactory();
+    this.#runtimeFactory = hasDirectory
+      ? (options.runtimeFactory ?? new TransformersJsRuntimeFactory())
+      : undefined;
+    if (options.inferenceResource !== undefined) {
+      assertMatchingInferenceResource(
+        options.inferenceResource,
+        profile.execution,
+      );
+      this.#runtime = Promise.resolve(options.inferenceResource);
+    }
   }
 
   async ready(signal?: AbortSignal): Promise<void> {
@@ -222,6 +266,12 @@ export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
   }
 
   async #loadRuntime(): Promise<LocalFeatureExtractionRuntime> {
+    if (
+      this.#artifactDirectory === undefined ||
+      this.#runtimeFactory === undefined
+    ) {
+      throw new EmbeddingProviderFault("provider_unavailable", false);
+    }
     try {
       await verifyLocalEmbeddingAssets(
         this.#artifactDirectory,
@@ -235,10 +285,15 @@ export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
       );
     }
     try {
-      return await this.#runtimeFactory.load({
+      const resource = await this.#runtimeFactory.load({
         artifactDirectory: this.#artifactDirectory,
         execution: this.#profile.execution as LocalDocumentEmbeddingExecution,
       });
+      assertMatchingInferenceResource(
+        resource,
+        this.#profile.execution as LocalDocumentEmbeddingExecution,
+      );
+      return resource;
     } catch (error) {
       if (error instanceof EmbeddingProviderFault) throw error;
       throw new EmbeddingProviderFault("provider_unavailable", false);
@@ -298,19 +353,6 @@ export function serializeLocalEmbeddingAssetManifest(
   return `${canonicalJson(parseAssetManifest(manifest))}\n`;
 }
 
-export function assertProductionEmbeddingProvider(
-  profile: DocumentRetrievalEmbeddingProfile,
-  provider: EmbeddingPort,
-): void {
-  assertValidEmbeddingProfile(profile);
-  const expectedKind = profile.execution.kind;
-  if (provider.providerKind !== expectedKind) {
-    throw new TypeError(
-      `production ${expectedKind} profile requires an explicit ${expectedKind} provider`,
-    );
-  }
-}
-
 class TransformersJsRuntimeFactory
   implements LocalFeatureExtractionRuntimeFactory
 {
@@ -336,6 +378,7 @@ class TransformersJsRuntimeFactory
       },
     );
     return {
+      execution: Object.freeze({ ...input.execution }),
       tokenCount: (text) => extractor.tokenizer.encode(text).length,
       embed: async (texts, options) => {
         const modelInputs = extractor.tokenizer([...texts], {
@@ -362,6 +405,31 @@ class TransformersJsRuntimeFactory
       },
     };
   }
+}
+
+function assertMatchingInferenceResource(
+  resource: LocalDocumentEmbeddingInferenceResource,
+  execution: LocalDocumentEmbeddingExecution,
+): void {
+  if (
+    typeof resource.tokenCount !== "function" ||
+    typeof resource.embed !== "function" ||
+    canonicalJson(resource.execution) !== canonicalJson(execution)
+  ) {
+    throw new TypeError(
+      "local embedding inference resource does not match the configured execution",
+    );
+  }
+}
+
+function freezeDocumentProfile(
+  profile: DocumentRetrievalEmbeddingProfile,
+): DocumentRetrievalEmbeddingProfile {
+  return Object.freeze({
+    ...structuredClone(profile),
+    execution: Object.freeze({ ...profile.execution }),
+    admissionLimit: Object.freeze({ ...profile.admissionLimit }),
+  });
 }
 
 function outputsFromTensor(

@@ -1,6 +1,8 @@
 import {
   embeddingProfilesMatch,
   embeddingVectorMatchesProfile,
+  isDocumentRetrievalEmbeddingProfile,
+  transformDocumentEmbeddingInput,
   validateEmbeddingProfile,
   type EmbeddingProfile,
 } from "../domain/embedding-profile.js";
@@ -187,7 +189,9 @@ export class EmbeddingPipeline {
               profile,
               inputs: chunks.map((chunk) => ({
                 key: chunk.revisionId,
-                text: chunk.text,
+                text: isDocumentRetrievalEmbeddingProfile(profile)
+                  ? transformDocumentEmbeddingInput(profile, chunk.text)
+                  : chunk.text,
               })),
               signal,
             }),

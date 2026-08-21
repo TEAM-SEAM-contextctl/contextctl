@@ -1,4 +1,8 @@
-import type { EmbeddingProfile } from "../domain/embedding-profile.js";
+import { assertProductionEmbeddingProvider } from "../application/document-embedding-provider-binding.js";
+import {
+  isDocumentRetrievalEmbeddingProfile,
+  type EmbeddingProfile,
+} from "../domain/embedding-profile.js";
 import { canonicalJson } from "../domain/revision-identity.js";
 import type { EmbeddingPort } from "../ports/embedding.js";
 import type {
@@ -30,6 +34,12 @@ export class StaticQueryEmbeddingProviderRegistry
         registration.providerId.trim() === ""
       ) {
         throw new TypeError("query embedding provider registration is invalid");
+      }
+      if (isDocumentRetrievalEmbeddingProfile(registration.embeddingProfile)) {
+        assertProductionEmbeddingProvider(
+          registration.embeddingProfile,
+          registration.provider,
+        );
       }
       const key = providerKey(
         registration.securityDomain,
