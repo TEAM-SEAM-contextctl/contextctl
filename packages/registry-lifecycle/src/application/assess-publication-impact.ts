@@ -32,6 +32,10 @@ export function assessPublicationImpact(
   const unitsById = new Map(
     publication.knowledgeUnits.map((unit) => [unit.id, unit]),
   );
+  const removalIndexes = documentIndexesWithRemovals(
+    publication,
+    currentVersions,
+  );
   const occurredAt = ports.clock.now();
   const impacts: CardImpact[] = [];
   const events: LifecycleEvent[] = [];
@@ -42,6 +46,7 @@ export function assessPublicationImpact(
         version,
         change,
         unitsById.get(change.knowledgeUnitId),
+        { documentIndexesWithRemovals: removalIndexes },
       );
       if (impact.decision === "none") {
         continue;
@@ -61,4 +66,40 @@ export function assessPublicationImpact(
   }
 
   return { impacts, events };
+}
+
+/**
+ * The document indexes this Publication removed knowledge from.
+ *
+ * A removed unit is by definition absent from the Publication's current units,
+ * so its document index cannot be read off the Publication — it is read off the
+ * Card that was serving it, which pinned the index the unit lived in. That is
+ * also why this cannot live in the per-change rule: it needs every serving Card,
+ * not the one being judged.
+ */
+function documentIndexesWithRemovals(
+  publication: IngestionPublication,
+  currentVersions: readonly CardVersion[],
+): ReadonlySet<string> {
+  const removed = new Set(
+    publication.changes
+      .filter((change) => change.kind === "removed")
+      .map((change) => change.knowledgeUnitId),
+  );
+  if (removed.size === 0) {
+    return new Set();
+  }
+
+  const indexes = new Set<string>();
+  for (const version of currentVersions) {
+    if (!removed.has(version.lineage.knowledgeUnitId)) {
+      continue;
+    }
+    for (const scope of version.scopes) {
+      if (scope.kind === "managed_document") {
+        indexes.add(scope.documentIndex.documentIndexId);
+      }
+    }
+  }
+  return indexes;
 }

@@ -30,6 +30,25 @@ export interface CardImpact {
 }
 
 /**
+ * What the whole Publication says, for a decision one change cannot make alone.
+ *
+ * `analyzeCardImpact` judges one Card against one change, and that is the right
+ * shape for every rule but one: whether an older index version is still safe to
+ * serve depends on what *other* changes did to the same index. So the caller
+ * computes that once and passes it down, rather than each rule re-reading the
+ * Publication.
+ */
+export interface PublicationImpactContext {
+  /**
+   * Document indexes this Publication removed knowledge from.
+   *
+   * Empty for a Publication that only added or updated, which is why the
+   * parameter is optional: a caller with no removals has nothing to state.
+   */
+  readonly documentIndexesWithRemovals?: ReadonlySet<string> | undefined;
+}
+
+/**
  * Decides a Card's fate from a Published Change and structural comparison.
  *
  * The change kind alone is not enough: an `updated` document paragraph and an
@@ -44,6 +63,7 @@ export function analyzeCardImpact(
   currentVersion: CardVersion,
   change: PublishedChange,
   currentUnit: PublishedKnowledgeUnit | undefined,
+  context: PublicationImpactContext = {},
 ): CardImpact {
   const cardId = currentVersion.cardId;
 
@@ -86,13 +106,33 @@ export function analyzeCardImpact(
     return { cardId, decision: "block", reasons: lost };
   }
 
-  const drift = findIndexDrift(currentVersion.scopes, currentUnit);
+  const drift = findIndexDrift(currentVersion.scopes, currentUnit, context);
   const reasons = [...drift, ...describeContentChange(change, drift.length > 0)];
 
-  return reasons.length > 0
-    ? { cardId, decision: "review", reasons }
-    : { cardId, decision: "none", reasons: [] };
+  if (reasons.length === 0) {
+    return { cardId, decision: "none", reasons: [] };
+  }
+  // Index drift is normally a review — the Card still resolves, it is just older
+  // than its source. It stops being one when the version it is left on is known
+  // to hold knowledge the source discarded, and then the Card has to come down
+  // for the same reason a removed one does. See ADR 0005.
+  return {
+    cardId,
+    decision: reasons.some((reason) => reason.rule === INDEX_SUPERSEDED_BY_REMOVAL)
+      ? "block"
+      : "review",
+    reasons,
+  };
 }
+
+/**
+ * A Card left on an index version a removal superseded.
+ *
+ * Named as a constant because two places have to agree on it: the rule that
+ * produces the reason and the decision that reads it back.
+ */
+const INDEX_SUPERSEDED_BY_REMOVAL =
+  "scope.document.indexVersionSupersededByRemoval";
 
 /** Coordinates the Card points at that the new observation no longer has. */
 function findLostCoordinates(
@@ -180,6 +220,7 @@ function findLostCoordinates(
 function findIndexDrift(
   scopes: readonly RetrievalScope[],
   unit: PublishedKnowledgeUnit,
+  context: PublicationImpactContext,
 ): CardImpactReason[] {
   return scopes.flatMap((scope) => {
     if (scope.kind !== "managed_document") {
@@ -194,15 +235,26 @@ function findIndexDrift(
     if (published === undefined || published.kind !== "managed_document") {
       return [];
     }
-    return published.documentIndex.indexVersion ===
-      scope.documentIndex.indexVersion
-      ? []
-      : [
-          {
+    if (
+      published.documentIndex.indexVersion === scope.documentIndex.indexVersion
+    ) {
+      return [];
+    }
+    const supersededByRemoval =
+      context.documentIndexesWithRemovals?.has(
+        scope.documentIndex.documentIndexId,
+      ) ?? false;
+    return [
+      supersededByRemoval
+        ? {
+            rule: INDEX_SUPERSEDED_BY_REMOVAL,
+            message: `document index ${scope.documentIndex.documentIndexId} moved from ${scope.documentIndex.indexVersion} to ${published.documentIndex.indexVersion}, and ${scope.documentIndex.indexVersion} still contains knowledge the source removed`,
+          }
+        : {
             rule: "scope.document.indexVersionChanged",
             message: `document index ${scope.documentIndex.documentIndexId} moved from ${scope.documentIndex.indexVersion} to ${published.documentIndex.indexVersion}`,
           },
-        ];
+    ];
   });
 }
 
