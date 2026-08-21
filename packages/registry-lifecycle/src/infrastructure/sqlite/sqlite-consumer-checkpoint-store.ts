@@ -40,26 +40,10 @@ export class SqliteConsumerCheckpointStore implements ConsumerCheckpointStore {
   }
 
   async markProcessed(cursor: ChainCursor): Promise<void> {
-    const processedAt = this.#now();
     // Both writes or neither: a claim without its cursor move would make every
     // successor look like a gap waiting on a Publication already consumed.
     inTransaction(this.#database, () => {
-      this.#database
-        .prepare(
-          `INSERT INTO consumer_checkpoints (publication_id, source_id, processed_at)
-           VALUES (?, ?, ?)
-           ON CONFLICT (publication_id) DO NOTHING`,
-        )
-        .run(cursor.publicationId, cursor.sourceId, processedAt);
-      this.#database
-        .prepare(
-          `INSERT INTO consumer_source_cursors (source_id, publication_id, processed_at)
-           VALUES (?, ?, ?)
-           ON CONFLICT (source_id) DO UPDATE SET
-             publication_id = excluded.publication_id,
-             processed_at = excluded.processed_at`,
-        )
-        .run(cursor.sourceId, cursor.publicationId, processedAt);
+      writeConsumption(this.#database, cursor, this.#now());
     });
   }
 
@@ -71,6 +55,37 @@ export class SqliteConsumerCheckpointStore implements ConsumerCheckpointStore {
       .all() as SqlRow[];
     return rows.map(toCursor);
   }
+}
+
+/**
+ * Records the claim and moves the Source's cursor to it.
+ *
+ * Shared with the intake adapter so consumption can be committed in the same
+ * transaction as the Cards it produced. No transaction here for the reason
+ * `writeCard` gives: the boundary belongs to whoever is deciding what has to
+ * succeed together.
+ */
+export function writeConsumption(
+  database: DatabaseSync,
+  cursor: ChainCursor,
+  processedAt: string,
+): void {
+  database
+    .prepare(
+      `INSERT INTO consumer_checkpoints (publication_id, source_id, processed_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT (publication_id) DO NOTHING`,
+    )
+    .run(cursor.publicationId, cursor.sourceId, processedAt);
+  database
+    .prepare(
+      `INSERT INTO consumer_source_cursors (source_id, publication_id, processed_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT (source_id) DO UPDATE SET
+         publication_id = excluded.publication_id,
+         processed_at = excluded.processed_at`,
+    )
+    .run(cursor.sourceId, cursor.publicationId, processedAt);
 }
 
 function toCursor(row: SqlRow): ChainCursor {

@@ -18,8 +18,8 @@ import type {
 import type { LifecycleEvent } from "../../domain/lifecycle-event.js";
 import type { RetrievalScope } from "../../domain/retrieval-scope.js";
 import type { CardStore } from "../../ports/card-store.js";
-import { appendLifecycleEvents } from "./lifecycle-event-rows.js";
-import { inTransaction, nextAppendOrder } from "./registry-database.js";
+import { writeCard } from "./card-rows.js";
+import { inTransaction } from "./registry-database.js";
 import {
   readInteger,
   readJson,
@@ -105,58 +105,7 @@ export class SqliteCardStore implements CardStore {
     events: readonly LifecycleEvent[],
   ): Promise<void> {
     inTransaction(this.#database, () => {
-      this.#database
-        .prepare(
-          `INSERT INTO cards (
-             card_id, description, representative_questions, aliases, keywords,
-             sensitive, allowed_usage, current_version_id
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (card_id) DO UPDATE SET
-             description = excluded.description,
-             representative_questions = excluded.representative_questions,
-             aliases = excluded.aliases,
-             keywords = excluded.keywords,
-             sensitive = excluded.sensitive,
-             allowed_usage = excluded.allowed_usage,
-             current_version_id = excluded.current_version_id`,
-        )
-        .run(
-          card.id,
-          card.meaning.description,
-          JSON.stringify(card.meaning.representativeQuestions),
-          JSON.stringify(card.meaning.aliases),
-          JSON.stringify(card.meaning.keywords),
-          card.policy.sensitive ? 1 : 0,
-          JSON.stringify(card.policy.allowedUsage),
-          card.versions.currentVersionId ?? null,
-        );
-
-      // DO NOTHING keeps history append-only: a version already written is
-      // never rewritten, so an earlier last-known-good cannot be clobbered.
-      const insertVersion = this.#database.prepare(
-        `INSERT INTO card_versions (
-           version_id, card_id, publication_id, observation_id,
-           knowledge_unit_id, scopes, validation_state, created_at, append_order
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (version_id) DO NOTHING`,
-      );
-      let appendOrder = nextAppendOrder(this.#database, "card_versions");
-      for (const version of card.versions.versions) {
-        insertVersion.run(
-          version.id,
-          version.cardId,
-          version.lineage.publicationId,
-          version.lineage.observationId,
-          version.lineage.knowledgeUnitId,
-          JSON.stringify(version.scopes),
-          version.validationState,
-          version.createdAt,
-          appendOrder,
-        );
-        appendOrder += 1;
-      }
-
-      appendLifecycleEvents(this.#database, events);
+      writeCard(this.#database, card, events);
     });
   }
 }
