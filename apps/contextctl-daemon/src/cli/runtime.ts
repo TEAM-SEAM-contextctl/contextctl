@@ -4,6 +4,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   isDocumentRetrievalEmbeddingProfile,
+  DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+  loadLocalDocumentEmbeddingInferenceResource,
   openIngestionDatabase,
   SqliteIndexPublicationStore,
   SqliteIndexStagingAttemptStore,
@@ -11,6 +13,7 @@ import {
   SqliteMarkdownPublicationCheckpointStore,
   SqliteSourceObservationStore,
   verifyLocalEmbeddingAssets,
+  type LocalDocumentEmbeddingInferenceResource,
 } from "@contextctl/ingestion-indexing";
 
 import {
@@ -307,6 +310,13 @@ export function cliRuntimeOptions(input: {
     embeddingProfile: input.embeddingRuntime.profiles.document,
     cardSelectionProfile: input.embeddingRuntime.profiles.card,
     requiredEmbeddingBindings: input.embeddingRuntime.requiredBindings,
+    ...(input.embeddingRuntime.localInferenceResource === undefined
+      ? {}
+      : {
+          localEmbeddingInferenceResources: [
+            input.embeddingRuntime.localInferenceResource,
+          ],
+        }),
     ...(input.embeddingRuntime.artifactDirectory === undefined
       ? {}
       : {
@@ -332,6 +342,7 @@ export interface ResolvedCliEmbeddingRuntime {
   readonly profiles: ActiveEmbeddingProfiles;
   readonly requiredBindings: RequiredEmbeddingBindings;
   readonly artifactDirectory?: string;
+  readonly localInferenceResource?: LocalDocumentEmbeddingInferenceResource;
 }
 
 /** Refuses active configuration errors before either state database is opened. */
@@ -413,11 +424,21 @@ export async function resolveCliEmbeddingRuntime(input: {
   if (assets.status === "unavailable") {
     throw new EmbeddingAssetsUnavailableError(assets.problem);
   }
+  const resourceProfile =
+    configuration.document.mode === "local"
+      ? profiles.document
+      : DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
+  const localInferenceResource =
+    await loadLocalDocumentEmbeddingInferenceResource({
+      artifactDirectory: assets.directory,
+      profile: resourceProfile,
+    });
   return {
     configuration,
     profiles,
     requiredBindings,
     artifactDirectory: assets.directory,
+    localInferenceResource,
   };
 }
 

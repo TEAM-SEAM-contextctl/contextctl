@@ -2,6 +2,7 @@ import {
   TEXT_MEASURE_PROFILE_VERSION,
   type EmbeddingPort,
   type EmbeddingProfile,
+  type DocumentRetrievalEmbeddingProfile,
   type EmbeddingProviderOutput,
   type EmbeddingProviderRequest,
 } from "@contextctl/ingestion-indexing";
@@ -35,7 +36,7 @@ export const SECURITY_DOMAIN = "local";
  */
 export function localDocumentProfile(
   id = "document-granite-fake-v1",
-): EmbeddingProfile {
+): DocumentRetrievalEmbeddingProfile {
   return {
     id,
     version: "1",
@@ -65,12 +66,12 @@ export function localDocumentProfile(
       assetManifestSha256: "b".repeat(64),
       precision: "fp32",
     },
-  } as EmbeddingProfile;
+  };
 }
 
 export function remoteDocumentProfile(
   id = "document-hosted-fake-v1",
-): EmbeddingProfile {
+): DocumentRetrievalEmbeddingProfile {
   return {
     ...(localDocumentProfile(id) as unknown as Record<string, unknown>),
     execution: {
@@ -84,7 +85,7 @@ export function remoteDocumentProfile(
       model: "fake/granite-embedding",
     },
     pooling: "provider_defined",
-  } as unknown as EmbeddingProfile;
+  } as DocumentRetrievalEmbeddingProfile;
 }
 
 export function localCardProfile(id = "card-granite-fake-v1"): CardSelectionProfile {
