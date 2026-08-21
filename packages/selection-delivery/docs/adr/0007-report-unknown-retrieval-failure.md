@@ -1,6 +1,6 @@
 # 0007. 알 수 없는 검색 실패는 `retriever_error`로 보고한다
 
-- 상태: Accepted
+- 상태: Superseded by 0008
 - 날짜: 2026-08-14
 - 범위: selection
 

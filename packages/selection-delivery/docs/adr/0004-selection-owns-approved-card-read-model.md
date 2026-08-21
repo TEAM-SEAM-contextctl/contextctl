@@ -1,6 +1,6 @@
 # 0004. 승인 Card read model은 Selection이 자기 포트로 선언한다
 
-- 상태: Accepted
+- 상태: Superseded by 0008
 - 날짜: 2026-08-04
 - 범위: selection
 
