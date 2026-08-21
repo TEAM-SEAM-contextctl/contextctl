@@ -130,8 +130,13 @@ function askAbout(coordinate: PublishedSourceCoordinate): string {
  * and document title are added after them because a reviewer approving a Card
  * and the Card-selection embedding both read this list, and a heading says what
  * the area is in a way an identifier cannot. Capped at the read-model limit in
- * that same order, so a catalog with many headings loses the least specific
- * ones last.
+ * that same order, and `takeWithin` fills from the front and cuts at the back,
+ * so if the ceiling were reached it is the headings that would go — the title
+ * first, then the label — and the coordinate handles that would stay. In
+ * practice it is not reached: no coordinate yields more than two handles and a
+ * unit carries one label and one title, so the list holds at most four entries
+ * against a ceiling of 32. The per-entry limit of 128 code units is the one a
+ * long title can meet.
  */
 function aliasesFor(
   coordinate: PublishedSourceCoordinate,
@@ -184,6 +189,11 @@ function coordinateAliases(coordinate: PublishedSourceCoordinate): readonly stri
  * order Latin and digits ahead of Hangul and drop the Korean headings first;
  * filling by group and sorting the survivors keeps the words that name the
  * area and loses coordinate tokens instead.
+ *
+ * Unlike the alias ceiling, this one is reachable: Ingestion publishes up to
+ * 32 derived keywords, a heading path adds a token per word, and a wide table
+ * adds one per column. A document unit has no coordinate tokens, so there the
+ * cut lands on the derived keywords themselves — the last group present.
  */
 function keywordsFor(
   coordinate: PublishedSourceCoordinate,
