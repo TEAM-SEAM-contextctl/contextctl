@@ -270,10 +270,23 @@ function takeWithin(
   return kept.sort();
 }
 
+/**
+ * Splits on anything that is not a letter or a digit, lower-cases, and drops a
+ * token made of digits alone.
+ *
+ * A bare number is not a name for a knowledge area. `0.5일` splits into `0` and
+ * `5`, `3~5영업일` yields a `3`, a retry interval yields `30` — and because
+ * selection matches keywords by substring, a `2` admits every query that
+ * carries a `2` anywhere: an order number, a clock time, a count. Measured on
+ * the demo catalog, ten queries with a number in them produced seventeen
+ * admits whose only matching term was a digit. A token that mixes digits with
+ * letters stays: `2시간`, `5영업일` and `v2` are words a person types for this
+ * area, and the unit or prefix is what makes them specific.
+ */
 function tokenize(value: string): string[] {
   return value
     .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => token !== "")
+    .filter((token) => token !== "" && !/^\p{N}+$/u.test(token))
     .map((token) => token.toLowerCase());
 }
 
