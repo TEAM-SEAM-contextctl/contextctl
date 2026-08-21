@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { EmptyQueryError } from "../../src/application/errors.js";
+import {
+  EmptyQueryError,
+  resolveContextErrorStatus,
+  toResolveContextErrorCode,
+} from "../../src/application/errors.js";
 import {
   DEFAULT_CHUNK_LIMIT_PER_SCOPE,
   selectContext,
   type SelectContextPorts,
 } from "../../src/application/select-context.js";
-import type { ApprovedCard } from "../../src/domain/card-catalog.js";
+import type { ApprovedCard, ApprovedScope } from "../../src/domain/card-catalog.js";
+import { SelectionScopeInvariantError } from "../../src/domain/errors.js";
 import { isManagedPlannedItem } from "../../src/domain/selection-plan.js";
 import { InMemoryCardCatalog } from "../../src/infrastructure/in-memory-card-catalog.js";
 import {
@@ -164,5 +169,44 @@ describe("selectContext", () => {
     expect(await selectContext(demoPorts(), DEMO_QUERY)).toEqual(
       await selectContext(demoPorts(), DEMO_QUERY),
     );
+  });
+});
+
+describe("selectContext over a catalog that contradicts itself about a Scope", () => {
+  function conflictingCatalog(): readonly ApprovedCard[] {
+    const first = createRefundPolicyCard();
+    const whole = first.scopes.find((scope) => scope.kind === "managed_document");
+    if (whole === undefined || whole.kind !== "managed_document") {
+      throw new Error("fixture carries no managed document scope");
+    }
+    const narrowed: ApprovedScope = {
+      ...whole,
+      selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+    };
+    return [
+      first,
+      { ...first, cardId: "card_refund_policy_b", versionId: "cardv_refund_policy_b", scopes: [narrowed] },
+    ];
+  }
+
+  it("refuses the request instead of planning either definition", async () => {
+    await expect(
+      selectContext(portsFor(conflictingCatalog()), DEMO_QUERY),
+    ).rejects.toThrow(SelectionScopeInvariantError);
+  });
+
+  it("reports the refusal as a request-level selection_invariant_violation, HTTP 500", async () => {
+    let thrown: unknown;
+    try {
+      await selectContext(portsFor(conflictingCatalog()), DEMO_QUERY);
+    } catch (cause) {
+      thrown = cause;
+    }
+
+    // The existing ladder already maps the domain invariant; nothing new had
+    // to be taught to the surfaces for the SOT's code to come out.
+    const code = toResolveContextErrorCode(thrown);
+    expect(code).toBe("selection_invariant_violation");
+    expect(resolveContextErrorStatus(code)).toBe(500);
   });
 });
