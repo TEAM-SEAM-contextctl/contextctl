@@ -3,12 +3,14 @@ import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  isDocumentRetrievalEmbeddingProfile,
   openIngestionDatabase,
   SqliteIndexPublicationStore,
   SqliteIndexStagingAttemptStore,
   SqliteIngestionPublicationStore,
   SqliteMarkdownPublicationCheckpointStore,
   SqliteSourceObservationStore,
+  verifyLocalEmbeddingAssets,
 } from "@contextctl/ingestion-indexing";
 
 import {
@@ -23,6 +25,19 @@ import {
   type DaemonRuntime,
   type DaemonRuntimeOptions,
 } from "../main.js";
+import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
+import {
+  readActiveEmbeddingProfiles,
+  readEmbeddingCompositionConfiguration,
+  assertRequiredDocumentProfileBindings,
+  DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+  type ActiveEmbeddingProfiles,
+  type EmbeddingCompositionConfiguration,
+} from "../embedding/configuration.js";
+import {
+  computeRequiredEmbeddingBindings,
+  type RequiredEmbeddingBindings,
+} from "../embedding/required-bindings.js";
 import {
   describeAssetDirectoryProblem,
   resolveActiveAssetDirectory,
@@ -196,16 +211,7 @@ export async function buildCliRuntime(
   const sources = await readSourcesFile(paths.sourcesFile);
   const sourceConfigurations = toSourceConfigurations(sources);
 
-  // Resolved here, and the failure is raised here rather than at the first
-  // embedding call. The adapter loads lazily by design, so a composition given
-  // a directory with no manifest in it assembles cleanly and then fails inside
-  // `ingest` — which is the furthest possible point from the mistake. Asking
-  // for the directory now turns that into a refusal to start, with the command
-  // that fixes it named.
-  const assets = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
-  if (assets.status === "unavailable") {
-    throw new EmbeddingAssetsUnavailableError(assets.problem);
-  }
+  await preflightActiveEmbeddingConfiguration(input.environment, paths);
 
   // Opened before `createDaemonRuntime` so that a schema failure — an ingestion
   // database written under a different security domain, say — is reported as
@@ -215,6 +221,18 @@ export async function buildCliRuntime(
     stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
     securityDomain: DEFAULT_SECURITY_DOMAIN,
   });
+
+  let embeddingRuntime: ResolvedCliEmbeddingRuntime;
+  try {
+    embeddingRuntime = await resolveCliEmbeddingRuntime({
+      environment: input.environment,
+      paths,
+      ingestionDatabase,
+    });
+  } catch (error) {
+    ingestionDatabase.close();
+    throw error;
+  }
 
   let runtime: DaemonRuntime;
   try {
@@ -226,7 +244,7 @@ export async function buildCliRuntime(
         ingestionDatabase,
         vectorBackend,
         meaningBackend,
-        embeddingArtifactDirectory: assets.directory,
+        embeddingRuntime,
       }),
     );
   } catch (error) {
@@ -280,12 +298,21 @@ export function cliRuntimeOptions(input: {
    * runtime disagree, so this is taken as an argument — already resolved —
    * rather than derived from `paths` a second time here.
    */
-  readonly embeddingArtifactDirectory: string;
+  readonly embeddingRuntime: ResolvedCliEmbeddingRuntime;
 }): DaemonRuntimeOptions {
   const { ingestionDatabase } = input;
   return {
     registryDatabaseLocation: input.paths.registryDatabase,
-    embeddingArtifactDirectory: input.embeddingArtifactDirectory,
+    embedding: input.embeddingRuntime.configuration,
+    embeddingProfile: input.embeddingRuntime.profiles.document,
+    cardSelectionProfile: input.embeddingRuntime.profiles.card,
+    requiredEmbeddingBindings: input.embeddingRuntime.requiredBindings,
+    ...(input.embeddingRuntime.artifactDirectory === undefined
+      ? {}
+      : {
+          embeddingArtifactDirectory:
+            input.embeddingRuntime.artifactDirectory,
+        }),
     sourceConfigurations: input.sourceConfigurations,
     vectorIndex: input.vectorBackend.vectorIndex,
     meanings: input.meaningBackend.generator,
@@ -298,6 +325,132 @@ export function cliRuntimeOptions(input: {
       stagingAttempts: new SqliteIndexStagingAttemptStore(ingestionDatabase),
     },
   };
+}
+
+export interface ResolvedCliEmbeddingRuntime {
+  readonly configuration: EmbeddingCompositionConfiguration;
+  readonly profiles: ActiveEmbeddingProfiles;
+  readonly requiredBindings: RequiredEmbeddingBindings;
+  readonly artifactDirectory?: string;
+}
+
+/** Refuses active configuration errors before either state database is opened. */
+export async function preflightActiveEmbeddingConfiguration(
+  environment: Readonly<Partial<Record<string, string>>>,
+  paths: ContextctlPaths,
+): Promise<void> {
+  const securityDomain =
+    environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
+  const configuration = readEmbeddingCompositionConfiguration(
+    environment,
+    securityDomain,
+  );
+  readActiveEmbeddingProfiles(environment, configuration);
+  if (
+    configuration.document.mode === "remote" &&
+    configuration.card.mode === "remote"
+  ) {
+    return;
+  }
+  const assets = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+  if (assets.status === "unavailable") {
+    throw new EmbeddingAssetsUnavailableError(assets.problem);
+  }
+}
+
+/**
+ * Resolves provider configuration against the durable references that remain
+ * reachable before the daemon object graph is created.
+ *
+ * The temporary Registry handle is closed before `createDaemonRuntime` opens
+ * its long-lived handle. Ingestion's already validated connection is reused so
+ * the catalog and the runtime cannot accidentally inspect two namespaces.
+ */
+export async function resolveCliEmbeddingRuntime(input: {
+  readonly environment: Readonly<Partial<Record<string, string>>>;
+  readonly paths: ContextctlPaths;
+  readonly ingestionDatabase: DatabaseSync;
+}): Promise<ResolvedCliEmbeddingRuntime> {
+  const securityDomain =
+    input.environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
+  const configuration = readEmbeddingCompositionConfiguration(
+    input.environment,
+    securityDomain,
+  );
+  const profiles = readActiveEmbeddingProfiles(
+    input.environment,
+    configuration,
+  );
+
+  mkdirSync(dirname(input.paths.registryDatabase), { recursive: true });
+  const registryDatabase = openRegistryDatabase(input.paths.registryDatabase);
+  let requiredBindings: RequiredEmbeddingBindings;
+  try {
+    requiredBindings = await computeRequiredEmbeddingBindings({
+      documentProfile: profiles.document,
+      cardProfile: profiles.card,
+      catalog: new RegistryApprovedCardCatalog(
+        new SqliteCardStore(registryDatabase),
+      ),
+      publications: new SqliteIndexPublicationStore(input.ingestionDatabase),
+    });
+  } finally {
+    registryDatabase.close();
+  }
+
+  assertRequiredDocumentProfileBindings(
+    configuration,
+    requiredBindings.documentProfiles,
+  );
+
+  await verifyRetainedLocalBindings(configuration, requiredBindings);
+  const activeLocal =
+    configuration.document.mode === "local" || configuration.card.mode === "local";
+  if (!activeLocal) return { configuration, profiles, requiredBindings };
+  const assets = await resolveActiveAssetDirectory(
+    input.paths.embeddingAssetDirectory,
+  );
+  if (assets.status === "unavailable") {
+    throw new EmbeddingAssetsUnavailableError(assets.problem);
+  }
+  return {
+    configuration,
+    profiles,
+    requiredBindings,
+    artifactDirectory: assets.directory,
+  };
+}
+
+async function verifyRetainedLocalBindings(
+  configuration: EmbeddingCompositionConfiguration,
+  requiredBindings: RequiredEmbeddingBindings,
+): Promise<void> {
+  const current = requiredBindings.documentProfiles[0];
+  for (const profile of requiredBindings.documentProfiles) {
+    if (
+      (profile.id === current?.id && profile.version === current.version) ||
+      !isDocumentRetrievalEmbeddingProfile(profile) ||
+      profile.execution.kind !== "local"
+    ) {
+      continue;
+    }
+    const binding = (configuration.retainedDocumentBindings ?? []).find(
+      (candidate) =>
+        candidate.profileId === profile.id &&
+        candidate.profileVersion === profile.version,
+    );
+    if (binding?.mode !== "local") {
+      // The composition will report the exact missing profile. This early
+      // refusal prevents the CLI from claiming no local asset is needed and
+      // starting a graph that cannot serve a reachable Scope.
+      throw new EmbeddingAssetsUnavailableError({
+        kind: "not_installed",
+        pointerPath: DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+        reason: `retained binding missing for ${profile.id} ${profile.version}`,
+      });
+    }
+    await verifyLocalEmbeddingAssets(binding.artifactDirectory, profile);
+  }
 }
 
 

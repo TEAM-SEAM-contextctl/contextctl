@@ -104,8 +104,16 @@ export class IngestionDocumentEmbeddingProviderFactory
     readonly profile: EmbeddingProfile;
     readonly binding: RemoteEmbeddingBinding;
   }): EmbeddingPort {
+    if (!isDocumentRetrievalEmbeddingProfile(input.profile)) {
+      throw new EmbeddingAdapterUnavailableError(
+        "document",
+        "remote",
+        "Ingestion",
+      );
+    }
     return new OpenAiCompatibleEmbeddingAdapter({
       endpoint: input.binding.endpoint,
+      profile: input.profile,
       headers: {
         authorization: `Bearer ${input.binding.credential.reveal()}`,
       },

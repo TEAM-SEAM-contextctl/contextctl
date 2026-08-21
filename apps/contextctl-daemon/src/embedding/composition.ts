@@ -15,6 +15,8 @@ import {
 
 import {
   describeRemoteBinding,
+  RemoteEmbeddingBindingError,
+  type RemoteEmbeddingBinding,
   type RemoteEmbeddingBindingReport,
 } from "./remote-binding.js";
 import {
@@ -22,6 +24,7 @@ import {
   type EmbeddingExecutionMode,
   type EmbeddingLayer,
   type EmbeddingLayerConfiguration,
+  type DocumentProfileBinding,
 } from "./configuration.js";
 import {
   assertModeMatchesExecution,
@@ -91,6 +94,7 @@ export interface DocumentEmbeddingCompositionInput {
   readonly securityDomain: string;
   readonly artifactDirectory?: string | undefined;
   readonly factory: DocumentEmbeddingProviderFactory;
+  readonly retainedBindings?: readonly DocumentProfileBinding[];
   /**
    * A caller-supplied provider, bypassing the factory entirely.
    *
@@ -113,6 +117,7 @@ export interface DocumentEmbeddingComposition {
 export interface CardEmbeddingCompositionInput {
   readonly configuration: EmbeddingLayerConfiguration;
   readonly profile: CardSelectionProfile;
+  readonly securityDomain: string;
   readonly artifactDirectory?: string | undefined;
   readonly factory: CardEmbeddingProviderFactory;
   readonly providerOverride?: CardEmbeddingPort | undefined;
@@ -142,12 +147,26 @@ export function composeDocumentEmbedding(
     currentProfile.id,
   );
 
-  const provider = buildDocumentProvider(input, currentProfile, true);
+  const currentBinding = resolveDocumentProfileBinding(
+    input,
+    currentProfile,
+    true,
+  );
+  const provider = buildDocumentProvider(
+    input,
+    currentProfile,
+    currentBinding,
+    true,
+  );
   const registrations: QueryEmbeddingProviderRegistration[] = [
     {
       securityDomain: input.securityDomain,
       embeddingProfile: currentProfile,
-      providerId: documentProviderId(configuration, input.securityDomain, currentProfile),
+      providerId: documentProviderId(
+        currentBinding.configuration,
+        input.securityDomain,
+        currentProfile,
+      ),
       provider,
     },
   ];
@@ -160,11 +179,16 @@ export function composeDocumentEmbedding(
     ) {
       continue;
     }
+    const binding = resolveDocumentProfileBinding(input, profile, false);
     registrations.push({
       securityDomain: input.securityDomain,
       embeddingProfile: profile,
-      providerId: documentProviderId(configuration, input.securityDomain, profile),
-      provider: buildDocumentProvider(input, profile, false),
+      providerId: documentProviderId(
+        binding.configuration,
+        input.securityDomain,
+        profile,
+      ),
+      provider: buildDocumentProvider(input, profile, binding, false),
     });
     restoredProfiles.push(`${profile.id} ${profile.version}`);
   }
@@ -198,6 +222,7 @@ export function composeDocumentEmbedding(
 function buildDocumentProvider(
   input: DocumentEmbeddingCompositionInput,
   profile: EmbeddingProfile,
+  resolved: ResolvedDocumentProfileBinding,
   isCurrent: boolean,
 ): EmbeddingPort {
   const execution = documentProfileExecutionKind(profile);
@@ -221,8 +246,14 @@ function buildDocumentProvider(
     }
     return input.providerOverride;
   }
+  assertModeMatchesExecution(
+    "document",
+    resolved.configuration.mode,
+    execution,
+    profile.id,
+  );
   if (execution === "remote") {
-    const layer = input.configuration;
+    const layer = resolved.configuration;
     if (layer.mode !== "remote") {
       throw new EmbeddingCompositionError(
         "remote_binding_missing",
@@ -231,12 +262,56 @@ function buildDocumentProvider(
         embeddingLayerVariables("document").endpoint,
       );
     }
+    assertBindingSecurityDomain(
+      "document",
+      layer.binding,
+      input.securityDomain,
+    );
     return input.factory.createRemote({ profile, binding: layer.binding });
   }
   return input.factory.createLocal({
     profile,
-    artifactDirectory: requireArtifactDirectory(input.artifactDirectory),
+    artifactDirectory: requireArtifactDirectory(resolved.artifactDirectory),
   });
+}
+
+interface ResolvedDocumentProfileBinding {
+  readonly configuration: EmbeddingLayerConfiguration;
+  readonly artifactDirectory?: string;
+}
+
+function resolveDocumentProfileBinding(
+  input: DocumentEmbeddingCompositionInput,
+  profile: EmbeddingProfile,
+  isCurrent: boolean,
+): ResolvedDocumentProfileBinding {
+  if (isCurrent) {
+    return {
+      configuration: input.configuration,
+      ...(input.artifactDirectory === undefined
+        ? {}
+        : { artifactDirectory: input.artifactDirectory }),
+    };
+  }
+  const binding = (input.retainedBindings ?? []).find(
+    (candidate) =>
+      candidate.profileId === profile.id &&
+      candidate.profileVersion === profile.version,
+  );
+  if (binding === undefined) {
+    throw new EmbeddingCompositionError(
+      "remote_binding_missing",
+      "document",
+      profile.id,
+      embeddingLayerVariables("document").mode,
+    );
+  }
+  return binding.mode === "local"
+    ? {
+        configuration: { mode: "local" },
+        artifactDirectory: binding.artifactDirectory,
+      }
+    : { configuration: { mode: "remote", binding: binding.binding } };
 }
 
 /** Builds the Card layer, reading nothing about how the document layer was bound. */
@@ -270,7 +345,14 @@ export function composeCardEmbedding(
 
   const provider =
     configuration.mode === "remote"
-      ? input.factory.createRemote({ profile, binding: configuration.binding })
+      ? input.factory.createRemote({
+          profile,
+          binding: assertBindingSecurityDomain(
+            "card",
+            configuration.binding,
+            input.securityDomain,
+          ),
+        })
       : input.factory.createLocal({
           profile,
           artifactDirectory: requireArtifactDirectory(input.artifactDirectory),
@@ -280,6 +362,21 @@ export function composeCardEmbedding(
     provider,
     report: layerReport("card", configuration, profile.id, profile.version),
   };
+}
+
+function assertBindingSecurityDomain(
+  layer: EmbeddingLayer,
+  binding: RemoteEmbeddingBinding,
+  expected: string,
+): RemoteEmbeddingBinding {
+  if (binding.securityDomain !== expected) {
+    throw new RemoteEmbeddingBindingError(
+      "security_domain_mismatch",
+      layer,
+      embeddingLayerVariables(layer).mode,
+    );
+  }
+  return binding;
 }
 
 /**
@@ -336,9 +433,6 @@ function layerReport(
     mode: "remote",
     profileId,
     profileVersion,
-    remote: describeRemoteBinding(
-      configuration.binding,
-      embeddingLayerVariables(layer).apiKey,
-    ),
+    remote: describeRemoteBinding(configuration.binding),
   };
 }

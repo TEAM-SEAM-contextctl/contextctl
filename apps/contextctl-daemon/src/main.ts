@@ -57,7 +57,11 @@ import {
   type ResolveContextApplication,
 } from "@contextctl/selection-delivery";
 
-import type { EmbeddingCompositionConfiguration } from "./embedding/configuration.js";
+import {
+  readActiveEmbeddingProfiles,
+  readEmbeddingCompositionConfiguration,
+  type EmbeddingCompositionConfiguration,
+} from "./embedding/configuration.js";
 import {
   composeCardEmbedding,
   composeDocumentEmbedding,
@@ -421,11 +425,18 @@ export function createDaemonRuntime(
     factory:
       options.documentEmbeddingFactory ??
       new IngestionDocumentEmbeddingProviderFactory(),
+    ...(embeddingConfiguration.retainedDocumentBindings === undefined
+      ? {}
+      : {
+          retainedBindings:
+            embeddingConfiguration.retainedDocumentBindings,
+        }),
     providerOverride: documentProviderOverride(options, embeddingProfile),
   });
   const cardEmbedding = composeCardEmbedding({
     configuration: embeddingConfiguration.card,
     profile: cardSelectionProfile,
+    securityDomain,
     artifactDirectory: options.embeddingArtifactDirectory,
     factory:
       options.cardEmbeddingFactory ??
@@ -710,6 +721,9 @@ export function readDaemonRuntimeOptions(
     connectorId?: string;
     stateNamespaceId?: string;
     embeddingArtifactDirectory?: string;
+    embedding?: EmbeddingCompositionConfiguration;
+    embeddingProfile?: EmbeddingProfile;
+    cardSelectionProfile?: CardSelectionProfile;
   } = {
     vectorIndex: resolveVectorBackend(environment).vectorIndex,
   };
@@ -733,7 +747,29 @@ export function readDaemonRuntimeOptions(
   if (artifactDirectory !== undefined) {
     options.embeddingArtifactDirectory = artifactDirectory;
   }
+  if (hasEmbeddingProviderConfiguration(environment)) {
+    const domain = securityDomain ?? DEFAULT_SECURITY_DOMAIN;
+    const embedding = readEmbeddingCompositionConfiguration(
+      environment,
+      domain,
+    );
+    const profiles = readActiveEmbeddingProfiles(environment, embedding);
+    options.embedding = embedding;
+    options.embeddingProfile = profiles.document;
+    options.cardSelectionProfile = profiles.card;
+  }
   return options;
+}
+
+function hasEmbeddingProviderConfiguration(
+  environment: Readonly<Partial<Record<string, string>>>,
+): boolean {
+  return Object.keys(environment).some(
+    (name) =>
+      name.startsWith("CONTEXTCTL_DOCUMENT_EMBEDDING_") ||
+      name.startsWith("CONTEXTCTL_CARD_EMBEDDING_") ||
+      name === "CONTEXTCTL_DOCUMENT_RETAINED_EMBEDDING_BINDINGS",
+  );
 }
 
 /**
