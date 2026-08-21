@@ -1,5 +1,6 @@
 import type { ApprovedCard, ApprovedScopeReference } from "./card-catalog.js";
 import { canonicalDigest } from "./canonical-digest.js";
+import { SelectionScopeInvariantError } from "./errors.js";
 import type { SelectionMode } from "./hybrid-ranking.js";
 import type { CandidateScore } from "./query-scoring.js";
 import {
@@ -182,6 +183,16 @@ export function managedTargetKey(
  * same chunks once per Card that happened to point at the document and had no
  * way to tell that from a document genuinely saying the same thing twice.
  *
+ * Merging is by the whole guide, and that is also where the one refusal lives.
+ * A Scope reference — `(scopeId, scopeVersion)` — names exactly one immutable
+ * definition, so two Cards that carry the same reference must carry the same
+ * guide. When they do not, the catalog is contradicting itself about what the
+ * Scope *is*: a different selector, a different index snapshot, a different
+ * table or path under one name. Picking either definition would widen one
+ * Card's access to whatever the other Card was approved for, so neither is
+ * picked and the request fails as a whole (SOT L1635, "중복 제거 우선순위를
+ * 정하지 않고 요청 단위 `selection_invariant_violation`으로 실패한다").
+ *
  * `admitted` arrives in ranked order, so first appearance is rank order and
  * `selectedBy` inherits it by construction. That ordering is total already —
  * `judgeCandidates` breaks a score tie on `versionId` — so the "ties by cardId
@@ -196,6 +207,7 @@ export function planSelectedScopes(
   readonly managedTargets: readonly ManagedDocumentResolutionTarget[];
 } {
   const byItemKey = new Map<string, MutableItem>();
+  const itemKeyByScopeRef = new Map<string, string>();
   const targets = new Map<string, ManagedDocumentResolutionTarget>();
 
   for (const card of admitted) {
@@ -203,6 +215,20 @@ export function planSelectedScopes(
       const guide = buildRetrievalGuide(scope, limit);
       const itemKey = retrievalGuideKey(guide);
       const existing = byItemKey.get(itemKey);
+
+      // Checked before the merge, so a Card that contradicts an earlier Card
+      // about a Scope is refused rather than filed as a second item. The key
+      // is the reference alone, deliberately: that is the identity the SOT
+      // says must be unique, and the guide digest is too fine to notice two
+      // definitions sharing it.
+      const scopeKey = scopeRefKey(guide.scopeRef);
+      const knownItemKey = itemKeyByScopeRef.get(scopeKey);
+      if (knownItemKey !== undefined && knownItemKey !== itemKey) {
+        throw new SelectionScopeInvariantError(
+          `scope ${guide.scopeRef.scopeId}@${guide.scopeRef.scopeVersion} appears with two different definitions in one catalog snapshot (card ${card.cardId} version ${card.versionId} disagrees with an earlier card)`,
+        );
+      }
+      itemKeyByScopeRef.set(scopeKey, itemKey);
 
       if (existing !== undefined) {
         // Guarded rather than assumed: one Card may legitimately declare the
@@ -246,6 +272,15 @@ export function planSelectedScopes(
     items: [...byItemKey.values()].map(freezeItem).sort(compareItems),
     managedTargets: [...targets.values()].sort(compareTargets),
   };
+}
+
+/**
+ * The reference as a map key. The two ids are joined with a separator no id
+ * can contain — ids are bounded tokens without control characters — so two
+ * distinct references cannot collide on the joined string.
+ */
+function scopeRefKey(reference: ApprovedScopeReference): string {
+  return `${reference.scopeId}\u0000${reference.scopeVersion}`;
 }
 
 /** One item while `selectedBy` is still being accumulated. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ApprovedCard, ApprovedScope } from "../../src/domain/card-catalog.js";
 import { canonicalDigest } from "../../src/domain/canonical-digest.js";
+import { SelectionScopeInvariantError } from "../../src/domain/errors.js";
 import {
   isManagedPlannedItem,
   managedTargetKey,
@@ -238,6 +239,150 @@ describe("planSelectedScopes", () => {
     expect(planSelectedScopes(build(), LIMIT)).toEqual(
       planSelectedScopes(build(), LIMIT),
     );
+  });
+
+  describe("refuses a Scope reference that names two definitions", () => {
+    function managed(): Extract<ApprovedScope, { kind: "managed_document" }> {
+      return scopeOfKind(createRefundPolicyCard(), "managed_document");
+    }
+
+    it("refuses the same reference under two selectors", () => {
+      const whole = managed();
+      const narrowed: ApprovedScope = {
+        ...whole,
+        selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+      };
+
+      // Same `(scopeId, scopeVersion)`, different selector: the catalog is
+      // contradicting itself about what the Scope covers. Picking either
+      // would widen one Card's access to what the other was approved for.
+      expect(() =>
+        planSelectedScopes(
+          [
+            cardWith("card_first", "cardv_first", [whole]),
+            cardWith("card_second", "cardv_second", [narrowed]),
+          ],
+          LIMIT,
+        ),
+      ).toThrow(SelectionScopeInvariantError);
+    });
+
+    it("refuses the same reference over two index snapshots", () => {
+      const current = managed();
+      const stale: ApprovedScope = {
+        ...current,
+        documentIndex: { ...current.documentIndex, indexVersion: "idxv_0002" },
+      };
+
+      expect(() =>
+        planSelectedScopes(
+          [
+            cardWith("card_first", "cardv_first", [current]),
+            cardWith("card_second", "cardv_second", [stale]),
+          ],
+          LIMIT,
+        ),
+      ).toThrow(SelectionScopeInvariantError);
+    });
+
+    it("refuses the same reference under two kinds", () => {
+      const document = managed();
+      const table = scopeOfKind(createPaymentsTableCard(), "sql_source");
+      const impostor: ApprovedScope = { ...table, reference: document.reference };
+
+      expect(() =>
+        planSelectedScopes(
+          [
+            cardWith("card_first", "cardv_first", [document]),
+            cardWith("card_second", "cardv_second", [impostor]),
+          ],
+          LIMIT,
+        ),
+      ).toThrow(SelectionScopeInvariantError);
+    });
+
+    it("refuses the same reference under two delegated coordinates", () => {
+      const table = scopeOfKind(createPaymentsTableCard(), "sql_source");
+      const otherTable: ApprovedScope = { ...table, table: "refunds" };
+
+      expect(() =>
+        planSelectedScopes(
+          [
+            cardWith("card_first", "cardv_first", [table]),
+            cardWith("card_second", "cardv_second", [otherTable]),
+          ],
+          LIMIT,
+        ),
+      ).toThrow(SelectionScopeInvariantError);
+    });
+
+    it("refuses the contradiction even inside one Card", () => {
+      const whole = managed();
+      const narrowed: ApprovedScope = {
+        ...whole,
+        selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+      };
+
+      expect(() =>
+        planSelectedScopes([cardWith("card_one", "cardv_one", [whole, narrowed])], LIMIT),
+      ).toThrow(SelectionScopeInvariantError);
+    });
+
+    it("refuses regardless of which Card ranked first", () => {
+      const whole = managed();
+      const narrowed: ApprovedScope = {
+        ...whole,
+        selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+      };
+
+      // No priority between the two definitions: the order of the admitted
+      // Cards decides nothing, because neither definition is trusted.
+      expect(() =>
+        planSelectedScopes(
+          [
+            cardWith("card_second", "cardv_second", [narrowed]),
+            cardWith("card_first", "cardv_first", [whole]),
+          ],
+          LIMIT,
+        ),
+      ).toThrow(SelectionScopeInvariantError);
+    });
+
+    it("still merges two Cards that agree about a Scope", () => {
+      const plan = planSelectedScopes(
+        [
+          cardWith("card_first", "cardv_first", [managed()]),
+          cardWith("card_second", "cardv_second", [managed()]),
+        ],
+        LIMIT,
+      );
+
+      // Identical definitions are the ordinary case and keep merging into one
+      // item; the refusal is only for a reference that means two things.
+      expect(plan.items).toHaveLength(1);
+      expect(plan.items[0]?.selectedBy).toHaveLength(2);
+    });
+
+    it("distinguishes two versions of one Scope id as two items, not a conflict", () => {
+      const current = managed();
+      const next: ApprovedScope = {
+        ...current,
+        reference: { ...current.reference, scopeVersion: "scopev_0002" },
+        documentIndex: { ...current.documentIndex, indexVersion: "idxv_0002" },
+      };
+
+      // A new version is a new reference: the catalog may legitimately hold
+      // both while Cards migrate, and each is one consistent definition.
+      const plan = planSelectedScopes(
+        [
+          cardWith("card_first", "cardv_first", [current]),
+          cardWith("card_second", "cardv_second", [next]),
+        ],
+        LIMIT,
+      );
+
+      expect(plan.items).toHaveLength(2);
+    });
   });
 
   it("keys every item with a canonical digest", () => {
