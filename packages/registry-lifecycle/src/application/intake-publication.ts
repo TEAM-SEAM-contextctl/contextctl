@@ -1,18 +1,26 @@
 import type {
+  IngestionPublication,
   PublicationId,
   PublishedKnowledgeUnit,
 } from "@contextctl/contracts";
 
-import { appendCardVersion } from "../domain/card-version.js";
+import type { CardImpact } from "../domain/card-impact.js";
+import {
+  appendCardVersion,
+  withdrawCurrentVersion,
+  type CardId,
+} from "../domain/card-version.js";
 import {
   createContextCard,
   withCardVersions,
   type CardPolicy,
+  type ContextCard,
 } from "../domain/context-card.js";
 import type { LifecycleEvent } from "../domain/lifecycle-event.js";
 import type { CardMeaningRequest } from "../ports/card-meaning-generator.js";
 import type { CardStore } from "../ports/card-store.js";
 import type { IntakeStore, IntakenCard } from "../ports/intake-store.js";
+import { assessPublicationImpact } from "./assess-publication-impact.js";
 import {
   claimPublication,
   type ClaimPublicationPorts,
@@ -48,6 +56,13 @@ export interface IntakePublicationOptions {
  * one thing it actually needs: Cards, versions, the current pointer, the
  * lifecycle events and the consumer cursor landing together.
  *
+ * Two things happen to Cards here, and they are different questions. A
+ * Publication's units produce new versions — that is what the claim returns. A
+ * Publication's *changes* decide what happens to the Cards already serving, and
+ * that is what the impact assessment answers. A single Card can be on both sides
+ * at once: its unit was updated, so it gains a draft, and the update moved a
+ * coordinate out from under it, so the version currently serving has to go.
+ *
  * Every asynchronous read happens before the commit — the meaning generator, the
  * Card lookups — so the store is handed a value it can write synchronously. An
  * adapter that opens a transaction therefore never has to hold it open across an
@@ -72,57 +87,186 @@ export async function intakePublication(
   if (publication === undefined) {
     throw new PublicationNotFoundError(publicationId);
   }
-  const units = new Map(
-    publication.knowledgeUnits.map((unit) => [unit.id, unit] as const),
-  );
 
-  const cards: IntakenCard[] = [];
-  for (const claimedVersion of claimed.cardVersions) {
-    cards.push(await toIntakenCard(ports, options, claimedVersion, units));
-  }
+  const draft = new IntakeDraft();
+  await addClaimedVersions(ports, options, publication, claimed.cardVersions, draft);
+  await applyImpacts(ports, publication, draft);
 
-  await ports.intake.commit({ cards, cursor: claimed.cursor });
+  await ports.intake.commit({ cards: draft.entries(), cursor: claimed.cursor });
   return claimed;
 }
 
 /**
- * The Card this version belongs to, with the version appended.
+ * The Cards one intake touches, each with the events explaining why.
  *
- * A Card that already exists gains a version; one Registry has not seen before
- * is created from its Knowledge Unit. The meaning is generated again here rather
- * than reused from the claim — the local generator is deterministic, so the text
- * is the same one grounding accepted. A model-backed generator makes the two
- * differ, and carrying the meaning on the claim result is the fix; it belongs
- * with the fact-grounding work (SEAM-112) rather than here, because that is
- * where the two texts start being compared at all.
+ * An accumulator rather than two lists, because a Card reached from both sides —
+ * a new version and an impact on the version already serving — has to be
+ * committed once. Two entries for the same Card would mean two writes of the
+ * same row, and the second would overwrite whatever the first decided about the
+ * current pointer.
  */
-async function toIntakenCard(
+class IntakeDraft {
+  readonly #cards = new Map<CardId, IntakenCard>();
+
+  get(cardId: CardId): IntakenCard | undefined {
+    return this.#cards.get(cardId);
+  }
+
+  set(cardId: CardId, card: ContextCard, events: readonly LifecycleEvent[]): void {
+    const existing = this.#cards.get(cardId);
+    this.#cards.set(cardId, {
+      card,
+      events: existing === undefined ? events : [...existing.events, ...events],
+    });
+  }
+
+  entries(): readonly IntakenCard[] {
+    return [...this.#cards.values()];
+  }
+}
+
+/** Appends every version the claim produced to the Card it belongs to. */
+async function addClaimedVersions(
   ports: IntakePublicationPorts,
   options: IntakePublicationOptions,
-  claimed: ClaimedCardVersion,
-  units: ReadonlyMap<string, PublishedKnowledgeUnit>,
-): Promise<IntakenCard> {
-  const { version } = claimed;
-  const existing = await ports.cards.findCard(version.cardId);
-  const card = existing ?? createContextCard(
-    version.cardId,
-    await ports.meanings.generate(meaningRequestFor(version.cardId, units)),
-    options.policy,
+  publication: IngestionPublication,
+  claimedVersions: readonly ClaimedCardVersion[],
+  draft: IntakeDraft,
+): Promise<void> {
+  const units = new Map(
+    publication.knowledgeUnits.map((unit) => [unit.id, unit] as const),
   );
 
-  const event: LifecycleEvent = {
-    id: ports.ids.nextId(),
-    kind: "card_version_added",
-    cardId: version.cardId,
-    occurredAt: version.createdAt,
-    versionId: version.id,
-    publicationId: version.lineage.publicationId,
-  };
+  for (const { version } of claimedVersions) {
+    const card = await loadOrCreateCard(ports, options, version.cardId, units);
+    const event: LifecycleEvent = {
+      id: ports.ids.nextId(),
+      kind: "card_version_added",
+      cardId: version.cardId,
+      occurredAt: version.createdAt,
+      versionId: version.id,
+      publicationId: version.lineage.publicationId,
+    };
+    draft.set(
+      version.cardId,
+      withCardVersions(card, appendCardVersion(card.versions, version)),
+      [event],
+    );
+  }
+}
 
-  return {
-    card: withCardVersions(card, appendCardVersion(card.versions, version)),
-    events: [event],
-  };
+/**
+ * Applies what the Publication's changes mean for the Cards already serving.
+ *
+ * `disable` and `block` both take the current pointer away, and for the same
+ * reason: the Card can no longer be verified against the source. `disable` means
+ * the knowledge is gone, `block` means a coordinate it named is. Neither is a
+ * case for keeping the last-known-good version — that rule exists for a *new*
+ * version failing validation, where the source still says what the serving
+ * version claims. See ADR 0005.
+ *
+ * `review` changes nothing about what is served. A paragraph was edited, so the
+ * Card is older than its source and a draft is waiting for an operator; serving
+ * the previous version meanwhile is the design's answer, not a gap in it.
+ *
+ * The event is the impact assessment alone. `card_withdrawn` is not emitted even
+ * though a pointer moved: it requires the operator who decided, and reachability
+ * reads it as a deliberate exclusion — so using it here would record a decision
+ * nobody made and report removed knowledge as intentionally unexposed.
+ */
+async function applyImpacts(
+  ports: IntakePublicationPorts,
+  publication: IngestionPublication,
+  draft: IntakeDraft,
+): Promise<void> {
+  const currentVersions = await ports.cards.listCurrentVersions();
+  const { impacts, events } = assessPublicationImpact(
+    ports,
+    publication,
+    currentVersions,
+  );
+  if (impacts.length === 0) {
+    return;
+  }
+
+  const eventsByCard = new Map<CardId, LifecycleEvent[]>();
+  for (const event of events) {
+    const forCard = eventsByCard.get(event.cardId) ?? [];
+    forCard.push(event);
+    eventsByCard.set(event.cardId, forCard);
+  }
+
+  for (const impact of impacts) {
+    const card = await cardUnderImpact(ports, draft, impact);
+    if (card === undefined) {
+      // The impact was judged against a current version, so the Card exists.
+      // Reaching here would mean the store lost it between two reads.
+      continue;
+    }
+    draft.set(
+      impact.cardId,
+      withdraws(impact) ? withCardVersions(card, withdrawCurrentVersion(card.versions)) : card,
+      eventsByCard.get(impact.cardId) ?? [],
+    );
+  }
+}
+
+/** Whether this decision takes the current pointer away. */
+function withdraws(impact: CardImpact): boolean {
+  switch (impact.decision) {
+    case "disable":
+    case "block":
+      return true;
+    case "review":
+    case "none":
+      return false;
+    default: {
+      const unreachable: never = impact.decision;
+      throw new Error(`unknown impact decision: ${String(unreachable)}`);
+    }
+  }
+}
+
+/**
+ * The Card this impact applies to, as the draft has it or as the store does.
+ *
+ * Preferring the draft is what keeps a Card that gained a version in this same
+ * intake from losing it: the impact has to be applied on top of the appended
+ * version, not on the copy that was read before it.
+ */
+async function cardUnderImpact(
+  ports: IntakePublicationPorts,
+  draft: IntakeDraft,
+  impact: CardImpact,
+): Promise<ContextCard | undefined> {
+  return draft.get(impact.cardId)?.card ?? ports.cards.findCard(impact.cardId);
+}
+
+/**
+ * The stored Card, or a new one described from its Knowledge Unit.
+ *
+ * The meaning is generated again here rather than reused from the claim — the
+ * local generator is deterministic, so the text is the same one grounding
+ * accepted. A model-backed generator makes the two differ, and carrying the
+ * meaning on the claim result is the fix; it belongs with the fact-grounding
+ * work (SEAM-112) rather than here, because that is where the two texts start
+ * being compared at all.
+ */
+async function loadOrCreateCard(
+  ports: IntakePublicationPorts,
+  options: IntakePublicationOptions,
+  cardId: CardId,
+  units: ReadonlyMap<string, PublishedKnowledgeUnit>,
+): Promise<ContextCard> {
+  const existing = await ports.cards.findCard(cardId);
+  return (
+    existing ??
+    createContextCard(
+      cardId,
+      await ports.meanings.generate(meaningRequestFor(cardId, units)),
+      options.policy,
+    )
+  );
 }
 
 /**
