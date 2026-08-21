@@ -338,6 +338,7 @@ async function runServe(
     throw new EmbeddingAssetsUnavailableError(assets.problem);
   }
   const options = cliRuntimeOptions({
+    environment,
     paths,
     embeddingArtifactDirectory: assets.directory,
     sourceConfigurations: toSourceConfigurations(sources),

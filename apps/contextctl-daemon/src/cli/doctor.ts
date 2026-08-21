@@ -20,6 +20,10 @@ import {
   maskSecret,
   resolveCardMeaningBackend,
 } from "./meaning-generator.js";
+import {
+  resolvePolicyContext,
+  SENSITIVE_ACCESS_VARIABLE,
+} from "./policy-context.js";
 import { resolveContextctlPaths, readNonEmpty } from "./paths.js";
 import { readSourcesFile, SourcesFileError } from "./sources-file.js";
 import { resolveVectorBackend } from "../vector-backend.js";
@@ -112,6 +116,7 @@ export async function runDiagnosis(
     ),
     checkVectorBackend(input.environment),
     checkCardMeaning(input.environment),
+    checkPolicyContext(input.environment),
   ];
 
   return {
@@ -496,6 +501,44 @@ function checkCardMeaning(
         apiKey,
       ),
       "CONTEXTCTL_CARD_MEANING_TIMEOUT_MS, _CONTEXT_TOKENS, _MAX_OUTPUT_TOKENS 값을 확인하세요.",
+    );
+  }
+}
+
+/**
+ * The access policy every query will run under, read from configuration only.
+ *
+ * `deny` is `ok` and says what it excludes. `allow` is `warn` rather than `ok`
+ * even though it is a value the operator chose: the consequence — Cards
+ * approved as sensitive are reachable by every query this process answers —
+ * is the kind a reader of a health report should not have to infer from a
+ * variable name, so the step states the result, not the setting. An undefined
+ * value is `fail`, because the runtime will refuse to start on it.
+ */
+function checkPolicyContext(
+  environment: Readonly<Partial<Record<string, string>>>,
+): DiagnosisStep {
+  try {
+    const policy = resolvePolicyContext(environment);
+    if (policy.sensitiveAccess === "allow") {
+      return diagnosis(
+        "policy-context",
+        "warn",
+        `${SENSITIVE_ACCESS_VARIABLE}=allow — 민감(sensitive: true)으로 승인된 Card가 질의에 노출된다. 이 프로세스가 답하는 모든 표면(MCP, HTTP, query CLI)에서 그 Card의 내용이 검색 결과에 실린다.`,
+        `의도한 설정이 아니면 ${SENSITIVE_ACCESS_VARIABLE} 를 비워 기본값 deny 로 되돌리라.`,
+      );
+    }
+    return diagnosis(
+      "policy-context",
+      "ok",
+      `민감(sensitive: true) Card는 모든 질의에서 점수 계산 전에 제외된다(기본값 deny). 용도는 retrieval 로 고정이다.`,
+    );
+  } catch (error) {
+    return diagnosis(
+      "policy-context",
+      "fail",
+      `접근 정책 설정이 잘못되었다: ${describeError(error)}`,
+      `${SENSITIVE_ACCESS_VARIABLE} 는 deny 또는 allow 만 받는다. ingest, query, serve 는 이 값으로는 시작하지 않는다.`,
     );
   }
 }
