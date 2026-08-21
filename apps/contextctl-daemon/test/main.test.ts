@@ -16,7 +16,9 @@ import {
   type RetrievalScope,
 } from "@contextctl/registry-lifecycle";
 import {
+  CARD_SELECTION_EMBEDDING_PROFILE,
   DeterministicCardEmbeddingAdapter,
+  DETERMINISTIC_CARD_SELECTION_PROFILE,
   InMemoryCardCandidateIndexStore,
   isCardSelectionEmbeddingProfile,
   type ApprovedDocumentIndexRef,
@@ -26,12 +28,10 @@ import { LocalCardEmbeddingAdapter } from "../src/adapters/local-card-embedding-
 import { RegistryApprovedCardCatalog } from "../src/adapters/registry-approved-card-catalog.js";
 import { DaemonContextApplication } from "../src/context-application.js";
 import {
-  CARD_SELECTION_EMBEDDING_PROFILE,
   createDaemonRuntime,
   DEFAULT_CONNECTOR_ID,
   DEFAULT_EMBEDDING_PROFILE,
   DEFAULT_SECURITY_DOMAIN,
-  DETERMINISTIC_CARD_SELECTION_PROFILE,
   readDaemonRuntimeOptions,
   readHttpPort,
   VectorBackendConfigurationError,

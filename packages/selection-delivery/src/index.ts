@@ -36,6 +36,10 @@ export {
   type RemoteCardEmbeddingExecution,
 } from "./domain/card-selection-profile.js";
 export {
+  CARD_SELECTION_EMBEDDING_PROFILE,
+  DETERMINISTIC_CARD_SELECTION_PROFILE,
+} from "./domain/card-selection-profiles.js";
+export {
   buildCardSelectionEntry,
   buildCardSelectionText,
   CARD_SELECTION_TEXT_SCHEMA,
