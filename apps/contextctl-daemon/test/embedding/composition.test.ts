@@ -7,7 +7,11 @@ import {
   composeDocumentEmbedding,
   EmbeddingCompositionError,
 } from "../../src/embedding/composition.js";
-import { EmbeddingModeProfileMismatchError } from "../../src/embedding/provider-factory.js";
+import {
+  EmbeddingModeProfileMismatchError,
+  IngestionDocumentEmbeddingProviderFactory,
+} from "../../src/embedding/provider-factory.js";
+import { RemoteEmbeddingBindingError } from "../../src/embedding/remote-binding.js";
 import {
   cardLayer,
   documentLayer,
@@ -16,6 +20,7 @@ import {
   localCardProfile,
   localDocumentProfile,
   remoteCardProfile,
+  remoteBinding,
   remoteDocumentProfile,
   SECURITY_DOMAIN,
 } from "./fakes.js";
@@ -36,6 +41,17 @@ import {
  * the same way, which is the one failure this whole surface exists to prevent.
  */
 describe("embedding composition", () => {
+  it("binds Ingestion's concrete remote adapter to the exact profile", () => {
+    const profile = remoteDocumentProfile();
+    const provider = new IngestionDocumentEmbeddingProviderFactory().createRemote({
+      profile,
+      binding: remoteBinding("document"),
+    });
+
+    expect(provider.providerKind).toBe("remote");
+    expect(provider.embeddingProfile).toEqual(profile);
+  });
+
   describe("the four layer combinations", () => {
     it("binds both layers locally", () => {
       const documentFactory = new FakeDocumentEmbeddingProviderFactory();
@@ -52,6 +68,7 @@ describe("embedding composition", () => {
       const card = composeCardEmbedding({
         configuration: cardLayer("local"),
         profile: localCardProfile(),
+        securityDomain: SECURITY_DOMAIN,
         artifactDirectory: "/assets/rev_a",
         factory: cardFactory,
       });
@@ -81,6 +98,7 @@ describe("embedding composition", () => {
       const card = composeCardEmbedding({
         configuration: cardLayer("remote"),
         profile: remoteCardProfile(),
+        securityDomain: SECURITY_DOMAIN,
         factory: cardFactory,
       });
 
@@ -109,6 +127,7 @@ describe("embedding composition", () => {
       composeCardEmbedding({
         configuration: cardLayer("local"),
         profile: localCardProfile(),
+        securityDomain: SECURITY_DOMAIN,
         artifactDirectory: "/assets/rev_a",
         factory: cardFactory,
       });
@@ -136,6 +155,7 @@ describe("embedding composition", () => {
       composeCardEmbedding({
         configuration: cardLayer("remote"),
         profile: remoteCardProfile(),
+        securityDomain: SECURITY_DOMAIN,
         factory: cardFactory,
       });
 
@@ -168,6 +188,7 @@ describe("embedding composition", () => {
         composeCardEmbedding({
           configuration: cardLayer("remote"),
           profile: remoteCardProfile(),
+          securityDomain: SECURITY_DOMAIN,
           factory: cardFactory,
         });
       }).not.toThrow();
@@ -199,8 +220,16 @@ describe("embedding composition", () => {
           reachableProfiles: [localDocumentProfile()],
           securityDomain: SECURITY_DOMAIN,
           factory,
+          retainedBindings: [
+            {
+              profileId: "document-granite-fake-v1",
+              profileVersion: "1",
+              mode: "local",
+              artifactDirectory: "/assets/rev_a",
+            },
+          ],
         }),
-      ).toThrowError(EmbeddingProviderFault);
+      ).not.toThrow();
     });
   });
 
@@ -215,6 +244,14 @@ describe("embedding composition", () => {
         securityDomain: SECURITY_DOMAIN,
         artifactDirectory: "/assets/rev_a",
         factory,
+        retainedBindings: [
+          {
+            profileId: "document-older-v1",
+            profileVersion: "1",
+            mode: "local",
+            artifactDirectory: "/assets/rev_a",
+          },
+        ],
       });
 
       expect(
@@ -254,6 +291,36 @@ describe("embedding composition", () => {
         }),
       ).toThrowError(EmbeddingCompositionError);
     });
+
+    it("uses an exact retained binding for an older remote profile", () => {
+      const factory = new FakeDocumentEmbeddingProviderFactory();
+      const older = remoteDocumentProfile("document-older-hosted-v1");
+
+      composeDocumentEmbedding({
+        configuration: documentLayer("local"),
+        currentProfile: localDocumentProfile(),
+        reachableProfiles: [older],
+        securityDomain: SECURITY_DOMAIN,
+        artifactDirectory: "/assets/rev_a",
+        factory,
+        retainedBindings: [
+          {
+            profileId: older.id,
+            profileVersion: older.version,
+            mode: "remote",
+            binding: remoteBinding("document"),
+          },
+        ],
+      });
+
+      expect(factory.calls).toEqual([
+        { mode: "local", artifactDirectory: "/assets/rev_a" },
+        {
+          mode: "remote",
+          endpoint: "https://documents.example/v1/embeddings",
+        },
+      ]);
+    });
   });
 
   describe("configuration that contradicts a profile", () => {
@@ -274,10 +341,27 @@ describe("embedding composition", () => {
         composeCardEmbedding({
           configuration: cardLayer("local"),
           profile: remoteCardProfile(),
+          securityDomain: SECURITY_DOMAIN,
           artifactDirectory: "/assets/rev_a",
           factory: new FakeCardEmbeddingProviderFactory(),
         }),
       ).toThrowError(EmbeddingModeProfileMismatchError);
+    });
+
+    it("refuses a remote binding from another security domain", () => {
+      const binding = remoteBinding("document");
+      expect(() =>
+        composeDocumentEmbedding({
+          configuration: {
+            mode: "remote",
+            binding: { ...binding, securityDomain: "another-domain" },
+          },
+          currentProfile: remoteDocumentProfile(),
+          reachableProfiles: [],
+          securityDomain: SECURITY_DOMAIN,
+          factory: new FakeDocumentEmbeddingProviderFactory(),
+        }),
+      ).toThrowError(RemoteEmbeddingBindingError);
     });
   });
 

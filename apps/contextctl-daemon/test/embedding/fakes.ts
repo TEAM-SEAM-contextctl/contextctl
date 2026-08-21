@@ -83,6 +83,7 @@ export function remoteDocumentProfile(
       // strings would describe two different models in one profile.
       model: "fake/granite-embedding",
     },
+    pooling: "provider_defined",
   } as unknown as EmbeddingProfile;
 }
 
@@ -143,6 +144,7 @@ export function remoteBinding(
         ? "https://documents.example/v1/embeddings"
         : "https://cards.example/v1/embeddings",
     credential: new EmbeddingCredential(`key-for-${layer}`),
+    credentialSource: `TEST_${layer.toUpperCase()}_KEY`,
     securityDomain: SECURITY_DOMAIN,
   };
 }
@@ -190,7 +192,7 @@ export class FakeDocumentEmbeddingProviderFactory
       mode: "local",
       artifactDirectory: input.artifactDirectory,
     });
-    return new FakeEmbeddingPort("local");
+    return new FakeEmbeddingPort("local", input.profile);
   }
 
   createRemote(input: {
@@ -201,7 +203,7 @@ export class FakeDocumentEmbeddingProviderFactory
     if (this.failRemote) {
       throw new Error("remote adapter refused");
     }
-    return new FakeEmbeddingPort("remote");
+    return new FakeEmbeddingPort("remote", input.profile);
   }
 }
 
@@ -235,7 +237,10 @@ export class FakeCardEmbeddingProviderFactory
 }
 
 class FakeEmbeddingPort implements EmbeddingPort {
-  constructor(readonly providerKind: "local" | "remote") {}
+  constructor(
+    readonly providerKind: "local" | "remote",
+    readonly embeddingProfile: EmbeddingProfile,
+  ) {}
 
   async embed(
     request: EmbeddingProviderRequest,

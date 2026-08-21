@@ -27,6 +27,8 @@ export interface RemoteEmbeddingBinding {
   /** Absolute `https:` origin and path of the `/embeddings` surface. */
   readonly endpoint: string;
   readonly credential: EmbeddingCredential;
+  /** Names the secret source without carrying its value. */
+  readonly credentialSource: string;
   /**
    * The isolation key this binding may be used under.
    *
@@ -107,13 +109,12 @@ export interface RemoteEmbeddingBindingReport {
 
 export function describeRemoteBinding(
   binding: RemoteEmbeddingBinding,
-  credentialSource: string,
 ): RemoteEmbeddingBindingReport {
   return {
     providerId: binding.providerId,
     endpoint: binding.endpoint,
     securityDomain: binding.securityDomain,
-    credentialSource,
+    credentialSource: binding.credentialSource,
   };
 }
 
@@ -122,8 +123,12 @@ export type RemoteEmbeddingBindingProblemCode =
   | "endpoint_missing"
   | "endpoint_invalid"
   | "endpoint_carries_credentials"
+  | "endpoint_carries_parameters"
   | "endpoint_insecure"
   | "provider_id_missing"
+  | "provider_id_invalid"
+  | "retained_binding_invalid"
+  | "retained_binding_duplicate"
   | "security_domain_mismatch";
 
 /**
@@ -179,6 +184,13 @@ export function validateRemoteEndpoint(
   if (endpoint.username !== "" || endpoint.password !== "") {
     throw new RemoteEmbeddingBindingError(
       "endpoint_carries_credentials",
+      layer,
+      variable,
+    );
+  }
+  if (endpoint.search !== "" || endpoint.hash !== "") {
+    throw new RemoteEmbeddingBindingError(
+      "endpoint_carries_parameters",
       layer,
       variable,
     );

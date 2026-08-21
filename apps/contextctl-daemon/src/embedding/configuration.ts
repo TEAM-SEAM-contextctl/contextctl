@@ -1,3 +1,19 @@
+import { isAbsolute } from "node:path";
+
+import {
+  assertValidEmbeddingProfile,
+  DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
+  isDocumentRetrievalEmbeddingProfile,
+  type DocumentRetrievalEmbeddingProfile,
+  type EmbeddingProfile,
+} from "@contextctl/ingestion-indexing";
+import {
+  assertValidCardSelectionProfile,
+  CARD_SELECTION_EMBEDDING_PROFILE,
+  isCardSelectionEmbeddingProfile,
+  type CardSelectionEmbeddingProfile,
+} from "@contextctl/selection-delivery";
+
 import {
   EmbeddingCredential,
   RemoteEmbeddingBindingError,
@@ -46,7 +62,23 @@ export type EmbeddingLayerConfiguration =
 export interface EmbeddingCompositionConfiguration {
   readonly document: EmbeddingLayerConfiguration;
   readonly card: EmbeddingLayerConfiguration;
+  /** Exact bindings retained for document profiles that are still reachable. */
+  readonly retainedDocumentBindings?: readonly DocumentProfileBinding[];
 }
+
+export type DocumentProfileBinding =
+  | {
+      readonly profileId: string;
+      readonly profileVersion: string;
+      readonly mode: "local";
+      readonly artifactDirectory: string;
+    }
+  | {
+      readonly profileId: string;
+      readonly profileVersion: string;
+      readonly mode: "remote";
+      readonly binding: RemoteEmbeddingBinding;
+    };
 
 export const DOCUMENT_EMBEDDING_MODE_VARIABLE =
   "CONTEXTCTL_DOCUMENT_EMBEDDING_MODE";
@@ -56,6 +88,8 @@ export const DOCUMENT_EMBEDDING_API_KEY_VARIABLE =
   "CONTEXTCTL_DOCUMENT_EMBEDDING_API_KEY";
 export const DOCUMENT_EMBEDDING_PROVIDER_ID_VARIABLE =
   "CONTEXTCTL_DOCUMENT_EMBEDDING_PROVIDER_ID";
+export const DOCUMENT_EMBEDDING_PROFILE_VARIABLE =
+  "CONTEXTCTL_DOCUMENT_EMBEDDING_PROFILE";
 
 export const CARD_EMBEDDING_MODE_VARIABLE = "CONTEXTCTL_CARD_EMBEDDING_MODE";
 export const CARD_EMBEDDING_ENDPOINT_VARIABLE =
@@ -64,6 +98,10 @@ export const CARD_EMBEDDING_API_KEY_VARIABLE =
   "CONTEXTCTL_CARD_EMBEDDING_API_KEY";
 export const CARD_EMBEDDING_PROVIDER_ID_VARIABLE =
   "CONTEXTCTL_CARD_EMBEDDING_PROVIDER_ID";
+export const CARD_EMBEDDING_PROFILE_VARIABLE =
+  "CONTEXTCTL_CARD_EMBEDDING_PROFILE";
+export const DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE =
+  "CONTEXTCTL_DOCUMENT_RETAINED_EMBEDDING_BINDINGS";
 
 interface LayerVariables {
   readonly mode: string;
@@ -102,6 +140,157 @@ export class EmbeddingModeError extends Error {
   }
 }
 
+export type EmbeddingProfileConfigurationProblemCode =
+  | "profile_missing"
+  | "profile_invalid"
+  | "profile_mode_mismatch"
+  | "retained_binding_missing"
+  | "retained_binding_mode_mismatch";
+
+/** A profile setting that cannot safely identify a vector family. */
+export class EmbeddingProfileConfigurationError extends Error {
+  constructor(
+    readonly code: EmbeddingProfileConfigurationProblemCode,
+    readonly layer: EmbeddingLayer,
+    readonly variable: string,
+  ) {
+    super(`${layer} embedding profile is invalid: ${code}`);
+    this.name = "EmbeddingProfileConfigurationError";
+  }
+}
+
+export interface ActiveEmbeddingProfiles {
+  readonly document: DocumentRetrievalEmbeddingProfile;
+  readonly card: CardSelectionEmbeddingProfile;
+}
+
+/**
+ * Reads the exact vector family each layer will produce.
+ *
+ * Local profiles have domain-owned defaults. Remote execution has no safe
+ * default: an endpoint may front any model, width or revision, so the complete
+ * domain profile must be supplied and validated rather than inferred from the
+ * URL or copied from the local model.
+ */
+export function readActiveEmbeddingProfiles(
+  environment: Readonly<Partial<Record<string, string>>>,
+  configuration: EmbeddingCompositionConfiguration,
+): ActiveEmbeddingProfiles {
+  return {
+    document: readDocumentProfile(environment, configuration.document.mode),
+    card: readCardProfile(environment, configuration.card.mode),
+  };
+}
+
+/** Ensures every older document vector family has its own exact binding. */
+export function assertRequiredDocumentProfileBindings(
+  configuration: EmbeddingCompositionConfiguration,
+  profiles: readonly EmbeddingProfile[],
+): void {
+  const current = profiles[0];
+  for (const profile of profiles) {
+    if (profile.id === current?.id && profile.version === current.version) {
+      continue;
+    }
+    const retained = (configuration.retainedDocumentBindings ?? []).find(
+      (binding) =>
+        binding.profileId === profile.id &&
+        binding.profileVersion === profile.version,
+    );
+    if (retained === undefined) {
+      throw new EmbeddingProfileConfigurationError(
+        "retained_binding_missing",
+        "document",
+        DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+      );
+    }
+    const execution = isDocumentRetrievalEmbeddingProfile(profile)
+      ? profile.execution.kind
+      : undefined;
+    if (execution === undefined || execution !== retained.mode) {
+      throw new EmbeddingProfileConfigurationError(
+        "retained_binding_mode_mismatch",
+        "document",
+        DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+      );
+    }
+  }
+}
+
+function readDocumentProfile(
+  environment: Readonly<Partial<Record<string, string>>>,
+  mode: EmbeddingExecutionMode,
+): DocumentRetrievalEmbeddingProfile {
+  const raw = environment[DOCUMENT_EMBEDDING_PROFILE_VARIABLE];
+  if (raw === undefined || raw.trim() === "") {
+    if (mode === "local") return DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
+    throw new EmbeddingProfileConfigurationError(
+      "profile_missing",
+      "document",
+      DOCUMENT_EMBEDDING_PROFILE_VARIABLE,
+    );
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isExactDocumentProfile(parsed)) throw new TypeError();
+    const profile = parsed;
+    assertValidEmbeddingProfile(profile);
+    if (!isDocumentRetrievalEmbeddingProfile(profile)) throw new TypeError();
+    if (profile.execution.kind !== mode) {
+      throw new EmbeddingProfileConfigurationError(
+        "profile_mode_mismatch",
+        "document",
+        DOCUMENT_EMBEDDING_PROFILE_VARIABLE,
+      );
+    }
+    return profile;
+  } catch (error) {
+    if (error instanceof EmbeddingProfileConfigurationError) throw error;
+    throw new EmbeddingProfileConfigurationError(
+      "profile_invalid",
+      "document",
+      DOCUMENT_EMBEDDING_PROFILE_VARIABLE,
+    );
+  }
+}
+
+function readCardProfile(
+  environment: Readonly<Partial<Record<string, string>>>,
+  mode: EmbeddingExecutionMode,
+): CardSelectionEmbeddingProfile {
+  const raw = environment[CARD_EMBEDDING_PROFILE_VARIABLE];
+  if (raw === undefined || raw.trim() === "") {
+    if (mode === "local") return CARD_SELECTION_EMBEDDING_PROFILE;
+    throw new EmbeddingProfileConfigurationError(
+      "profile_missing",
+      "card",
+      CARD_EMBEDDING_PROFILE_VARIABLE,
+    );
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isExactCardProfile(parsed)) throw new TypeError();
+    const profile = parsed;
+    assertValidCardSelectionProfile(profile);
+    if (!isCardSelectionEmbeddingProfile(profile)) throw new TypeError();
+    if (profile.execution.kind !== mode) {
+      throw new EmbeddingProfileConfigurationError(
+        "profile_mode_mismatch",
+        "card",
+        CARD_EMBEDDING_PROFILE_VARIABLE,
+      );
+    }
+    return profile;
+  } catch (error) {
+    if (error instanceof EmbeddingProfileConfigurationError) throw error;
+    throw new EmbeddingProfileConfigurationError(
+      "profile_invalid",
+      "card",
+      CARD_EMBEDDING_PROFILE_VARIABLE,
+    );
+  }
+}
+
 /**
  * Reads both layers out of the environment, independently.
  *
@@ -122,6 +311,10 @@ export function readEmbeddingCompositionConfiguration(
   return {
     document: readLayerConfiguration(environment, "document", securityDomain),
     card: readLayerConfiguration(environment, "card", securityDomain),
+    retainedDocumentBindings: readRetainedDocumentBindings(
+      environment,
+      securityDomain,
+    ),
   };
 }
 
@@ -204,13 +397,279 @@ function readRemoteBinding(
     rawProviderId === undefined || rawProviderId.trim() === ""
       ? `remote.${securityDomain}.${layer}`
       : rawProviderId.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(providerId)) {
+    throw new RemoteEmbeddingBindingError(
+      "provider_id_invalid",
+      layer,
+      variables.providerId,
+    );
+  }
 
   return {
     providerId,
     endpoint,
     credential: new EmbeddingCredential(rawKey),
+    credentialSource: variables.apiKey,
     securityDomain,
   };
+}
+
+/**
+ * Reads exact bindings for older document profiles.
+ *
+ * The JSON contains no secret value. A remote entry names the environment
+ * variable holding its credential, which lets key rotation remain a runtime
+ * concern while preserving the exact profile-to-provider association.
+ */
+function readRetainedDocumentBindings(
+  environment: Readonly<Partial<Record<string, string>>>,
+  securityDomain: string,
+): readonly DocumentProfileBinding[] {
+  const raw = environment[DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE];
+  if (raw === undefined || raw.trim() === "") return [];
+  let entries: unknown;
+  try {
+    entries = JSON.parse(raw);
+  } catch {
+    throw new RemoteEmbeddingBindingError(
+      "retained_binding_invalid",
+      "document",
+      DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+    );
+  }
+  if (!Array.isArray(entries) || entries.length > 64) {
+    throw new RemoteEmbeddingBindingError(
+      "retained_binding_invalid",
+      "document",
+      DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+    );
+  }
+
+  const bindings = entries.map((entry) =>
+    parseRetainedDocumentBinding(entry, environment, securityDomain),
+  );
+  const identities = new Set<string>();
+  for (const binding of bindings) {
+    const identity = `${binding.profileId}\u0000${binding.profileVersion}`;
+    if (identities.has(identity)) {
+      throw new RemoteEmbeddingBindingError(
+        "retained_binding_duplicate",
+        "document",
+        DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+      );
+    }
+    identities.add(identity);
+  }
+  return bindings;
+}
+
+function parseRetainedDocumentBinding(
+  value: unknown,
+  environment: Readonly<Partial<Record<string, string>>>,
+  securityDomain: string,
+): DocumentProfileBinding {
+  if (!isRecord(value)) return invalidRetainedBinding();
+  const profileId = nonEmptyString(value.profileId);
+  const profileVersion = nonEmptyString(value.profileVersion);
+  const mode = value.mode;
+  if (profileId === undefined || profileVersion === undefined) {
+    return invalidRetainedBinding();
+  }
+  if (mode === "local") {
+    if (
+      !hasExactKeys(value, [
+        "profileId",
+        "profileVersion",
+        "mode",
+        "artifactDirectory",
+      ] as const)
+    ) {
+      return invalidRetainedBinding();
+    }
+    const artifactDirectory = nonEmptyString(value.artifactDirectory);
+    if (artifactDirectory === undefined || !isAbsolute(artifactDirectory)) {
+      return invalidRetainedBinding();
+    }
+    return { profileId, profileVersion, mode, artifactDirectory };
+  }
+  if (mode !== "remote") return invalidRetainedBinding();
+  if (
+    !hasExactKeys(value, [
+      "profileId",
+      "profileVersion",
+      "mode",
+      "endpoint",
+      "providerId",
+      "credentialVariable",
+    ] as const)
+  ) {
+    return invalidRetainedBinding();
+  }
+
+  const endpointRaw = nonEmptyString(value.endpoint);
+  const providerId = nonEmptyString(value.providerId);
+  const credentialVariable = nonEmptyString(value.credentialVariable);
+  if (
+    endpointRaw === undefined ||
+    providerId === undefined ||
+    credentialVariable === undefined ||
+    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(credentialVariable) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(providerId)
+  ) {
+    return invalidRetainedBinding();
+  }
+  const credential = environment[credentialVariable];
+  if (credential === undefined || credential.trim() === "") {
+    throw new RemoteEmbeddingBindingError(
+      "credential_missing",
+      "document",
+      credentialVariable,
+    );
+  }
+  return {
+    profileId,
+    profileVersion,
+    mode,
+    binding: {
+      providerId,
+      endpoint: validateRemoteEndpoint(
+        endpointRaw,
+        "document",
+        DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+      ),
+      credential: new EmbeddingCredential(credential),
+      credentialSource: credentialVariable,
+      securityDomain,
+    },
+  };
+}
+
+function invalidRetainedBinding(): never {
+  throw new RemoteEmbeddingBindingError(
+    "retained_binding_invalid",
+    "document",
+    DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== ""
+    ? value.trim()
+    : undefined;
+}
+
+const DOCUMENT_PROFILE_KEYS = [
+  "id",
+  "version",
+  "model",
+  "modelRevision",
+  "execution",
+  "dimensions",
+  "pooling",
+  "normalization",
+  "distance",
+  "documentInputTransformVersion",
+  "queryInputTransformVersion",
+  "modelMaxTokens",
+  "admissionLimit",
+  "maxInputTokens",
+  "textMeasureProfileVersion",
+] as const;
+
+const LOCAL_EXECUTION_KEYS = [
+  "kind",
+  "adapter",
+  "adapterVersion",
+  "artifactRepository",
+  "artifactRevision",
+  "artifactPath",
+  "artifactSha256",
+  "assetManifestSha256",
+  "precision",
+] as const;
+
+const REMOTE_EXECUTION_KEYS = [
+  "kind",
+  "adapter",
+  "adapterVersion",
+  "model",
+] as const;
+
+const CARD_PROFILE_KEYS = [
+  "id",
+  "version",
+  "model",
+  "modelRevision",
+  "execution",
+  "dimensions",
+  "pooling",
+  "normalization",
+  "distance",
+  "selectionTextSchemaVersion",
+  "cardInputTransformVersion",
+  "queryInputTransformVersion",
+  "admissionLimits",
+] as const;
+
+function isExactDocumentProfile(
+  value: unknown,
+): value is DocumentRetrievalEmbeddingProfile {
+  if (!isRecord(value) || !hasExactKeys(value, DOCUMENT_PROFILE_KEYS)) {
+    return false;
+  }
+  if (
+    !isRecord(value.admissionLimit) ||
+    !hasExactKeys(value.admissionLimit, [
+      "textMeasureProfileVersion",
+      "maxUnits",
+    ] as const) ||
+    !isRecord(value.execution)
+  ) {
+    return false;
+  }
+  return value.execution.kind === "local"
+    ? hasExactKeys(value.execution, LOCAL_EXECUTION_KEYS)
+    : value.execution.kind === "remote" &&
+        hasExactKeys(value.execution, REMOTE_EXECUTION_KEYS);
+}
+
+function isExactCardProfile(
+  value: unknown,
+): value is CardSelectionEmbeddingProfile {
+  if (!isRecord(value) || !hasExactKeys(value, CARD_PROFILE_KEYS)) {
+    return false;
+  }
+  if (
+    !isRecord(value.admissionLimits) ||
+    !hasExactKeys(value.admissionLimits, [
+      "textMeasureProfileVersion",
+      "maxCardUnits",
+      "maxQueryUnits",
+    ] as const) ||
+    !isRecord(value.execution)
+  ) {
+    return false;
+  }
+  return value.execution.kind === "local"
+    ? hasExactKeys(value.execution, LOCAL_EXECUTION_KEYS)
+    : value.execution.kind === "remote" &&
+        hasExactKeys(value.execution, REMOTE_EXECUTION_KEYS);
+}
+
+function hasExactKeys<const Keys extends readonly string[]>(
+  value: Record<string, unknown>,
+  keys: Keys,
+): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
 }
 
 /**

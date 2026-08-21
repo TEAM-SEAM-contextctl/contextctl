@@ -1,8 +1,6 @@
 import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
 
-import { DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE } from "@contextctl/ingestion-indexing";
-
 import {
   buildReachabilityReport,
   runOperatorCommand,
@@ -12,7 +10,6 @@ import {
   type ContextCard,
   type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
-import { CARD_SELECTION_EMBEDDING_PROFILE } from "@contextctl/selection-delivery";
 
 import type { CliCommand } from "./arguments.js";
 import { EXIT_CODES, operatorExitCode, type ExitCode } from "./exit-codes.js";
@@ -54,7 +51,11 @@ type IngestRefusal = Extract<
 >;
 import { DEFAULT_SECURITY_DOMAIN } from "../main.js";
 import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
-import { readEmbeddingCompositionConfiguration } from "../embedding/configuration.js";
+import {
+  readActiveEmbeddingProfiles,
+  readEmbeddingCompositionConfiguration,
+  assertRequiredDocumentProfileBindings,
+} from "../embedding/configuration.js";
 import {
   computeRequiredEmbeddingBindings,
   NO_PUBLISHED_SCOPES,
@@ -498,9 +499,10 @@ async function observeEmbeddingBindings(
       environment,
       securityDomain,
     );
+    const profiles = readActiveEmbeddingProfiles(environment, configuration);
     const required = await computeRequiredEmbeddingBindings({
-      documentProfile: DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
-      cardProfile: CARD_SELECTION_EMBEDDING_PROFILE,
+      documentProfile: profiles.document,
+      cardProfile: profiles.card,
       catalog: new RegistryApprovedCardCatalog(cli.cards),
       // Only opened when it already exists. `cli.indexPublications` creates the
       // file on first touch, and a status probe that created Ingestion's
@@ -511,6 +513,10 @@ async function observeEmbeddingBindings(
         ? cli.indexPublications
         : NO_PUBLISHED_SCOPES,
     });
+    assertRequiredDocumentProfileBindings(
+      configuration,
+      required.documentProfiles,
+    );
     return {
       status: "composed",
       documentMode: configuration.document.mode,

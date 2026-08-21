@@ -38,6 +38,20 @@ import {
   type DaemonRuntime,
   type DaemonRuntimeOptions,
 } from "../src/main.js";
+import {
+  CARD_EMBEDDING_API_KEY_VARIABLE,
+  CARD_EMBEDDING_ENDPOINT_VARIABLE,
+  CARD_EMBEDDING_MODE_VARIABLE,
+  CARD_EMBEDDING_PROFILE_VARIABLE,
+  DOCUMENT_EMBEDDING_API_KEY_VARIABLE,
+  DOCUMENT_EMBEDDING_ENDPOINT_VARIABLE,
+  DOCUMENT_EMBEDDING_MODE_VARIABLE,
+  DOCUMENT_EMBEDDING_PROFILE_VARIABLE,
+} from "../src/embedding/configuration.js";
+import {
+  remoteCardProfile,
+  remoteDocumentProfile,
+} from "./embedding/fakes.js";
 
 /**
  * Every runtime a test built, so its SQLite handle can be closed.
@@ -787,6 +801,35 @@ describe("readDaemonRuntimeOptions", () => {
         }),
       ),
     ).toEqual(["vectorIndex"]);
+  });
+
+  it("reads independent remote provider configuration and profiles", () => {
+    const options = readDaemonRuntimeOptions({
+      CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
+      [DOCUMENT_EMBEDDING_MODE_VARIABLE]: "remote",
+      [DOCUMENT_EMBEDDING_ENDPOINT_VARIABLE]:
+        "https://documents.example/v1/embeddings",
+      [DOCUMENT_EMBEDDING_API_KEY_VARIABLE]: "document-secret",
+      [DOCUMENT_EMBEDDING_PROFILE_VARIABLE]: JSON.stringify(
+        remoteDocumentProfile(),
+      ),
+      [CARD_EMBEDDING_MODE_VARIABLE]: "remote",
+      [CARD_EMBEDDING_ENDPOINT_VARIABLE]:
+        "https://cards.example/v1/embeddings",
+      [CARD_EMBEDDING_API_KEY_VARIABLE]: "card-secret",
+      [CARD_EMBEDDING_PROFILE_VARIABLE]: JSON.stringify(remoteCardProfile()),
+    });
+
+    expect(options.embedding?.document.mode).toBe("remote");
+    expect(options.embedding?.card.mode).toBe("remote");
+    expect(options.embeddingProfile).toMatchObject({
+      id: "document-hosted-fake-v1",
+      execution: { kind: "remote" },
+    });
+    expect(options.cardSelectionProfile).toMatchObject({
+      id: "card-hosted-fake-v1",
+      execution: { kind: "remote" },
+    });
   });
 });
 

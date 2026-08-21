@@ -18,6 +18,20 @@ import {
   type DiagnosisStep,
 } from "../../src/cli/doctor.js";
 import { addSource, writeSourcesFile, SOURCES_FILE_VERSION } from "../../src/cli/sources-file.js";
+import {
+  CARD_EMBEDDING_API_KEY_VARIABLE,
+  CARD_EMBEDDING_ENDPOINT_VARIABLE,
+  CARD_EMBEDDING_MODE_VARIABLE,
+  CARD_EMBEDDING_PROFILE_VARIABLE,
+  DOCUMENT_EMBEDDING_API_KEY_VARIABLE,
+  DOCUMENT_EMBEDDING_ENDPOINT_VARIABLE,
+  DOCUMENT_EMBEDDING_MODE_VARIABLE,
+  DOCUMENT_EMBEDDING_PROFILE_VARIABLE,
+} from "../../src/embedding/configuration.js";
+import {
+  remoteCardProfile,
+  remoteDocumentProfile,
+} from "../embedding/fakes.js";
 
 /**
  * `contextctl doctor`, exercised against a real filesystem and nothing else.
@@ -133,6 +147,31 @@ async function writeOneSource(home: string): Promise<void> {
 }
 
 describe("runDiagnosis / embedding assets", () => {
+  it("does not require a local install when both layers are remote", async () => {
+    const home = await makeHome();
+    const report = await runDiagnosis({
+      environment: {
+        CONTEXTCTL_HOME: home,
+        [DOCUMENT_EMBEDDING_MODE_VARIABLE]: "remote",
+        [DOCUMENT_EMBEDDING_ENDPOINT_VARIABLE]:
+          "https://documents.example/v1/embeddings",
+        [DOCUMENT_EMBEDDING_API_KEY_VARIABLE]: "document-secret",
+        [DOCUMENT_EMBEDDING_PROFILE_VARIABLE]: JSON.stringify(
+          remoteDocumentProfile(),
+        ),
+        [CARD_EMBEDDING_MODE_VARIABLE]: "remote",
+        [CARD_EMBEDDING_ENDPOINT_VARIABLE]:
+          "https://cards.example/v1/embeddings",
+        [CARD_EMBEDDING_API_KEY_VARIABLE]: "card-secret",
+        [CARD_EMBEDDING_PROFILE_VARIABLE]: JSON.stringify(remoteCardProfile()),
+      },
+    });
+
+    const step = stepNamed(report, "embedding-assets");
+    expect(step.status).toBe("ok");
+    expect(step.detail).toContain("필요하지 않습니다");
+  });
+
   it("fails on a fresh home and names the command that fixes it", async () => {
     const home = await makeHome();
 
