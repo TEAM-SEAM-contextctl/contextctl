@@ -9,6 +9,7 @@ import {
   assessPublicationImpact,
   type AssessPublicationImpactPorts,
 } from "../../src/application/assess-publication-impact.js";
+import type { CardVersion } from "../../src/domain/card-version.js";
 import {
   createDocumentCardVersion,
   createHttpCardVersion,
@@ -97,6 +98,98 @@ function createRemovalPublication(): IngestionPublication {
   });
 }
 
+const NEIGHBOUR_UNIT_ID = "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0de";
+
+/**
+ * A deletion that also rebuilt the document index the deleted unit lived in.
+ *
+ * The realistic shape of deleting a section: the section's unit goes away, and
+ * the rest of the document is republished against a new index version. The
+ * neighbour keeps its Card, and the question is whether that Card may keep
+ * serving the version it was approved on.
+ */
+function createRemovalWithRebuildPublication(): IngestionPublication {
+  const initial = createIngestionPublicationFixture();
+  const { contentDigest: _previous, ...content } = initialUnit;
+  const publishedScope = content.publishedScopes[0];
+  if (publishedScope?.kind !== "managed_document") {
+    throw new Error("fixture must publish a managed document scope");
+  }
+  const neighbourContent = {
+    ...content,
+    id: NEIGHBOUR_UNIT_ID,
+    sourceCoordinate: {
+      ...content.sourceCoordinate,
+      semanticUnitId: NEIGHBOUR_UNIT_ID,
+    },
+    publishedScopes: [
+      {
+        ...publishedScope,
+        scopeId: "scope_shipping",
+        scopeVersion: "scpv_bbbb",
+        documentIndex: {
+          ...publishedScope.documentIndex,
+          indexVersion: "idxv_bbbb",
+        },
+        selector: {
+          kind: "semantic_units" as const,
+          semanticUnitIds: [NEIGHBOUR_UNIT_ID],
+        },
+      },
+    ],
+  };
+  const neighbour = {
+    ...neighbourContent,
+    contentDigest: computePublishedKnowledgeUnitDigest(neighbourContent),
+  };
+
+  return parseIngestionPublication({
+    ...initial,
+    publicationId: fixtureRootId("pub", "removal-rebuild"),
+    previousPublicationId: fixtureRootId("pub", "initial"),
+    knowledgeUnits: [neighbour],
+    changes: [
+      {
+        kind: "removed",
+        knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
+        previousContentDigest: digest,
+      },
+      {
+        kind: "updated",
+        knowledgeUnitId: NEIGHBOUR_UNIT_ID,
+        previousContentDigest: digest,
+        currentContentDigest: neighbour.contentDigest,
+        changedFields: ["published.scopes"],
+      },
+    ],
+  });
+}
+
+/** The neighbour's Card, still serving the index version the deletion replaced. */
+function createNeighbourCardVersion(): CardVersion {
+  const base = createDocumentCardVersion();
+  const [scope] = base.scopes;
+  if (scope?.kind !== "managed_document") {
+    throw new Error("fixture must carry a managed document scope");
+  }
+  return {
+    ...base,
+    id: "cv_neighbour",
+    cardId: NEIGHBOUR_UNIT_ID,
+    lineage: { ...base.lineage, knowledgeUnitId: NEIGHBOUR_UNIT_ID },
+    scopes: [
+      {
+        ...scope,
+        reference: { scopeId: "scope_shipping", scopeVersion: "scpv_aaaa" },
+        selection: {
+          kind: "semantic_units",
+          semanticUnitIds: [NEIGHBOUR_UNIT_ID],
+        },
+      },
+    ],
+  };
+}
+
 describe("assessPublicationImpact", () => {
   it("marks the affected card for review and records one lifecycle event", () => {
     const result = assessPublicationImpact(
@@ -148,6 +241,29 @@ describe("assessPublicationImpact", () => {
     expect(result.events.map((event) => event.kind)).toEqual([
       "card_impact_assessed",
     ]);
+  });
+
+  it("blocks a neighbour left on the index version the deletion replaced", () => {
+    // The removed unit is absent from the Publication, so the document index it
+    // lived in is only knowable from the Card that was serving it. That is the
+    // derivation under test: without it the neighbour would be a plain review
+    // and would keep answering from an index version that still holds the
+    // deleted section. ADR 0005.
+    const result = assessPublicationImpact(
+      createPorts(),
+      createRemovalWithRebuildPublication(),
+      [createDocumentCardVersion(), createNeighbourCardVersion()],
+    );
+
+    expect(
+      result.impacts.map((impact) => [impact.cardId, impact.decision]),
+    ).toEqual([
+      ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", "disable"],
+      [NEIGHBOUR_UNIT_ID, "block"],
+    ]);
+    expect(
+      result.impacts[1]?.reasons.map((reason) => reason.rule),
+    ).toEqual(["scope.document.indexVersionSupersededByRemoval"]);
   });
 
   it("leaves unrelated cards untouched and emits no event for them", () => {

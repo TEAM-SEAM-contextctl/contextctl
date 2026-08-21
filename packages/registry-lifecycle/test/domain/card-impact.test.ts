@@ -162,6 +162,40 @@ describe("analyzeCardImpact", () => {
     expect(rules(impact)).toContain("scope.document.indexVersionChanged");
   });
 
+  it("blocks a rebuilt index the same publication removed knowledge from", () => {
+    // Same drift as the case above, and a different decision, because nothing
+    // purges a published index version: the version this Card is left on still
+    // holds the section the source deleted, so serving it answers from content
+    // that no longer exists. ADR 0005.
+    const impact = analyzeCardImpact(
+      createDocumentCardVersion({ indexVersion: "idxv_zzzz" }),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["facts"]),
+      onlyUnit(createIngestionPublicationFixture()),
+      { documentIndexesWithRemovals: new Set(["didx_payments"]) },
+    );
+
+    expect(impact.decision).toBe("block");
+    expect(rules(impact)).toContain(
+      "scope.document.indexVersionSupersededByRemoval",
+    );
+    // One cause, one reason: the plain drift rule must not also be reported.
+    expect(rules(impact)).not.toContain("scope.document.indexVersionChanged");
+  });
+
+  it("leaves a rebuilt index alone when another document lost knowledge", () => {
+    // The set is keyed by document index for a reason — a deletion in one
+    // document cannot make another document's Card unsafe to serve.
+    const impact = analyzeCardImpact(
+      createDocumentCardVersion({ indexVersion: "idxv_zzzz" }),
+      updated("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", ["facts"]),
+      onlyUnit(createIngestionPublicationFixture()),
+      { documentIndexesWithRemovals: new Set(["didx_shipping"]) },
+    );
+
+    expect(impact.decision).toBe("review");
+    expect(rules(impact)).toContain("scope.document.indexVersionChanged");
+  });
+
   it("blocks a card whose table was replaced by another coordinate kind", () => {
     const impact = analyzeCardImpact(
       createSqlCardVersion(),
