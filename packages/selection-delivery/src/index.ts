@@ -25,7 +25,10 @@ export {
 } from "./domain/card-candidate-index.js";
 export {
   assertValidCardSelectionProfile,
+  CARD_EMBEDDING_L2_NORM_TOLERANCE,
   cardSelectionProfilesMatch,
+  cardSelectionVectorMatchesProfile,
+  createRemoteCardSelectionProfile,
   DEFAULT_CARD_ADMISSION_LIMITS,
   isCardSelectionEmbeddingProfile,
   type CardAdmissionLimits,
@@ -34,6 +37,7 @@ export {
   type CardSelectionProfile,
   type LocalCardEmbeddingExecution,
   type RemoteCardEmbeddingExecution,
+  type RemoteCardSelectionProfileInput,
 } from "./domain/card-selection-profile.js";
 export {
   CARD_SELECTION_EMBEDDING_PROFILE,
@@ -224,6 +228,10 @@ export type {
 } from "./ports/card-candidate-index-store.js";
 export { InMemoryCardCatalog } from "./infrastructure/in-memory-card-catalog.js";
 export { DeterministicCardEmbeddingAdapter } from "./infrastructure/deterministic-card-embedding-adapter.js";
+export {
+  OpenAiCompatibleCardEmbeddingAdapter,
+  type OpenAiCompatibleCardEmbeddingAdapterOptions,
+} from "./infrastructure/openai-compatible-card-embedding-adapter.js";
 export { InMemoryCardCandidateIndexStore } from "./infrastructure/in-memory-card-candidate-index-store.js";
 export {
   createHttpQueryHandler,

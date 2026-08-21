@@ -84,7 +84,15 @@ export interface LocalCardEmbeddingExecution {
   readonly precision: "q8" | "fp32";
 }
 
-/** A provider reached over the network. No binding for one exists here yet. */
+/**
+ * A provider reached over the network.
+ *
+ * `model` is the identifier the provider pins immutably — a revision or a dated
+ * name, never a floating alias (SOT L599) — and it is what the adapter sends
+ * and what the provider must echo back. The endpoint and the credential are
+ * not here: they are the daemon's runtime binding, and swapping either for
+ * another that serves the same model changes no vector (SOT L1374).
+ */
 export interface RemoteCardEmbeddingExecution {
   readonly kind: "remote";
   readonly adapter: "openai-compatible";
@@ -173,15 +181,126 @@ export function assertValidCardSelectionProfile(
       `Card admission limits are stated under ${limits.textMeasureProfileVersion}, which this package cannot measure`,
     );
   }
-  if (
-    isCardSelectionEmbeddingProfile(profile) &&
-    profile.pooling === "provider_defined" &&
-    profile.execution.kind === "local"
-  ) {
+  if (!isCardSelectionEmbeddingProfile(profile)) {
+    return;
+  }
+  if (profile.modelRevision.trim() === "") {
+    throw new CardSelectionProfileInvariantError(
+      "a production Card embedding profile must pin a model revision",
+    );
+  }
+  if (profile.execution.adapterVersion.trim() === "") {
+    throw new CardSelectionProfileInvariantError(
+      "a production Card embedding profile must state its adapter version",
+    );
+  }
+  if (profile.pooling === "provider_defined" && profile.execution.kind === "local") {
     // A local ONNX session has no pooling of its own to defer to: the adapter
     // has to be told which row of the last hidden state is the sentence.
     throw new CardSelectionProfileInvariantError(
       "a local Card embedding profile must state cls or mean pooling",
     );
   }
+  if (profile.execution.kind === "remote") {
+    // The mirror image: a remote provider pools inside the service and exposes
+    // no row to choose, so a profile that claimed `cls` or `mean` would state
+    // a fact this package cannot verify and the provider may not honour.
+    if (profile.pooling !== "provider_defined") {
+      throw new CardSelectionProfileInvariantError(
+        "a remote Card embedding profile must state provider_defined pooling",
+      );
+    }
+    if (profile.execution.model.trim() === "" || profile.execution.model !== profile.model) {
+      // One name, stated twice, has to be the same name: the adapter sends
+      // `execution.model` and checks the echo against `model`.
+      throw new CardSelectionProfileInvariantError(
+        "a remote Card embedding profile must name the same model in execution and at the top level",
+      );
+    }
+  }
+}
+
+/** How far an L2-normalized vector may stray from unit length before it is refused. */
+export const CARD_EMBEDDING_L2_NORM_TOLERANCE = 1e-3;
+
+/**
+ * Whether a vector can belong to the family a profile describes.
+ *
+ * Width and finiteness for every profile; unit length as well for one that
+ * declares L2 normalization — every profile here does — because the candidate
+ * index compares by cosine computed from the components, and a provider that
+ * ignored the normalization it promised would produce similarities outside
+ * [-1, 1] that every threshold downstream silently misreads.
+ */
+export function cardSelectionVectorMatchesProfile(
+  profile: CardSelectionProfile,
+  vector: readonly number[],
+): boolean {
+  if (
+    vector.length !== profile.dimensions ||
+    vector.some((component) => !Number.isFinite(component))
+  ) {
+    return false;
+  }
+  const squaredNorm = vector.reduce(
+    (sum, component) => sum + component * component,
+    0,
+  );
+  if (!Number.isFinite(squaredNorm) || squaredNorm <= 0) {
+    return false;
+  }
+  return Math.abs(Math.sqrt(squaredNorm) - 1) <= CARD_EMBEDDING_L2_NORM_TOLERANCE;
+}
+
+/** What a deployment has to decide to name a remote Card vector family. */
+export interface RemoteCardSelectionProfileInput {
+  readonly id: string;
+  readonly version: string;
+  /** The immutable model identifier the provider pins and echoes. */
+  readonly model: string;
+  readonly modelRevision: string;
+  readonly dimensions: number;
+  readonly adapterVersion: string;
+  readonly admissionLimits?: CardAdmissionLimits;
+}
+
+/**
+ * Builds a remote Card embedding profile from the five things only a
+ * deployment can know, and fixes everything else.
+ *
+ * There is deliberately no remote profile constant in this package. A
+ * production remote profile pins the model a particular endpoint serves, at a
+ * revision and a width that endpoint guarantees — a decision about a service,
+ * not about this code (SOT L599: no floating model alias under a production
+ * index). What this package can fix is the part that is the same for every
+ * remote family: `provider_defined` pooling, L2 normalization, cosine distance,
+ * the `card-selection-text-v2` input transform on both sides, and the admission
+ * limits. The result is validated before it is returned, so a caller cannot
+ * hold an unusable profile.
+ */
+export function createRemoteCardSelectionProfile(
+  input: RemoteCardSelectionProfileInput,
+): CardSelectionEmbeddingProfile {
+  const profile: CardSelectionEmbeddingProfile = Object.freeze({
+    id: input.id,
+    version: input.version,
+    model: input.model,
+    modelRevision: input.modelRevision,
+    execution: Object.freeze({
+      kind: "remote" as const,
+      adapter: "openai-compatible" as const,
+      adapterVersion: input.adapterVersion,
+      model: input.model,
+    }),
+    dimensions: input.dimensions,
+    pooling: "provider_defined" as const,
+    normalization: "l2" as const,
+    distance: "cosine" as const,
+    selectionTextSchemaVersion: 2 as const,
+    cardInputTransformVersion: "card-selection-text-v2",
+    queryInputTransformVersion: "card-selection-text-v2",
+    admissionLimits: input.admissionLimits ?? DEFAULT_CARD_ADMISSION_LIMITS,
+  });
+  assertValidCardSelectionProfile(profile);
+  return profile;
 }
