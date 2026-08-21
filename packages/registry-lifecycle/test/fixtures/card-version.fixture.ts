@@ -17,17 +17,17 @@ export function createDocumentCardVersion(
     },
     selection: {
       kind: "semantic_units",
-      semanticUnitIds: ["unit_payment_failures"],
+      semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
     },
   };
 
   return {
     id: "cv_document",
-    cardId: "unit_payment_failures",
+    cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     lineage: {
       publicationId: fixtureRootId("pub", "initial"),
       observationId: fixtureRootId("obs", "initial"),
-      knowledgeUnitId: "unit_payment_failures",
+      knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     },
     scopes: [scope],
     validationState: "validated",
@@ -50,11 +50,11 @@ export function createSqlCardVersion(
 
   return {
     id: "cv_sql",
-    cardId: "unit_payments_table",
+    cardId: "unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba",
     lineage: {
       publicationId: fixtureRootId("pub", "sql"),
       observationId: fixtureRootId("obs", "sql"),
-      knowledgeUnitId: "unit_payments_table",
+      knowledgeUnitId: "unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba",
     },
     scopes: [scope],
     validationState: "validated",
@@ -76,11 +76,11 @@ export function createHttpCardVersion(): CardVersion {
 
   return {
     id: "cv_http",
-    cardId: "unit_get_payment",
+    cardId: "unit_01890f5c-7b1a-7e07-8297-3b51cb4b4083",
     lineage: {
       publicationId: fixtureRootId("pub", "http"),
       observationId: fixtureRootId("obs", "http"),
-      knowledgeUnitId: "unit_get_payment",
+      knowledgeUnitId: "unit_01890f5c-7b1a-7e07-8297-3b51cb4b4083",
     },
     scopes: [scope],
     validationState: "validated",

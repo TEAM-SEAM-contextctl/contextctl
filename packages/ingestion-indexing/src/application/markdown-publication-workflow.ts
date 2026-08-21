@@ -18,6 +18,7 @@ import {
   type DocumentIndexingPolicySet,
 } from "../domain/document-indexing-policy.js";
 import {
+  assertValidDocumentIndexingSnapshot,
   planDocumentIncrementalUpdate,
   type DocumentIndexingSnapshot,
 } from "../domain/document-incremental-update.js";
@@ -29,13 +30,16 @@ import {
   segmentNormalizedDocument,
   type SemanticUnitIdSource,
 } from "../domain/document-segmentation.js";
-import type { EmbeddingProfile } from "../domain/embedding-profile.js";
+import {
+  embeddingProfilesMatch,
+  type EmbeddingProfile,
+} from "../domain/embedding-profile.js";
 import {
   generateManagedChunks,
   type ManagedChunkIdSource,
 } from "../domain/managed-chunk-generation.js";
 import { reconcileSemanticUnitLineage } from "../domain/semantic-unit-lineage.js";
-import { stableIdentity } from "../domain/revision-identity.js";
+import { canonicalJson } from "../domain/revision-identity.js";
 import type { MarkdownSourceSnapshot } from "../ports/document-capture.js";
 import type {
   IngestionPublicationStore,
@@ -109,6 +113,7 @@ export interface MarkdownPublicationWorkflowDependencies {
   readonly documentReindexer: IncrementalDocumentReindexer;
   readonly publications: IngestionPublicationStore;
   readonly ids: PublicationRootIdGenerator;
+  readonly structuralIds: SemanticUnitIdSource & ManagedChunkIdSource;
   readonly events: MarkdownPublicationEventSink;
   readonly embeddingProfile: EmbeddingProfile;
   /** Stable identity of the durable daemon state this workflow belongs to. */
@@ -349,6 +354,19 @@ export class MarkdownPublicationWorkflow {
       );
     }
 
+    if (checkpoint.pendingIndexingSnapshot !== undefined) {
+      operation.markSkipped(
+        ["inspection", "observation"],
+        "structural_identity_recovery",
+      );
+      return this.#resumeStoredObservation(
+        command,
+        checkpoint,
+        checkpoint.pendingIndexingSnapshot.document.observationId,
+        operation,
+      );
+    }
+
     if (
       latest !== undefined &&
       checkpoint.observationId !== latest.observationId
@@ -416,45 +434,71 @@ export class MarkdownPublicationWorkflow {
       throw operation.failure("capture", "invalid_markdown_snapshot");
     }
     const { observationId, snapshot, changeToken } = input;
-    const previousDocument = checkpointDocument(checkpoint);
-    const document = await operation.run("capture", () =>
-      this.#dependencies.captureMarkdown({
-        source: checkpoint.source,
+    let currentSnapshot: DocumentIndexingSnapshot | undefined;
+    try {
+      currentSnapshot = recoverPendingIndexingSnapshot({
+        checkpoint,
         observationId,
-        documentId: checkpoint.documentId,
         snapshot,
-        ...(previousDocument === undefined ? {} : { previousDocument }),
-      }),
-    );
-    const provisionalUnits = await operation.run("segmentation", () =>
-      segmentNormalizedDocument({
-        document,
-        ids: new StableUnitIdSource(observationId),
         policy: this.#policy,
-      }),
-    );
-    const semanticUnits = reconcileUnits(
-      checkpoint,
-      document,
-      provisionalUnits,
-      this.#policy,
-    );
-    const chunks = await operation.run("chunking", () =>
-      generateManagedChunks({
+        embeddingProfile: this.#dependencies.embeddingProfile,
+      });
+    } catch (error) {
+      throw operation.failure("chunking", safeDiagnosticCode(error));
+    }
+    if (currentSnapshot === undefined) {
+      const previousDocument = checkpointDocument(checkpoint);
+      const document = await operation.run("capture", () =>
+        this.#dependencies.captureMarkdown({
+          source: checkpoint.source,
+          observationId,
+          documentId: checkpoint.documentId,
+          snapshot,
+          ...(previousDocument === undefined ? {} : { previousDocument }),
+        }),
+      );
+      const provisionalUnits = await operation.run("segmentation", () =>
+        segmentNormalizedDocument({
+          document,
+          ids: this.#dependencies.structuralIds,
+          policy: this.#policy,
+        }),
+      );
+      const semanticUnits = reconcileUnits(
+        checkpoint,
         document,
-        semanticUnits,
-        ids: new StableChunkIdSource(observationId),
-        policy: this.#policy,
-      }),
-    );
-    const currentSnapshot: DocumentIndexingSnapshot = {
-      document,
-      semanticUnits,
-      chunks,
-      indexingPolicy: this.#policy,
-      embeddingProfile: this.#dependencies.embeddingProfile,
-      payloadSchemaVersion: 2,
-    };
+        provisionalUnits,
+        this.#policy,
+      );
+      currentSnapshot = await operation.run("chunking", async () => {
+        const chunks = generateManagedChunks({
+          document,
+          semanticUnits,
+          ids: this.#dependencies.structuralIds,
+          policy: this.#policy,
+        });
+        const issued: DocumentIndexingSnapshot = {
+          document,
+          semanticUnits,
+          chunks,
+          indexingPolicy: this.#policy,
+          embeddingProfile: this.#dependencies.embeddingProfile,
+          payloadSchemaVersion: 2,
+        };
+        assertValidDocumentIndexingSnapshot(issued);
+        await this.#dependencies.checkpoints.save({
+          ...checkpoint,
+          pendingIndexingSnapshot: issued,
+        });
+        return issued;
+      });
+    } else {
+      operation.markSkipped(
+        ["capture", "segmentation", "chunking"],
+        "structural_identity_recovery",
+      );
+    }
+    const { document, semanticUnits, chunks } = currentSnapshot;
     let previousPublication: IngestionPublication | undefined;
     try {
       previousPublication =
@@ -725,20 +769,34 @@ function managedIndexVersion(
   return undefined;
 }
 
-class StableUnitIdSource implements SemanticUnitIdSource {
-  #next = 0;
-  constructor(private readonly seed: string) {}
-  nextUnitId(): string {
-    return stableIdentity("unit", { seed: this.seed, ordinal: this.#next++ });
+function recoverPendingIndexingSnapshot(input: {
+  readonly checkpoint: MarkdownPublicationCheckpoint;
+  readonly observationId: string;
+  readonly snapshot: MarkdownSourceSnapshot;
+  readonly policy: DocumentIndexingPolicySet;
+  readonly embeddingProfile: EmbeddingProfile;
+}): DocumentIndexingSnapshot | undefined {
+  const pending = input.checkpoint.pendingIndexingSnapshot;
+  if (pending === undefined) return undefined;
+  try {
+    assertValidDocumentIndexingSnapshot(pending, "previous");
+  } catch {
+    throw new StageFault("pending_structural_snapshot_corrupt");
   }
-}
-
-class StableChunkIdSource implements ManagedChunkIdSource {
-  #next = 0;
-  constructor(private readonly seed: string) {}
-  nextChunkId(): string {
-    return stableIdentity("chk", { seed: this.seed, ordinal: this.#next++ });
+  if (
+    pending.document.sourceId !== input.checkpoint.source.id ||
+    pending.document.documentId !== input.checkpoint.documentId ||
+    pending.document.observationId !== input.observationId ||
+    pending.document.contentDigest !== input.snapshot.contentDigest ||
+    canonicalJson(pending.indexingPolicy) !== canonicalJson(input.policy) ||
+    !embeddingProfilesMatch(
+      pending.embeddingProfile,
+      input.embeddingProfile,
+    )
+  ) {
+    throw new StageFault("pending_structural_snapshot_conflict");
   }
+  return pending;
 }
 
 class StageFault extends Error {

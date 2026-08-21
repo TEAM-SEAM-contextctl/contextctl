@@ -23,7 +23,8 @@ import {
   type SemanticUnitRevisionContext,
 } from "./semantic-unit-revision.js";
 
-const UNIT_ID_PATTERN = /^unit_[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/;
+const UNIT_ID_PATTERN =
+  /^unit_[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 export interface SemanticUnitIdSource {
   nextUnitId(): string;

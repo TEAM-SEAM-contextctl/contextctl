@@ -245,6 +245,11 @@ export {
   DeterministicEmbeddingAdapter,
 } from "./infrastructure/deterministic-embedding-adapter.js";
 export {
+  UuidV7StructuralIdGenerator,
+  type StructuralIdGenerator,
+  type UuidV7StructuralIdGeneratorOptions,
+} from "./infrastructure/uuid-v7-structural-id-generator.js";
+export {
   InMemoryVectorIndexAdapter,
 } from "./infrastructure/in-memory-vector-index-adapter.js";
 export {

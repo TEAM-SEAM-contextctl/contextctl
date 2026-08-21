@@ -59,7 +59,7 @@ describe("IngestionPublication contract", () => {
 
     expect(consumeAsRegistry(roundTripped)).toEqual([
       {
-        unitId: "unit_payment_failures",
+        unitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         scopeRefs: [
           {
             scopeId: "scope_payment_failures",
@@ -94,6 +94,17 @@ describe("IngestionPublication contract", () => {
         publicationId: "pub_01890f5c-7b1a-4cc3-8a2f-123456789abc",
       }),
     ).toThrow(ContractValidationError);
+  });
+
+  it("rejects a legacy document Semantic Unit identity", async () => {
+    const fixture = (await loadIngestionProducerFixture()) as {
+      knowledgeUnits: Array<Record<string, unknown>>;
+    };
+    fixture.knowledgeUnits[0]!.id = "unit_legacy";
+
+    expect(() => parseIngestionPublication(fixture)).toThrow(
+      ContractValidationError,
+    );
   });
 
   it("rejects physical bindings and free-form content side channels", async () => {
@@ -217,7 +228,7 @@ describe("IngestionPublication contract", () => {
     expect(current.changes).toEqual([
       {
         kind: "removed",
-        knowledgeUnitId: "unit_payment_failures",
+        knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         previousContentDigest:
           previous.knowledgeUnits[0]!.contentDigest,
       },
@@ -236,19 +247,19 @@ describe("IngestionPublication contract", () => {
       changes: [
         {
           kind: "removed",
-          knowledgeUnitId: "unit_zeta",
+          knowledgeUnitId: "unit_01890f5c-7b1a-70ae-82cd-5e7f3a5e21ad",
           previousContentDigest: `sha256:${"2".repeat(64)}`,
         },
         {
           kind: "removed",
-          knowledgeUnitId: "unit_alpha",
+          knowledgeUnitId: "unit_01890f5c-7b1a-77ab-8da8-1785efd335bc",
           previousContentDigest: `sha256:${"3".repeat(64)}`,
         },
       ],
     });
 
     expect(publication.changes.map((change) => change.knowledgeUnitId)).toEqual(
-      ["unit_alpha", "unit_zeta"],
+      ["unit_01890f5c-7b1a-70ae-82cd-5e7f3a5e21ad", "unit_01890f5c-7b1a-77ab-8da8-1785efd335bc"],
     );
   });
 
@@ -334,7 +345,7 @@ describe("IngestionPublication contract", () => {
     if (selector === undefined) {
       return;
     }
-    selector.semanticUnitIds = ["unit_zeta", "unit_alpha"];
+    selector.semanticUnitIds = ["unit_01890f5c-7b1a-70ae-82cd-5e7f3a5e21ad", "unit_01890f5c-7b1a-77ab-8da8-1785efd335bc"];
 
     expect(() => parseIngestionPublication(fixture)).toThrow(
       ContractValidationError,
@@ -377,7 +388,7 @@ describe("IngestionPublication contract", () => {
       return;
     }
     scope.documentIndex.documentId = OTHER_DOCUMENT_ID;
-    scope.selector.semanticUnitIds = ["unit_other"];
+    scope.selector.semanticUnitIds = ["unit_01890f5c-7b1a-7211-8c3c-e592509dc531"];
 
     expect(() => parseIngestionPublication(fixture)).toThrow(
       ContractValidationError,
@@ -399,11 +410,11 @@ describe("IngestionPublication contract", () => {
 
     fixture.knowledgeUnits.push({
       ...structuredClone(originalUnit),
-      id: "unit_payment_failures_duplicate",
+      id: "unit_01890f5c-7b1a-76f2-861b-89dcfd89d144",
     });
     fixture.changes.push({
       ...structuredClone(originalChange),
-      knowledgeUnitId: "unit_payment_failures_duplicate",
+      knowledgeUnitId: "unit_01890f5c-7b1a-76f2-861b-89dcfd89d144",
     });
 
     expect(() => parseIngestionPublication(fixture)).toThrow(

@@ -27,7 +27,7 @@ import {
   type SourceConfigurationResolver,
   type SourceRootIdGenerator,
 } from "../src/index.js";
-import { rootId } from "./fixtures/root-id-fixture.js";
+import { rootId, structuralId } from "./fixtures/root-id-fixture.js";
 
 const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
@@ -399,7 +399,7 @@ class SequentialBlockIdSource implements BlockIdSource {
   #next = 1;
 
   nextBlockId(): string {
-    return `blk_markdown${this.#next++}`;
+    return structuralId("blk", `markdown-file-${String(this.#next++)}`);
   }
 }
 

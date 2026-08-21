@@ -22,8 +22,9 @@ import {
   type MarkdownPublicationCheckpointStore,
   type PublicationReadyNotifier,
   type PublishMarkdownSourceCommand,
+  type StructuralIdGenerator,
 } from "../src/index.js";
-import { rootId } from "./fixtures/root-id-fixture.js";
+import { rootId, structuralId } from "./fixtures/root-id-fixture.js";
 
 const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
@@ -166,6 +167,58 @@ describe("MarkdownPublicationWorkflow", () => {
     expect(
       await runtime.publications.find(publication.publicationId),
     ).toEqual(publication);
+  });
+
+  it("reuses durably issued structural identities after an Index update retry", async () => {
+    const embeddings = new FailOnceEmbeddingPort();
+    const structuralIds = new RecordingStructuralIds();
+    const runtime = createLocalMarkdownPublicationRuntime({
+      configurations: {
+        "source.fixture": { path: STRUCTURE_FIXTURE },
+      },
+      embeddingProfile: profile,
+      connectorId: "vector.local",
+      stateNamespaceId: "state_test",
+      securityDomain: "tenant-a",
+      embeddingProvider: embeddings,
+      vectorIndex: new InMemoryVectorIndexAdapter(),
+      structuralIds,
+      clock: () => NOW,
+    });
+
+    const failed = await runtime.workflow
+      .publish(command())
+      .catch((caught: unknown) => caught);
+    expect(failed).toMatchObject({
+      stage: "index_update",
+      diagnosticCode: "provider_failure",
+    });
+
+    const sourceId = runtime.events.events.find(
+      (event) => event.sourceId !== undefined,
+    )?.sourceId;
+    expect(sourceId).toBeDefined();
+    if (sourceId === undefined) throw new Error("registered Source is missing");
+    const pending = await runtime.checkpoints.findBySourceId(sourceId);
+    const issued = pending?.pendingIndexingSnapshot;
+    expect(issued).toBeDefined();
+    if (issued === undefined) {
+      throw new Error("pending structural snapshot is missing");
+    }
+    const issuedCount = structuralIds.issuedCount;
+    const issuedIdentities = structuralIdentities(issued);
+
+    const recovered = await runtime.workflow.publish(command());
+    const checkpoint = await runtime.checkpoints.findBySourceId(sourceId);
+
+    expect(recovered.status).toBe("published");
+    expect(structuralIds.issuedCount).toBe(issuedCount);
+    expect(checkpoint?.pendingIndexingSnapshot).toBeUndefined();
+    expect(checkpoint?.indexingSnapshot).toBeDefined();
+    expect(structuralIdentities(checkpoint!.indexingSnapshot!)).toEqual(
+      issuedIdentities,
+    );
+    await expect(runtime.observations.count()).resolves.toBe(1);
   });
 
   it("stops an identical rerun before capture, embedding, and a new version", async () => {
@@ -643,6 +696,54 @@ class RecordingEmbeddingPort implements EmbeddingPort {
     this.requests.push(request);
     return this.#delegate.embed(request);
   }
+}
+
+class FailOnceEmbeddingPort implements EmbeddingPort {
+  readonly #delegate = new DeterministicEmbeddingAdapter();
+  #failed = false;
+
+  embed(request: EmbeddingProviderRequest) {
+    if (!this.#failed) {
+      this.#failed = true;
+      return Promise.reject(new EmbeddingUnavailable());
+    }
+    return this.#delegate.embed(request);
+  }
+}
+
+class EmbeddingUnavailable extends Error {
+  readonly code = "embedding_unavailable";
+}
+
+class RecordingStructuralIds implements StructuralIdGenerator {
+  issuedCount = 0;
+
+  nextBlockId(): string {
+    return this.#next("blk");
+  }
+
+  nextUnitId(): string {
+    return this.#next("unit");
+  }
+
+  nextChunkId(): string {
+    return this.#next("chk");
+  }
+
+  #next(prefix: "blk" | "chk" | "unit"): string {
+    this.issuedCount += 1;
+    return structuralId(prefix, `workflow-${String(this.issuedCount)}`);
+  }
+}
+
+function structuralIdentities(
+  snapshot: NonNullable<MarkdownPublicationCheckpoint["indexingSnapshot"]>,
+) {
+  return {
+    blocks: snapshot.document.blocks.map((block) => block.id),
+    semanticUnits: snapshot.semanticUnits.map((unit) => unit.id),
+    chunks: snapshot.chunks.map((chunk) => chunk.id),
+  };
 }
 
 class RecordingRootIds {

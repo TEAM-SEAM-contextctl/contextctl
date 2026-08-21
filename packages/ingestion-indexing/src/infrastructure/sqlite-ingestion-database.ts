@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { isUuidV7Id } from "../domain/model-validation.js";
 
-export const INGESTION_DATABASE_SCHEMA_VERSION = 7;
+export const INGESTION_DATABASE_SCHEMA_VERSION = 8;
 export const INGESTION_DATABASE_APPLICATION_ID = 0x4354584c;
 
 export interface OpenIngestionDatabaseOptions {
@@ -127,7 +127,15 @@ function migrate(
   if (version === INGESTION_DATABASE_SCHEMA_VERSION) {
     assertExpectedSchema(database);
     assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
-    assertPersistedRootIdentityFormat(database);
+    assertPersistedIdentityFormat(database);
+    return;
+  }
+  if (version === 7) {
+    assertExpectedSchema(database);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    inIngestionTransaction(database, () => {
+      finalizeUuidV7IdentityMigration(database);
+    });
     return;
   }
   if (version === 6) {
@@ -207,13 +215,13 @@ function migrate(
 }
 
 function finalizeUuidV7IdentityMigration(database: DatabaseSync): void {
-  assertPersistedRootIdentityFormat(database);
+  assertPersistedIdentityFormat(database);
   database.exec(
     `PRAGMA user_version = ${String(INGESTION_DATABASE_SCHEMA_VERSION)}`,
   );
 }
 
-function assertPersistedRootIdentityFormat(database: DatabaseSync): void {
+function assertPersistedIdentityFormat(database: DatabaseSync): void {
   const checks = [
     ["markdown_publication_checkpoints", "source_id", "src"],
     ["markdown_publication_checkpoints", "document_id", "doc"],
@@ -260,39 +268,106 @@ function assertPersistedRootIdentityFormat(database: DatabaseSync): void {
       } catch {
         throw new IngestionDatabaseSchemaError("schema_invalid");
       }
-      assertRootIdentityFields(parsed);
+      assertIdentityFields(parsed);
     }
   }
 }
 
-function assertRootIdentityFields(value: unknown): void {
+function assertIdentityFields(value: unknown, container?: string): void {
   if (Array.isArray(value)) {
-    for (const item of value) assertRootIdentityFields(item);
+    for (const item of value) assertIdentityFields(item, container);
     return;
   }
   if (value === null || typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  const containerPrefix = CONTAINER_ID_PREFIXES[container ?? ""];
+  if (
+    containerPrefix !== undefined &&
+    (typeof record.id !== "string" ||
+      !isUuidV7Id(record.id, containerPrefix))
+  ) {
+    throw new IngestionDatabaseSchemaError("identity_format_unsupported");
+  }
+  if (
+    container === "knowledgeUnits" &&
+    isRecord(record.sourceCoordinate) &&
+    record.sourceCoordinate.kind === "document" &&
+    (typeof record.id !== "string" || !isUuidV7Id(record.id, "unit"))
+  ) {
+    throw new IngestionDatabaseSchemaError("identity_format_unsupported");
+  }
   for (const [key, item] of Object.entries(value)) {
     // Source payloads and published Fact values are external knowledge, not
     // control-plane identity fields even when they contain the same key names.
     if (key === "payload" || key === "facts") continue;
-    const prefix = ROOT_IDENTITY_FIELDS[key];
+    const prefix = IDENTITY_FIELDS[key];
     if (
       prefix !== undefined &&
       (typeof item !== "string" || !isUuidV7Id(item, prefix))
     ) {
       throw new IngestionDatabaseSchemaError("identity_format_unsupported");
     }
-    assertRootIdentityFields(item);
+    const listPrefix = IDENTITY_LIST_FIELDS[key];
+    if (
+      listPrefix !== undefined &&
+      (!Array.isArray(item) ||
+        item.some(
+          (candidate) =>
+            typeof candidate !== "string" ||
+            !isUuidV7Id(candidate, listPrefix),
+        ))
+    ) {
+      throw new IngestionDatabaseSchemaError("identity_format_unsupported");
+    }
+    const recordKeyPrefix = IDENTITY_RECORD_KEY_FIELDS[key];
+    if (
+      recordKeyPrefix !== undefined &&
+      (!isRecord(item) ||
+        Object.keys(item).some(
+          (candidate) => !isUuidV7Id(candidate, recordKeyPrefix),
+        ))
+    ) {
+      throw new IngestionDatabaseSchemaError("identity_format_unsupported");
+    }
+    assertIdentityFields(item, key);
   }
 }
 
-const ROOT_IDENTITY_FIELDS: Readonly<Record<string, string>> = {
+const IDENTITY_FIELDS: Readonly<Record<string, string>> = {
+  blockId: "blk",
+  chunkId: "chk",
   documentId: "doc",
+  nextChunkId: "chk",
   observationId: "obs",
+  previousChunkId: "chk",
   previousPublicationId: "pub",
   publicationId: "pub",
+  semanticUnitId: "unit",
   sourceId: "src",
 };
+
+const IDENTITY_LIST_FIELDS: Readonly<Record<string, string>> = {
+  blockIds: "blk",
+  childIds: "unit",
+  sectionPath: "blk",
+  semanticUnitIds: "unit",
+};
+
+const IDENTITY_RECORD_KEY_FIELDS: Readonly<Record<string, string>> = {
+  chunkBindings: "chk",
+  chunkRevisions: "chk",
+  semanticUnitRevisions: "unit",
+};
+
+const CONTAINER_ID_PREFIXES: Readonly<Record<string, string>> = {
+  blocks: "blk",
+  chunks: "chk",
+  semanticUnits: "unit",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function createSchemaV6(database: DatabaseSync): void {
   database.exec(`

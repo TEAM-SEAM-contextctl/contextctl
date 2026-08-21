@@ -49,7 +49,7 @@ function withdrawalEvent(note: string | undefined): LifecycleEvent {
   return {
     kind: "card_withdrawn",
     id: "ev_withdrawn",
-    cardId: "unit_payment_failures",
+    cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     occurredAt: "2026-08-05T00:00:00.000Z",
     withdrawnVersionId: "cv_document",
     decidedBy: "dayeon",
@@ -224,7 +224,7 @@ describe("SqliteScopeReachabilityStore", () => {
       {
         id: "ev_added",
         kind: "card_version_added",
-        cardId: "unit_payment_failures",
+        cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         occurredAt: "2026-08-04T00:00:00.000Z",
         versionId: "cv_document",
         publicationId: "pub_initial",

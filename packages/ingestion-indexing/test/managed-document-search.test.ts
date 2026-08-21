@@ -98,8 +98,8 @@ describe("ManagedDocumentSearch", () => {
           documentId: "doc_inventory",
           sourceId: "src_inventory",
           observationId: "obs_inventory",
-          semanticUnitId: "unit_stock",
-          chunkId: "chk_stock",
+          semanticUnitId: "unit_01890f5c-7b1a-707c-87c9-d66d9e355cdd",
+          chunkId: "chk_01890f5c-7b1a-79fe-8696-7c125d2997bb",
           chunkRevisionId: "crv_bbbb",
           retrievalText: "Inventory stock policy",
         }),
@@ -116,8 +116,8 @@ describe("ManagedDocumentSearch", () => {
           documentId: harness.publication.manifest.documentId,
           sourceId: harness.publication.manifest.sourceId,
           observationId: "obs_later",
-          semanticUnitId: "unit_payment_failures",
-          chunkId: "chk_later",
+          semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
+          chunkId: "chk_01890f5c-7b1a-760c-8557-d9a3fe71b70a",
           chunkRevisionId: "crv_cccc",
           retrievalText: "A later immutable version",
         }),
@@ -186,7 +186,7 @@ describe("ManagedDocumentSearch", () => {
 
   it("fails closed when a Chunk is relabeled to another valid Unit", async () => {
     const harness = await createHarness();
-    harness.vectorIndex.corruptSemanticUnitId = "unit_payments";
+    harness.vectorIndex.corruptSemanticUnitId = "unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7";
 
     await expect(
       harness.search.search({
@@ -282,9 +282,9 @@ async function createHarness(
     connectorId: "vector.main",
     securityDomain: "tenant-a",
     semanticScopes: [
-      { semanticUnitIds: ["unit_payment_failures"] },
+      { semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"] },
       {
-        semanticUnitIds: ["unit_payments", "unit_payment_failures"],
+        semanticUnitIds: ["unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7", "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
       },
     ],
   });

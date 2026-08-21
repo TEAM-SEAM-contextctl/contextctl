@@ -89,11 +89,11 @@ describe("claimPublication", () => {
         {
           version: {
             id: "cv_1",
-            cardId: "unit_payment_failures",
+            cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
             lineage: {
               publicationId: PUB_INITIAL,
               observationId: OBS_INITIAL,
-              knowledgeUnitId: "unit_payment_failures",
+              knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
             },
             scopes: [
               {
@@ -110,7 +110,7 @@ describe("claimPublication", () => {
                 },
                 selection: {
                   kind: "semantic_units",
-                  semanticUnitIds: ["unit_payment_failures"],
+                  semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
                 },
               },
             ],

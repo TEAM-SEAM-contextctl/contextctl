@@ -85,9 +85,9 @@ describe("runOperatorCommand", () => {
     };
 
     await store.saveCard(
-      cardWith("unit_a", [
-        version("cv_a", "unit_a", "validated"),
-        version("cv_draft", "unit_a", "draft"),
+      cardWith("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", [
+        version("cv_a", "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "validated"),
+        version("cv_draft", "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1", "draft"),
       ]),
       [],
     );
@@ -96,7 +96,7 @@ describe("runOperatorCommand", () => {
   it("approves a validated version and reports what changed", async () => {
     const result = await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
       "--by",
       "operator@example.test",
@@ -104,17 +104,17 @@ describe("runOperatorCommand", () => {
 
     expect(result).toEqual({
       status: "ok",
-      output: "approved cv_a as the current version of unit_a",
+      output: "approved cv_a as the current version of unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
     });
     expect(
-      (await ports.cards.findCard("unit_a"))?.versions.currentVersionId,
+      (await ports.cards.findCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"))?.versions.currentVersionId,
     ).toBe("cv_a");
   });
 
   it("carries the note into the audit trail", async () => {
     await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
       "--by",
       "operator@example.test",
@@ -122,7 +122,7 @@ describe("runOperatorCommand", () => {
       "문서 검토 완료",
     ]);
 
-    expect((await events.listForCard("unit_a")).at(-1)).toMatchObject({
+    expect((await events.listForCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1")).at(-1)).toMatchObject({
       kind: "card_version_promoted",
       decidedBy: "operator@example.test",
       note: "문서 검토 완료",
@@ -132,17 +132,17 @@ describe("runOperatorCommand", () => {
   it("records a refusal without promoting", async () => {
     const result = await runOperatorCommand(ports, [
       "reject",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
       "--by",
       "operator@example.test",
     ]);
 
-    expect(result).toEqual({ status: "ok", output: "rejected cv_a of unit_a" });
+    expect(result).toEqual({ status: "ok", output: "rejected cv_a of unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1" });
     expect(
-      (await ports.cards.findCard("unit_a"))?.versions.currentVersionId,
+      (await ports.cards.findCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"))?.versions.currentVersionId,
     ).toBeUndefined();
-    expect((await events.listForCard("unit_a")).at(-1)).toMatchObject({
+    expect((await events.listForCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1")).at(-1)).toMatchObject({
       kind: "card_version_refused",
     });
   });
@@ -150,7 +150,7 @@ describe("runOperatorCommand", () => {
   it("takes an approved card out of service", async () => {
     await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
       "--by",
       "operator@example.test",
@@ -158,21 +158,21 @@ describe("runOperatorCommand", () => {
 
     const result = await runOperatorCommand(ports, [
       "disable",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "--by",
       "operator@example.test",
     ]);
 
-    expect(result).toEqual({ status: "ok", output: "disabled unit_a" });
+    expect(result).toEqual({ status: "ok", output: "disabled unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1" });
     expect(
-      (await ports.cards.findCard("unit_a"))?.versions.currentVersionId,
+      (await ports.cards.findCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"))?.versions.currentVersionId,
     ).toBeUndefined();
   });
 
   it("refuses to approve a version that failed grounding, and says why", async () => {
     const result = await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_draft",
       "--by",
       "operator@example.test",
@@ -183,29 +183,29 @@ describe("runOperatorCommand", () => {
     expect(result.output).toContain("cv_draft");
     expect(result.output).toContain("draft");
     expect(
-      (await ports.cards.findCard("unit_a"))?.versions.currentVersionId,
+      (await ports.cards.findCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"))?.versions.currentVersionId,
     ).toBeUndefined();
   });
 
   it("separates a missing card from a malformed command", async () => {
     const missing = await runOperatorCommand(ports, [
       "approve",
-      "unit_missing",
+      "unit_01890f5c-7b1a-7a13-8fd3-6939fe7fa688",
       "cv_a",
       "--by",
       "operator@example.test",
     ]);
-    const malformed = await runOperatorCommand(ports, ["approve", "unit_a"]);
+    const malformed = await runOperatorCommand(ports, ["approve", "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"]);
 
     expect(missing.status).toBe("refused");
-    expect(missing.output).toContain("unit_missing");
+    expect(missing.output).toContain("unit_01890f5c-7b1a-7a13-8fd3-6939fe7fa688");
     expect(malformed.status).toBe("usage_error");
   });
 
   it("rejects an unknown command and shows usage", async () => {
     // Was `rollback` until that became a real command. Anything the table does
     // not carry has to fall here rather than be attempted.
-    const result = await runOperatorCommand(ports, ["purge", "unit_a"]);
+    const result = await runOperatorCommand(ports, ["purge", "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"]);
 
     expect(result.status).toBe("usage_error");
     expect(result.output).toContain("unknown command: purge");
@@ -219,20 +219,20 @@ describe("runOperatorCommand", () => {
   it("requires --by so the trail can name the decider", async () => {
     const result = await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
     ]);
 
     expect(result.status).toBe("usage_error");
     expect(result.output).toContain("--by is required");
     // Nothing was attempted, so no event was written.
-    expect(await events.listForCard("unit_a")).toEqual([]);
+    expect(await events.listForCard("unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1")).toEqual([]);
   });
 
   it("rejects a flag that was given no value", async () => {
     const result = await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
       "--by",
       "--note",
@@ -246,7 +246,7 @@ describe("runOperatorCommand", () => {
   it("rejects an unknown option instead of treating it as an operand", async () => {
     const result = await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
       "--force",
       "yes",
@@ -261,14 +261,14 @@ describe("runOperatorCommand", () => {
   it("counts operands per command", async () => {
     const tooMany = await runOperatorCommand(ports, [
       "disable",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "cv_a",
       "--by",
       "operator@example.test",
     ]);
     const tooFew = await runOperatorCommand(ports, [
       "approve",
-      "unit_a",
+      "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
       "--by",
       "operator@example.test",
     ]);
@@ -299,7 +299,7 @@ describe("runOperatorCommand", () => {
       ),
       };
       await store.saveCard(
-        cardWith("unit_solo", [version("cv_solo", "unit_solo", "validated")]),
+        cardWith("unit_01890f5c-7b1a-79ce-8c93-339b57a29f3f", [version("cv_solo", "unit_01890f5c-7b1a-79ce-8c93-339b57a29f3f", "validated")]),
         [],
       );
     });
@@ -307,7 +307,7 @@ describe("runOperatorCommand", () => {
     async function approveSolo(): Promise<void> {
       await runOperatorCommand(soloPorts, [
         "approve",
-        "unit_solo",
+        "unit_01890f5c-7b1a-79ce-8c93-339b57a29f3f",
         "cv_solo",
         "--by",
         "operator@example.test",
@@ -317,7 +317,7 @@ describe("runOperatorCommand", () => {
     async function disableSolo(note?: string): Promise<void> {
       await runOperatorCommand(soloPorts, [
         "disable",
-        "unit_solo",
+        "unit_01890f5c-7b1a-79ce-8c93-339b57a29f3f",
         "--by",
         "operator@example.test",
         ...(note === undefined ? [] : ["--note", note]),
@@ -478,14 +478,14 @@ describe("runOperatorCommand", () => {
       // the Scope is awaiting approval rather than orphaned.
       await runOperatorCommand(ports, [
         "approve",
-        "unit_a",
+        "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
         "cv_a",
         "--by",
         "operator@example.test",
       ]);
       await runOperatorCommand(ports, [
         "disable",
-        "unit_a",
+        "unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1",
         "--by",
         "operator@example.test",
       ]);
@@ -551,7 +551,7 @@ describe("runOperatorCommand", () => {
   });
 
   describe("rollback", () => {
-    // 두 개의 validated 버전을 가진 Card. 픽스처의 unit_a는 validated 하나와
+    // 두 개의 validated 버전을 가진 Card. 픽스처의 unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1는 validated 하나와
     // draft 하나여서 되돌릴 곳이 없다.
     let twoPorts: OperatorCommandPorts;
     let twoEvents: SqliteLifecycleEventStore;
@@ -570,16 +570,16 @@ describe("runOperatorCommand", () => {
       ),
       };
       await store.saveCard(
-        cardWith("unit_b", [
-          version("cv_first", "unit_b", "validated"),
-          version("cv_second", "unit_b", "validated"),
-          version("cv_draft", "unit_b", "draft"),
+        cardWith("unit_01890f5c-7b1a-7898-8dae-639abbaee4d4", [
+          version("cv_first", "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4", "validated"),
+          version("cv_second", "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4", "validated"),
+          version("cv_draft", "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4", "draft"),
         ]),
         [],
       );
       await runOperatorCommand(twoPorts, [
         "approve",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_second",
         "--by",
         "operator@example.test",
@@ -587,14 +587,14 @@ describe("runOperatorCommand", () => {
     });
 
     async function currentVersionId(): Promise<string | undefined> {
-      return (await twoPorts.cards.findCard("unit_b"))?.versions
+      return (await twoPorts.cards.findCard("unit_01890f5c-7b1a-7898-8dae-639abbaee4d4"))?.versions
         .currentVersionId;
     }
 
     it("moves the pointer back to an earlier version", async () => {
       const result = await runOperatorCommand(twoPorts, [
         "rollback",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_first",
         "--by",
         "operator@example.test",
@@ -602,7 +602,7 @@ describe("runOperatorCommand", () => {
 
       expect(result).toEqual({
         status: "ok",
-        output: "rolled unit_b back to cv_first",
+        output: "rolled unit_01890f5c-7b1a-7898-8dae-639abbaee4d4 back to cv_first",
       });
       expect(await currentVersionId()).toBe("cv_first");
     });
@@ -610,13 +610,13 @@ describe("runOperatorCommand", () => {
     it("leaves the version history intact", async () => {
       await runOperatorCommand(twoPorts, [
         "rollback",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_first",
         "--by",
         "operator@example.test",
       ]);
 
-      const card = await twoPorts.cards.findCard("unit_b");
+      const card = await twoPorts.cards.findCard("unit_01890f5c-7b1a-7898-8dae-639abbaee4d4");
       expect(card?.versions.versions.map((entry) => entry.id)).toEqual([
         "cv_first",
         "cv_second",
@@ -629,7 +629,7 @@ describe("runOperatorCommand", () => {
       // forward under that word.
       const result = await runOperatorCommand(twoPorts, [
         "rollback",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_second",
         "--by",
         "operator@example.test",
@@ -643,7 +643,7 @@ describe("runOperatorCommand", () => {
     it("refuses a draft target even though it was never current", async () => {
       const result = await runOperatorCommand(twoPorts, [
         "rollback",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_draft",
         "--by",
         "operator@example.test",
@@ -656,7 +656,7 @@ describe("runOperatorCommand", () => {
     it("records the move as a promotion whose previous version came later", async () => {
       await runOperatorCommand(twoPorts, [
         "rollback",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_first",
         "--by",
         "operator@example.test",
@@ -666,7 +666,7 @@ describe("runOperatorCommand", () => {
 
       // One event kind covers both directions; the pair of ids is what says
       // this was a rollback.
-      expect((await twoEvents.listForCard("unit_b")).at(-1)).toMatchObject({
+      expect((await twoEvents.listForCard("unit_01890f5c-7b1a-7898-8dae-639abbaee4d4")).at(-1)).toMatchObject({
         kind: "card_version_promoted",
         versionId: "cv_first",
         previousVersionId: "cv_second",
@@ -678,7 +678,7 @@ describe("runOperatorCommand", () => {
     it("requires --by like every other operator decision", async () => {
       const result = await runOperatorCommand(twoPorts, [
         "rollback",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_first",
       ]);
 
@@ -690,14 +690,14 @@ describe("runOperatorCommand", () => {
     it("refuses a rollback on a Card that serves nothing", async () => {
       await runOperatorCommand(twoPorts, [
         "disable",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "--by",
         "operator@example.test",
       ]);
 
       const result = await runOperatorCommand(twoPorts, [
         "rollback",
-        "unit_b",
+        "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
         "cv_first",
         "--by",
         "operator@example.test",

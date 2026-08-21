@@ -20,7 +20,7 @@ const documentCoordinate: PublishedSourceCoordinate = {
   kind: "document",
   sourceId: "src_payments",
   documentId: "doc_payments",
-  semanticUnitId: "unit_payment_failures",
+  semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
 };
 
 const sqlCoordinate: PublishedSourceCoordinate = {
@@ -51,7 +51,7 @@ const documentScope: RetrievalScope = {
   },
   selection: {
     kind: "semantic_units",
-    semanticUnitIds: ["unit_payment_failures"],
+    semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
   },
 };
 
@@ -315,7 +315,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
 
     expect(meaning.aliases).toEqual([
       "doc_payments",
-      "unit_payment_failures",
+      "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       "결제 운영 안내",
       "환불 처리",
     ]);
@@ -405,7 +405,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
       facts: [{ name: "section.label", value: long }],
     });
 
-    expect(meaning.aliases).toEqual(["doc_payments", "unit_payment_failures"]);
+    expect(meaning.aliases).toEqual(["doc_payments", "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"]);
   });
 
   it("passes grounding with Korean headings in the matched lists", async () => {

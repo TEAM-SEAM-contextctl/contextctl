@@ -163,12 +163,12 @@ async function publishWholeDocument(runtime: DaemonRuntime): Promise<void> {
         runtime.embeddingProfile.textMeasureProfileVersion,
       embeddingProfile: runtime.embeddingProfile,
       payloadSchemaVersion: 2,
-      semanticUnitRevisions: { unit_local: "urv_aaaa" },
-      chunkRevisions: { chk_aaaa: "crv_aaaa" },
+      semanticUnitRevisions: { "unit_01890f5c-7b1a-75ef-8967-6b51f9358f2f": "urv_aaaa" },
+      chunkRevisions: { "chk_01890f5c-7b1a-74ba-89ce-0559ff8b9b01": "crv_aaaa" },
       chunkBindings: {
-        chk_aaaa: {
+        "chk_01890f5c-7b1a-74ba-89ce-0559ff8b9b01": {
           chunkRevisionId: "crv_aaaa",
-          semanticUnitId: "unit_local",
+          semanticUnitId: "unit_01890f5c-7b1a-75ef-8967-6b51f9358f2f",
           semanticUnitRevisionId: "urv_aaaa",
           contentDigest: `sha256:${"a".repeat(64)}`,
         },
@@ -546,7 +546,7 @@ describe("createDaemonRuntime", () => {
       const runtime = buildRuntime();
       await approveSingleScopeCard(
         runtime,
-        "unit_payment_failures",
+        "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         "cv_document",
         publishedDocumentScope(),
       );
@@ -566,7 +566,7 @@ describe("createDaemonRuntime", () => {
       await publishWholeDocument(runtime);
       await approveSingleScopeCard(
         runtime,
-        "unit_payment_failures",
+        "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         "cv_document",
         publishedDocumentScope(),
       );
@@ -667,13 +667,13 @@ describe("createDaemonRuntime", () => {
       const query = "결제 실패 재시도";
       await approveSingleScopeCard(
         runtime,
-        "unit_payments_table",
+        "unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba",
         "cv_sql",
         sqlScope(),
       );
       await approveSingleScopeCard(
         runtime,
-        "unit_payment_failures",
+        "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         "cv_document",
         unpublishedDocumentScope(),
       );
@@ -724,7 +724,7 @@ describe("createDaemonRuntime", () => {
         (failed?.["selectedBy"] as readonly { readonly cardId: string }[]).map(
           (card) => card.cardId,
         ),
-      ).toEqual(["unit_payment_failures"]);
+      ).toEqual(["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"]);
       expect(
         (failed?.["fulfillment"] as Readonly<Record<string, unknown>>)[
           "failure"

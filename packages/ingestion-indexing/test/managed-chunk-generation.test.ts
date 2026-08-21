@@ -18,6 +18,7 @@ import {
   type SemanticUnitIdSource,
 } from "../src/index.js";
 import { validateManagedChunks } from "../src/domain/document-model.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 describe("Managed Chunk generation", () => {
   it("packs whole Blocks and overlaps only bounded adjacent Blocks", () => {
@@ -32,8 +33,8 @@ describe("Managed Chunk generation", () => {
     expect(chunks).toHaveLength(2);
     expect(chunks.map((chunk) => chunk.sourceSlices.map((slice) => slice.blockId)))
       .toEqual([
-        ["blk_0", "blk_1"],
-        ["blk_1", "blk_2"],
+        ["blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad", "blk_01890f5c-7b1a-7b3a-85b7-a9cc87b36bea"],
+        ["blk_01890f5c-7b1a-7b3a-85b7-a9cc87b36bea", "blk_01890f5c-7b1a-71b4-819d-86052dbd208e"],
       ]);
     expect(chunks.every((chunk) => chunk.tokenCount <= 480)).toBe(true);
     expect(chunks[1]?.tokenCount).toBe(140);
@@ -51,7 +52,7 @@ describe("Managed Chunk generation", () => {
     expect(chunks).toHaveLength(2);
     expect(chunks.every((chunk) => chunk.splitKind === "sentence")).toBe(true);
     expect(chunks.every((chunk) => chunk.tokenCount <= 480)).toBe(true);
-    expect(reconstructUniqueBlockText(chunks, "blk_0", text)).toBe(text);
+    expect(reconstructUniqueBlockText(chunks, "blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad", text)).toBe(text);
   });
 
   it("splits oversized code at complete line boundaries", () => {
@@ -66,7 +67,7 @@ describe("Managed Chunk generation", () => {
 
     expect(chunks).toHaveLength(2);
     expect(chunks.every((chunk) => chunk.splitKind === "line")).toBe(true);
-    expect(reconstructUniqueBlockText(chunks, "blk_0", text)).toBe(text);
+    expect(reconstructUniqueBlockText(chunks, "blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad", text)).toBe(text);
   });
 
   it("repeats a bounded table header while splitting complete rows", () => {
@@ -96,7 +97,7 @@ describe("Managed Chunk generation", () => {
     expect(chunks.every((chunk) => chunk.splitKind === "table_row")).toBe(true);
     expect(chunks.every((chunk) => chunk.text.startsWith(header))).toBe(true);
     expect(chunks.every((chunk) => chunk.tokenCount <= 480)).toBe(true);
-    expect(reconstructUniqueBlockText(chunks, "blk_0", text)).toBe(text);
+    expect(reconstructUniqueBlockText(chunks, "blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad", text)).toBe(text);
   });
 
   it("uses lossless token windows when no structural boundary can fit", () => {
@@ -110,7 +111,7 @@ describe("Managed Chunk generation", () => {
       true,
     );
     expect(chunks.every((chunk) => chunk.tokenCount <= 480)).toBe(true);
-    expect(reconstructUniqueBlockText(chunks, "blk_0", text)).toBe(text);
+    expect(reconstructUniqueBlockText(chunks, "blk_01890f5c-7b1a-75d9-8fea-f267cc8ba8ad", text)).toBe(text);
   });
 
   it("keeps deterministic content and revision identities across observations", () => {
@@ -334,7 +335,7 @@ describe("Managed Chunk generation", () => {
       generateManagedChunks({
         document,
         semanticUnits: units,
-        ids: { nextChunkId: () => "chk_duplicate" },
+        ids: { nextChunkId: () => "chk_01890f5c-7b1a-7754-87dd-6681d3b079b5" },
       }),
     ).toThrowError(expect.objectContaining({ code: "duplicate_chunk_id" }));
   });
@@ -354,7 +355,7 @@ function createFixture(
 ): { readonly document: NormalizedDocument; readonly units: readonly DocumentSemanticUnit[] } {
   let sourceOffset = 0;
   const blocks: DocumentBlock[] = specifications.map((specification, order) => {
-    const id = `blk_${order}`;
+    const id = structuralId("blk", order);
     const common = {
       id,
       revisionId: `brv_${String.fromCharCode(97 + order).repeat(16)}`,
@@ -410,7 +411,7 @@ function createFixture(
   };
   const units: readonly DocumentSemanticUnit[] = [
     {
-      id: "unit_chunks",
+      id: "unit_01890f5c-7b1a-7eb0-8c66-bac8c5b6c444",
       revisionId: "urv_aaaaaaaaaaaaaaaa",
       sourceId: document.sourceId,
       observationId: document.observationId,
@@ -444,7 +445,7 @@ function sequentialChunkIds(): ManagedChunkIdSource {
   return {
     nextChunkId: () => {
       sequence += 1;
-      return `chk_${sequence.toString().padStart(4, "0")}`;
+      return structuralId("chk", sequence.toString().padStart(4, "0"));
     },
   };
 }
@@ -470,14 +471,14 @@ function captureMarkdown(source: string): NormalizedDocument {
 function sequentialBlockIds(): BlockIdSource {
   let sequence = 0;
   return {
-    nextBlockId: () => `blk_pipeline_${++sequence}`,
+    nextBlockId: () => structuralId("blk", `pipeline_${++sequence}`),
   };
 }
 
 function sequentialUnitIds(): SemanticUnitIdSource {
   let sequence = 0;
   return {
-    nextUnitId: () => `unit_pipeline_${++sequence}`,
+    nextUnitId: () => structuralId("unit", `pipeline_${++sequence}`),
   };
 }
 

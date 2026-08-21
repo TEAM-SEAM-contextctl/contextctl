@@ -280,7 +280,7 @@ describe("cross-target integrity", () => {
   it.each([
     ["chunkId", { chunkId: "chunk_other" }],
     ["documentId", { documentId: "doc_other" }],
-    ["semanticUnitId", { semanticUnitId: "unit_other" }],
+    ["semanticUnitId", { semanticUnitId: "unit_01890f5c-7b1a-7211-8c3c-e592509dc531" }],
     ["contentDigest", { contentDigest: "digest_other" }],
   ] as const)("treats a differing %s as a contradiction", (_field, difference) => {
     const evidence = assembleDocumentContext(

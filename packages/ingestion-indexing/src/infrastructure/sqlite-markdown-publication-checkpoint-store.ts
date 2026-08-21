@@ -6,6 +6,7 @@ import {
 } from "../domain/document-model.js";
 import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
 import { isUuidV7Id } from "../domain/model-validation.js";
+import { canonicalJson } from "../domain/revision-identity.js";
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 import type {
   MarkdownPublicationCheckpoint,
@@ -96,6 +97,7 @@ export class SqliteMarkdownPublicationCheckpointStore
             validated.previousChangeToken === undefined) ||
           (stored.observationId !== undefined &&
             validated.observationId === undefined) ||
+          !validPendingTransition(stored, validated) ||
           (storedDocument !== undefined &&
             nextDocument !== undefined &&
             storedDocument.sourceId !== nextDocument.sourceId)
@@ -218,11 +220,48 @@ function parseCheckpoint(input: unknown): MarkdownPublicationCheckpoint {
       throw new MarkdownPublicationCheckpointConflict();
     }
   }
+  if (candidate.pendingIndexingSnapshot !== undefined) {
+    try {
+      assertValidDocumentIndexingSnapshot(
+        candidate.pendingIndexingSnapshot,
+        "previous",
+      );
+    } catch {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
+    if (
+      candidate.pendingIndexingSnapshot.document.sourceId !==
+        candidate.source.id ||
+      candidate.pendingIndexingSnapshot.document.documentId !==
+        candidate.documentId ||
+      candidate.pendingIndexingSnapshot.document.observationId ===
+        candidate.observationId
+    ) {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
+  }
   return structuredClone(candidate);
 }
 
 function checkpointDocument(checkpoint: MarkdownPublicationCheckpoint) {
   return checkpoint.indexingSnapshot?.document ?? checkpoint.document;
+}
+
+function validPendingTransition(
+  stored: MarkdownPublicationCheckpoint,
+  next: MarkdownPublicationCheckpoint,
+): boolean {
+  const pending = stored.pendingIndexingSnapshot;
+  if (pending === undefined) return true;
+  if (next.pendingIndexingSnapshot !== undefined) {
+    return (
+      canonicalJson(next.pendingIndexingSnapshot) === canonicalJson(pending)
+    );
+  }
+  return (
+    next.indexingSnapshot?.document.observationId ===
+    pending.document.observationId
+  );
 }
 
 function mapCheckpointError(error: unknown): Error {

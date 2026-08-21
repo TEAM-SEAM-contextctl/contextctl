@@ -30,7 +30,7 @@ describe("Publication recovery intent", () => {
     const manifestDraft = createIndexManifestFixture();
     const scopes = createPublishedDocumentScopes({
       manifest: manifestDraft,
-      semanticScopes: [{ semanticUnitIds: ["unit_payment_failures"] }],
+      semanticScopes: [{ semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"] }],
     });
     const manifest = {
       ...manifestDraft,
@@ -57,7 +57,7 @@ describe("Publication recovery intent", () => {
 
     expect(reordered).toEqual(ordered);
     const section = ordered.knowledgeUnits.find(
-      (unit) => unit.id === "unit_payment_failures",
+      (unit) => unit.id === "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     );
     expect(section?.facts).toContainEqual({
       name: "keywords.derived",
@@ -67,7 +67,7 @@ describe("Publication recovery intent", () => {
       DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION,
     );
     const documentRoot = ordered.knowledgeUnits.find(
-      (unit) => unit.id === "unit_payments",
+      (unit) => unit.id === "unit_01890f5c-7b1a-72e9-843d-dfdd184c9ce7",
     );
     expect(
       documentRoot?.facts.some((fact) => fact.name === "keywords.derived"),

@@ -6,13 +6,13 @@
   "producedAt": "2026-07-29T00:00:00.000Z",
   "knowledgeUnits": [
     {
-      "id": "unit_payment_failures",
+      "id": "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
       "kind": "section",
       "sourceCoordinate": {
         "kind": "document",
         "sourceId": "src_01890f5c-7b1a-7001-8000-000000000001",
         "documentId": "doc_01890f5c-7b1a-7002-8000-000000000002",
-        "semanticUnitId": "unit_payment_failures"
+        "semanticUnitId": "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"
       },
       "facts": [
         { "name": "document.media_type", "value": "text/markdown" },
@@ -33,7 +33,7 @@
           },
           "selector": {
             "kind": "semantic_units",
-            "semanticUnitIds": ["unit_payment_failures"]
+            "semanticUnitIds": ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"]
           }
         }
       ],
@@ -45,14 +45,14 @@
           "segmentation": "semantic-unit-v1"
         }
       },
-      "contentDigest": "sha256:349d28137ccb082e12ab6c1efe42de52085d871975ddbdee92d496268ff56c0b"
+      "contentDigest": "sha256:d9b396ec38fe4296fd9bb7b47ed126353da2baf0d5fc31229e7a70265c778179"
     }
   ],
   "changes": [
     {
       "kind": "added",
-      "knowledgeUnitId": "unit_payment_failures",
-      "currentContentDigest": "sha256:349d28137ccb082e12ab6c1efe42de52085d871975ddbdee92d496268ff56c0b"
+      "knowledgeUnitId": "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
+      "currentContentDigest": "sha256:d9b396ec38fe4296fd9bb7b47ed126353da2baf0d5fc31229e7a70265c778179"
     }
   ]
 }

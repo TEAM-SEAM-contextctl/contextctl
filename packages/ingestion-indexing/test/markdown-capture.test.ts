@@ -13,6 +13,7 @@ import {
   type MarkdownSourceSnapshot,
   type NormalizedDocument,
 } from "../src/index.js";
+import { structuralId } from "./fixtures/root-id-fixture.js";
 
 const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
@@ -611,6 +612,6 @@ class SequentialBlockIdSource implements BlockIdSource {
   #next = 1;
 
   nextBlockId(): string {
-    return `blk_test${this.#next++}`;
+    return structuralId("blk", `markdown-capture-${String(this.#next++)}`);
   }
 }

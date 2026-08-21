@@ -52,6 +52,12 @@ export interface MarkdownPublicationCheckpoint {
   readonly semanticUnits?: readonly DocumentSemanticUnit[];
   /** Complete durable baseline used by incremental re-indexing. */
   readonly indexingSnapshot?: DocumentIndexingSnapshot;
+  /**
+   * UUIDv7 structural identities durably issued for the next Observation.
+   * It is written before external index effects and promoted to the baseline
+   * only after the matching Publication commits.
+   */
+  readonly pendingIndexingSnapshot?: DocumentIndexingSnapshot;
 }
 
 export interface RegisterMarkdownCheckpointResult {

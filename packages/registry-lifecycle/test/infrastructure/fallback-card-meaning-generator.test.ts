@@ -17,7 +17,7 @@ const coordinate: PublishedSourceCoordinate = {
   kind: "document",
   sourceId: "src_payments",
   documentId: "doc_payments",
-  semanticUnitId: "unit_payment_failures",
+  semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
 };
 
 const request: CardMeaningRequest = {
@@ -63,7 +63,7 @@ describe("FallbackCardMeaningGenerator", () => {
 
     const meaning = await generator.generate(request);
 
-    expect(meaning.description).toContain("unit_payment_failures");
+    expect(meaning.description).toContain("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd");
   });
 
   it("reports each fallback with the reason kept distinct", async () => {

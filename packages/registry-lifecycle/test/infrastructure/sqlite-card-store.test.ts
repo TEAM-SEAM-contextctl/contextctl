@@ -31,7 +31,7 @@ function addedEvent(versionId: string, id = "ev_added"): LifecycleEvent {
   return {
     id,
     kind: "card_version_added",
-    cardId: "unit_payment_failures",
+    cardId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     occurredAt: "2026-08-04T00:00:00.000Z",
     versionId,
     publicationId: "pub_initial",
@@ -40,7 +40,7 @@ function addedEvent(versionId: string, id = "ev_added"): LifecycleEvent {
 
 /** Card carrying one validated version that is already current. */
 function createServingCard(): ContextCard {
-  const card = createContextCard("unit_payment_failures", meaning, policy);
+  const card = createContextCard("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", meaning, policy);
   const version = createDocumentCardVersion();
   let history = appendCardVersion(card.versions, version);
   history = promoteCardVersion(history, version.id);
@@ -65,7 +65,7 @@ describe("SqliteCardStore", () => {
   });
 
   it("returns undefined for a card that was never saved", async () => {
-    expect(await store.findCard("unit_missing")).toBeUndefined();
+    expect(await store.findCard("unit_01890f5c-7b1a-7a13-8fd3-6939fe7fa688")).toBeUndefined();
   });
 
   it("keeps history append-only when the same version is saved again", async () => {
@@ -121,7 +121,7 @@ describe("SqliteCardStore", () => {
       [],
     );
 
-    const pending = createContextCard("unit_pending", meaning, policy);
+    const pending = createContextCard("unit_01890f5c-7b1a-77d5-82fe-7ccd9f626dab", meaning, policy);
     await store.saveCard(pending, []);
 
     const current = await store.listCurrentVersions();
@@ -148,7 +148,7 @@ describe("SqliteCardStore", () => {
         },
         selection: {
           kind: "semantic_units",
-          semanticUnitIds: ["unit_payment_failures"],
+          semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
         },
       },
     ]);
@@ -162,12 +162,12 @@ describe("SqliteCardStore", () => {
     await store.saveCard(card, [duplicated, duplicated]);
 
     const broken = {
-      ...createContextCard("unit_broken", meaning, policy),
+      ...createContextCard("unit_01890f5c-7b1a-7e96-8dc1-8dacdba2ecd3", meaning, policy),
     } as ContextCard;
     const orphanVersion = {
       ...createDocumentCardVersion(),
       id: "cv_orphan",
-      cardId: "unit_elsewhere",
+      cardId: "unit_01890f5c-7b1a-7667-8267-da7009c13532",
     };
     const invalid = withCardVersions(broken, {
       cardId: broken.id,
@@ -175,17 +175,17 @@ describe("SqliteCardStore", () => {
       currentVersionId: undefined,
     });
 
-    // card_versions.card_id has a foreign key to cards, and unit_elsewhere was
+    // card_versions.card_id has a foreign key to cards, and unit_01890f5c-7b1a-7667-8267-da7009c13532 was
     // never inserted, so the version insert fails mid-transaction.
     await expect(
       store.saveCard(invalid, [
-        { ...addedEvent("cv_orphan", "ev_orphan"), cardId: "unit_broken" },
+        { ...addedEvent("cv_orphan", "ev_orphan"), cardId: "unit_01890f5c-7b1a-7e96-8dc1-8dacdba2ecd3" },
       ]),
     ).rejects.toThrow();
 
-    expect(await store.findCard("unit_broken")).toBeUndefined();
+    expect(await store.findCard("unit_01890f5c-7b1a-7e96-8dc1-8dacdba2ecd3")).toBeUndefined();
     const events = await new SqliteLifecycleEventStore(database).listForCard(
-      "unit_broken",
+      "unit_01890f5c-7b1a-7e96-8dc1-8dacdba2ecd3",
     );
     expect(events).toEqual([]);
   });

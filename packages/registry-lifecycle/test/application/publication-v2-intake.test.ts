@@ -67,7 +67,7 @@ function publicationWith(unit: unknown): unknown {
     changes: [
       {
         kind: "added",
-        knowledgeUnitId: "unit_payment_failures",
+        knowledgeUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
         currentContentDigest: digest,
       },
     ],
@@ -196,7 +196,7 @@ describe("what Publication v2 refuses before Registry sees it", () => {
           ...content.publishedScopes[0],
           selector: {
             kind: "semantic_units",
-            semanticUnitIds: ["unit_zzz", "unit_aaa"],
+            semanticUnitIds: ["unit_01890f5c-7b1a-7be7-8dfa-fbd67ee4ed50", "unit_01890f5c-7b1a-79dd-8eca-da715ec8318e"],
           },
         },
       ],
@@ -208,7 +208,7 @@ describe("what Publication v2 refuses before Registry sees it", () => {
           ...content.publishedScopes[0],
           selector: {
             kind: "semantic_units",
-            semanticUnitIds: ["unit_payment_failures", "unit_payment_failures"],
+            semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd", "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
           },
         },
       ],

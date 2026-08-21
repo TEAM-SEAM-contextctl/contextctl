@@ -10,6 +10,7 @@ import {
   isDigest,
   isId,
   isRevisionId,
+  isUuidV7Id,
   issue,
   type ModelValidationIssue,
 } from "./model-validation.js";
@@ -1039,8 +1040,20 @@ function validateIdentity(
   path: string,
   issues: ModelValidationIssue[],
 ): void {
-  if (!isId(value, prefix)) {
-    issues.push(issue("invalid_id", path, `expected ${prefix}_ identifier`));
+  const uuidV7Identity = prefix === "blk" || prefix === "unit" || prefix === "chk";
+  if (
+    (uuidV7Identity && !isUuidV7Id(value, prefix)) ||
+    (!uuidV7Identity && !isId(value, prefix))
+  ) {
+    issues.push(
+      issue(
+        "invalid_id",
+        path,
+        uuidV7Identity
+          ? `expected ${prefix}_ identifier with UUIDv7 body`
+          : `expected ${prefix}_ identifier`,
+      ),
+    );
   }
 }
 

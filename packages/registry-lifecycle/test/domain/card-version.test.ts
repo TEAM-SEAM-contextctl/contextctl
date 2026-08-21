@@ -15,7 +15,7 @@ import type { RetrievalScope } from "../../src/domain/retrieval-scope.js";
 const lineage: CardLineage = {
   publicationId: "pub_1",
   observationId: "obs_1",
-  knowledgeUnitId: "unit_1",
+  knowledgeUnitId: "unit_01890f5c-7b1a-79ef-8854-20d1e3c5fde6",
 };
 
 const scopes: readonly RetrievalScope[] = [

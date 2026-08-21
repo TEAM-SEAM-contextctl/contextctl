@@ -194,12 +194,12 @@ describe("buildRetrievalGuide", () => {
     const base = scopeOfKind(createRefundPolicyCard(), "managed_document");
     const scope: ApprovedManagedDocumentScope = {
       ...base,
-      selection: { kind: "semantic_units", semanticUnitIds: ["unit_a"] },
+      selection: { kind: "semantic_units", semanticUnitIds: ["unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"] },
     };
     const guide = buildRetrievalGuide(scope, LIMIT);
 
     (scope.selection as unknown as { semanticUnitIds: string[] }).semanticUnitIds.push(
-      "unit_b",
+      "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
     );
 
     expect(guide.kind).toBe("managed_document");
@@ -208,7 +208,7 @@ describe("buildRetrievalGuide", () => {
     }
     expect(guide.selector).toEqual({
       kind: "semantic_units",
-      semanticUnitIds: ["unit_a"],
+      semanticUnitIds: ["unit_01890f5c-7b1a-7ddd-8af6-6a9ce99ed0a1"],
     });
   });
 

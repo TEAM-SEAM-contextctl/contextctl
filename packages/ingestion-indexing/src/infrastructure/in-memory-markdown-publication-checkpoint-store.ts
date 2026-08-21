@@ -1,6 +1,7 @@
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
 import { isUuidV7Id } from "../domain/model-validation.js";
+import { canonicalJson } from "../domain/revision-identity.js";
 import type {
   MarkdownPublicationCheckpoint,
   MarkdownPublicationCheckpointStore,
@@ -49,6 +50,7 @@ export class InMemoryMarkdownPublicationCheckpointStore
         checkpoint.previousChangeToken === undefined) ||
       (existing.observationId !== undefined &&
         checkpoint.observationId === undefined) ||
+      !validPendingTransition(existing, checkpoint) ||
       (existingDocument !== undefined &&
         nextDocument !== undefined &&
         existingDocument.sourceId !== nextDocument.sourceId)
@@ -108,4 +110,41 @@ function assertCheckpointSnapshot(
       throw new MarkdownPublicationCheckpointConflict();
     }
   }
+  if (checkpoint.pendingIndexingSnapshot !== undefined) {
+    try {
+      assertValidDocumentIndexingSnapshot(
+        checkpoint.pendingIndexingSnapshot,
+        "previous",
+      );
+    } catch {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
+    if (
+      checkpoint.pendingIndexingSnapshot.document.sourceId !==
+        checkpoint.source.id ||
+      checkpoint.pendingIndexingSnapshot.document.documentId !==
+        checkpoint.documentId ||
+      checkpoint.pendingIndexingSnapshot.document.observationId ===
+        checkpoint.observationId
+    ) {
+      throw new MarkdownPublicationCheckpointConflict();
+    }
+  }
+}
+
+function validPendingTransition(
+  existing: MarkdownPublicationCheckpoint,
+  next: MarkdownPublicationCheckpoint,
+): boolean {
+  const pending = existing.pendingIndexingSnapshot;
+  if (pending === undefined) return true;
+  if (next.pendingIndexingSnapshot !== undefined) {
+    return (
+      canonicalJson(next.pendingIndexingSnapshot) === canonicalJson(pending)
+    );
+  }
+  return (
+    next.indexingSnapshot?.document.observationId ===
+    pending.document.observationId
+  );
 }

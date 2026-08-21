@@ -42,13 +42,13 @@ export function createIngestionPublicationFixture(
   publicationId = fixtureRootId("pub", "initial"),
 ): IngestionPublication {
   const unit = seal({
-    id: "unit_payment_failures",
+    id: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     kind: "section",
     sourceCoordinate: {
       kind: "document",
       sourceId: MARKDOWN_SOURCE_ID,
       documentId: MARKDOWN_DOCUMENT_ID,
-      semanticUnitId: "unit_payment_failures",
+      semanticUnitId: "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
     },
     // Fact names come from v2's closed vocabulary. `section.label` is what the
     // old free-form `summary` fact actually was — the heading this unit covers.
@@ -66,7 +66,7 @@ export function createIngestionPublicationFixture(
         },
         selector: {
           kind: "semantic_units",
-          semanticUnitIds: ["unit_payment_failures"],
+          semanticUnitIds: ["unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd"],
         },
       },
     ],
@@ -148,7 +148,7 @@ export function createSqlPublicationFixture(): IngestionPublication {
   const sourceId = fixtureRootId("src", "payments-db");
   const observationId = fixtureRootId("obs", "sql");
   const unit = seal({
-    id: "unit_payments_table",
+    id: "unit_01890f5c-7b1a-784f-8ec3-8cba518ce3ba",
     kind: "table",
     sourceCoordinate: {
       kind: "sql_table",
@@ -200,7 +200,7 @@ export function createHttpPublicationFixture(): IngestionPublication {
   const sourceId = fixtureRootId("src", "payments-api");
   const observationId = fixtureRootId("obs", "http");
   const unit = seal({
-    id: "unit_get_payment",
+    id: "unit_01890f5c-7b1a-7e07-8297-3b51cb4b4083",
     kind: "operation",
     sourceCoordinate: {
       kind: "http_operation",

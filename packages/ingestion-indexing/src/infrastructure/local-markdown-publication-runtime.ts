@@ -14,12 +14,10 @@ import {
   SourceObservationRetention,
   type SourceObservationRetentionPolicy,
 } from "../application/retain-source-observations.js";
-import type { BlockIdSource } from "../domain/document-capture.js";
 import {
   isDocumentRetrievalEmbeddingProfile,
   type EmbeddingProfile,
 } from "../domain/embedding-profile.js";
-import { stableIdentity } from "../domain/revision-identity.js";
 import type { EmbeddingPort } from "../ports/embedding.js";
 import type { PublicationReadyNotifier } from "../ports/markdown-publication.js";
 import type {
@@ -52,6 +50,10 @@ import {
 } from "./static-managed-search-registries.js";
 import { assertProductionEmbeddingProvider } from "./transformers-js-local-embedding-adapter.js";
 import { UuidV7RootIdGenerator } from "./uuid-v7-root-id-generator.js";
+import {
+  UuidV7StructuralIdGenerator,
+  type StructuralIdGenerator,
+} from "./uuid-v7-structural-id-generator.js";
 
 export interface LocalMarkdownPublicationRuntimeOptions {
   readonly configurations: Readonly<Record<string, unknown>>;
@@ -78,6 +80,8 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly defaultSourceTimeoutMs?: number;
   /** Shared issuer for every persisted Ingestion root identity. */
   readonly ids?: SourceRootIdGenerator & PublicationRootIdGenerator;
+  /** Shared issuer for Block, Semantic Unit and Managed Chunk identities. */
+  readonly structuralIds?: StructuralIdGenerator;
   readonly clock?: () => string;
 }
 
@@ -133,6 +137,8 @@ export function createLocalMarkdownPublicationRuntime(
   const observations =
     options.observations ?? new InMemorySourceObservationStore();
   const rootIds = options.ids ?? new UuidV7RootIdGenerator();
+  const structuralIds =
+    options.structuralIds ?? new UuidV7StructuralIdGenerator();
   const sourceManagement = new SourceManagement({
     adapters: new SourceAdapterRegistry([
       new MarkdownFileSourceAdapter({ now: () => new Date(clock()) }),
@@ -183,7 +189,7 @@ export function createLocalMarkdownPublicationRuntime(
     captureMarkdown: (command) =>
       new MarkdownCapture({
         parser,
-        ids: new StableBlockIdSource(command.observationId),
+        ids: structuralIds,
       }).capture(command),
     documentReindexer: new IncrementalDocumentReindexer({
       vectorIndex,
@@ -193,6 +199,7 @@ export function createLocalMarkdownPublicationRuntime(
     }),
     publications,
     ids: rootIds,
+    structuralIds,
     events,
     embeddingProfile: options.embeddingProfile,
     stateNamespaceId: options.stateNamespaceId,
@@ -262,18 +269,5 @@ class LocalValueResolver
       throw new Error("local reference is unavailable");
     }
     return structuredClone(this.values[reference]);
-  }
-}
-
-class StableBlockIdSource implements BlockIdSource {
-  #next = 0;
-
-  constructor(private readonly observationId: string) {}
-
-  nextBlockId(): string {
-    return stableIdentity("blk", {
-      observationId: this.observationId,
-      ordinal: this.#next++,
-    });
   }
 }

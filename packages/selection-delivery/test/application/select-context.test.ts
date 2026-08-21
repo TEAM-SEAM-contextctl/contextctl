@@ -181,7 +181,7 @@ describe("selectContext over a catalog that contradicts itself about a Scope", (
     }
     const narrowed: ApprovedScope = {
       ...whole,
-      selection: { kind: "semantic_units", semanticUnitIds: ["unit_refund_window"] },
+      selection: { kind: "semantic_units", semanticUnitIds: ["unit_01890f5c-7b1a-7989-86c3-07e34e599ac5"] },
     };
     return [
       first,

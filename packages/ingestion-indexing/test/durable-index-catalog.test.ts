@@ -43,10 +43,11 @@ import {
   type PublicationReadyNotifier,
   type PublishedIndexVersion,
   type PublishMarkdownSourceCommand,
+  type StructuralIdGenerator,
   type VectorIndexPort,
 } from "../src/index.js";
 import { createIndexManifestFixture } from "./fixtures/document-fixture.js";
-import { rootId } from "./fixtures/root-id-fixture.js";
+import { rootId, structuralId } from "./fixtures/root-id-fixture.js";
 
 const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
@@ -244,6 +245,55 @@ describe("durable Index control plane", () => {
         .prepare("SELECT source_id FROM markdown_publication_checkpoints")
         .get(),
     ).toEqual({ source_id: "src_legacy" });
+    inspection.close();
+  });
+
+  it("rejects schema v7 state containing legacy structural identities", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "contextctl-legacy-structure-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "legacy-structure.sqlite");
+    const database = openTestDatabase(databasePath);
+    const sourceId = rootId("src", "legacy-structure");
+    const documentId = rootId("doc", "legacy-structure");
+    const observationId = rootId("obs", "legacy-structure");
+    database
+      .prepare(
+        `INSERT INTO markdown_publication_checkpoints (
+           source_id, target_key, source_type, document_id, checkpoint_json
+         ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        sourceId,
+        "file:/legacy-structure.md",
+        "markdown",
+        documentId,
+        JSON.stringify({
+          source: {
+            id: sourceId,
+            targetKey: "file:/legacy-structure.md",
+            sourceType: "markdown",
+          },
+          documentId,
+          pendingIndexingSnapshot: {
+            document: {
+              sourceId,
+              documentId,
+              observationId,
+              blocks: [{ id: "blk_content-derived" }],
+            },
+          },
+        }),
+      );
+    database.exec("PRAGMA user_version = 7");
+    database.close();
+
+    expect(() => openTestDatabase(databasePath)).toThrowError(
+      expect.objectContaining({ code: "identity_format_unsupported" }),
+    );
+    const inspection = new DatabaseSync(databasePath);
+    expect(inspection.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: 7,
+    });
     inspection.close();
   });
 
@@ -543,6 +593,67 @@ describe("durable Index control plane", () => {
         indexVersion: scope.documentIndex.indexVersion,
       }),
     ).toBeDefined();
+    secondDatabase.close();
+  });
+
+  it("rehydrates pending structural identities before retrying after restart", async () => {
+    const fixture = await createTemporaryFixture();
+    const vectorIndex = new InMemoryVectorIndexAdapter();
+    const firstStructuralIds = new RecordingStructuralIds("first");
+    const firstDatabase = openTestDatabase(fixture.databasePath);
+    const first = createDurableRuntime(
+      fixture.markdownPath,
+      firstDatabase,
+      vectorIndex,
+      new FailOnceEmbeddingPort(),
+      undefined,
+      undefined,
+      firstStructuralIds,
+    );
+
+    const failed = await first.workflow
+      .publish(command())
+      .catch((caught: unknown) => caught);
+    expect(failed).toMatchObject({
+      stage: "index_update",
+      diagnosticCode: "provider_failure",
+    });
+    const sourceId = first.events.events.find(
+      (event) => event.sourceId !== undefined,
+    )?.sourceId;
+    expect(sourceId).toBeDefined();
+    if (sourceId === undefined) throw new Error("registered Source is missing");
+    const pending = requiredValue(
+      (await first.checkpoints.findBySourceId(sourceId))
+        ?.pendingIndexingSnapshot,
+    );
+    const pendingIdentities = indexingSnapshotIdentities(pending);
+    expect(firstStructuralIds.issuedCount).toBeGreaterThan(0);
+    firstDatabase.close();
+
+    const retryStructuralIds = new RecordingStructuralIds("retry");
+    const secondDatabase = openTestDatabase(fixture.databasePath);
+    const second = createDurableRuntime(
+      fixture.markdownPath,
+      secondDatabase,
+      vectorIndex,
+      new DeterministicEmbeddingAdapter(),
+      undefined,
+      undefined,
+      retryStructuralIds,
+    );
+    const recovered = await second.workflow.publish(command());
+    const checkpoint = requiredValue(
+      await second.checkpoints.findBySourceId(sourceId),
+    );
+
+    expect(recovered.status).toBe("published");
+    expect(retryStructuralIds.issuedCount).toBe(0);
+    expect(checkpoint.pendingIndexingSnapshot).toBeUndefined();
+    expect(checkpoint.indexingSnapshot).toBeDefined();
+    expect(indexingSnapshotIdentities(checkpoint.indexingSnapshot!)).toEqual(
+      pendingIdentities,
+    );
     secondDatabase.close();
   });
 
@@ -1135,6 +1246,7 @@ function createDurableRuntime(
   embeddingProvider: EmbeddingPort,
   readyNotifier?: PublicationReadyNotifier,
   publications?: IngestionPublicationStore,
+  structuralIds?: StructuralIdGenerator,
 ) {
   return createLocalMarkdownPublicationRuntime({
     configurations: { "source.fixture": { path: markdownPath } },
@@ -1151,6 +1263,7 @@ function createDurableRuntime(
     indexPublications: new SqliteIndexPublicationStore(database),
     stagingAttempts: new SqliteIndexStagingAttemptStore(database),
     ids: new UuidV7RootIdGenerator(),
+    ...(structuralIds === undefined ? {} : { structuralIds }),
     ...(readyNotifier === undefined ? {} : { readyNotifier }),
     clock: () => NOW,
   });
@@ -1405,6 +1518,57 @@ class RecordingEmbeddingPort implements EmbeddingPort {
     this.requests.push(request);
     return this.delegate.embed(request);
   }
+}
+
+class FailOnceEmbeddingPort implements EmbeddingPort {
+  readonly #delegate = new DeterministicEmbeddingAdapter();
+  #failed = false;
+
+  embed(request: EmbeddingProviderRequest) {
+    if (!this.#failed) {
+      this.#failed = true;
+      return Promise.reject(new Error("simulated embedding failure"));
+    }
+    return this.#delegate.embed(request);
+  }
+}
+
+class RecordingStructuralIds implements StructuralIdGenerator {
+  issuedCount = 0;
+
+  constructor(private readonly seed: string) {}
+
+  nextBlockId(): string {
+    return this.#next("blk");
+  }
+
+  nextUnitId(): string {
+    return this.#next("unit");
+  }
+
+  nextChunkId(): string {
+    return this.#next("chk");
+  }
+
+  #next(prefix: "blk" | "chk" | "unit"): string {
+    this.issuedCount += 1;
+    return structuralId(
+      prefix,
+      `${this.seed}-${String(this.issuedCount)}`,
+    );
+  }
+}
+
+function indexingSnapshotIdentities(snapshot: {
+  readonly document: { readonly blocks: readonly { readonly id: string }[] };
+  readonly semanticUnits: readonly { readonly id: string }[];
+  readonly chunks: readonly { readonly id: string }[];
+}) {
+  return {
+    blocks: snapshot.document.blocks.map((block) => block.id),
+    semanticUnits: snapshot.semanticUnits.map((unit) => unit.id),
+    chunks: snapshot.chunks.map((chunk) => chunk.id),
+  };
 }
 
 class RecordingVectorIndex implements VectorIndexPort {

@@ -22,7 +22,7 @@ const request: CardMeaningRequest = {
     kind: "document",
     sourceId: "src_1",
     documentId: "doc_a",
-    semanticUnitId: "unit_b",
+    semanticUnitId: "unit_01890f5c-7b1a-7898-8dae-639abbaee4d4",
   },
   facts: [{ name: "document.title", value: "운영 안내" }],
 };
@@ -182,7 +182,7 @@ describe("resolveCardMeaningBackend", () => {
     const meaning = await backend.generator.generate(request);
 
     expect(meaning.description).toBe(
-      "Semantic unit unit_b of document doc_a. document.title: 운영 안내",
+      "Semantic unit unit_01890f5c-7b1a-7898-8dae-639abbaee4d4 of document doc_a. document.title: 운영 안내",
     );
     expect(fallbacks).toHaveLength(1);
     const message = fallbacks[0] ?? "";
@@ -190,7 +190,7 @@ describe("resolveCardMeaningBackend", () => {
     expect(message).toContain("***");
     expect(message).toContain("transport");
     // The coordinate is what makes the line actionable.
-    expect(message).toContain("doc_a/unit_b");
+    expect(message).toContain("doc_a/unit_01890f5c-7b1a-7898-8dae-639abbaee4d4");
   });
 
   it("returns the model's own meaning when the call succeeds", async () => {

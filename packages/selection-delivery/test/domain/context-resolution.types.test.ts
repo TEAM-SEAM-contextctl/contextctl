@@ -84,9 +84,9 @@ function emptyContext(): RetrievedDocumentContext {
 function retrievedChunk(): RetrievedDocumentChunk {
   return {
     contextRank: 1,
-    chunkId: "chk_0001",
+    chunkId: "chk_01890f5c-7b1a-7a2b-86ef-c37017e3a43b",
     chunkRevisionId: "chkrev_0001",
-    semanticUnitId: "unit_0001",
+    semanticUnitId: "unit_01890f5c-7b1a-73bf-8bd3-45381291623d",
     documentId: "doc_refund_policy",
     text: "refunds are issued within 5 business days",
     contentDigest: "sha256:aaaa",
@@ -404,15 +404,15 @@ describe("RetrievedDocumentChunk refuses the internal ordering signals", () => {
     // @ts-expect-error an unranked chunk cannot be ordered against a chunk in
     // another item, which is the whole reason the field exists.
     const chunk: RetrievedDocumentChunk = {
-      chunkId: "chk_0001",
+      chunkId: "chk_01890f5c-7b1a-7a2b-86ef-c37017e3a43b",
       chunkRevisionId: "chkrev_0001",
-      semanticUnitId: "unit_0001",
+      semanticUnitId: "unit_01890f5c-7b1a-73bf-8bd3-45381291623d",
       documentId: "doc_refund_policy",
       text: "refunds are issued within 5 business days",
       contentDigest: "sha256:aaaa",
     };
 
-    expect(chunk.chunkId).toBe("chk_0001");
+    expect(chunk.chunkId).toBe("chk_01890f5c-7b1a-7a2b-86ef-c37017e3a43b");
   });
 });
 
