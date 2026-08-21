@@ -25,6 +25,7 @@ import type { PublicationReadyNotifier } from "../ports/markdown-publication.js"
 import type {
   IngestionPublicationStore,
   MarkdownPublicationCheckpointStore,
+  PublicationRootIdGenerator,
 } from "../ports/markdown-publication.js";
 import type { IndexPublicationStore } from "../ports/index-publication-store.js";
 import type { IndexStagingAttemptStore } from "../ports/index-staging-attempt.js";
@@ -32,7 +33,7 @@ import type { SourceObservationStore } from "../ports/source-observation.js";
 import type {
   CredentialResolver,
   SourceConfigurationResolver,
-  SourceIdGenerator,
+  SourceRootIdGenerator,
 } from "../ports/source-adapter.js";
 import type { VectorIndexPort } from "../ports/vector-index.js";
 import { InMemoryIndexPublicationStore } from "./in-memory-index-publication-store.js";
@@ -50,6 +51,7 @@ import {
   StaticVectorIndexConnectorRegistry,
 } from "./static-managed-search-registries.js";
 import { assertProductionEmbeddingProvider } from "./transformers-js-local-embedding-adapter.js";
+import { UuidV7RootIdGenerator } from "./uuid-v7-root-id-generator.js";
 
 export interface LocalMarkdownPublicationRuntimeOptions {
   readonly configurations: Readonly<Record<string, unknown>>;
@@ -74,7 +76,8 @@ export interface LocalMarkdownPublicationRuntimeOptions {
   readonly observationRetentionLeaseMs?: number;
   readonly embeddingPolicy?: EmbeddingPipelinePolicy;
   readonly defaultSourceTimeoutMs?: number;
-  readonly sourceIds?: SourceIdGenerator;
+  /** Shared issuer for every persisted Ingestion root identity. */
+  readonly ids?: SourceRootIdGenerator & PublicationRootIdGenerator;
   readonly clock?: () => string;
 }
 
@@ -129,13 +132,14 @@ export function createLocalMarkdownPublicationRuntime(
   const credentials = new LocalValueResolver(options.credentials ?? {});
   const observations =
     options.observations ?? new InMemorySourceObservationStore();
+  const rootIds = options.ids ?? new UuidV7RootIdGenerator();
   const sourceManagement = new SourceManagement({
     adapters: new SourceAdapterRegistry([
       new MarkdownFileSourceAdapter({ now: () => new Date(clock()) }),
     ]),
     configurations,
     credentials,
-    ids: options.sourceIds ?? new SequentialSourceIdGenerator(),
+    ids: rootIds,
     observations,
     defaultTimeoutMs: options.defaultSourceTimeoutMs ?? 30_000,
     clock,
@@ -188,6 +192,7 @@ export function createLocalMarkdownPublicationRuntime(
       indexPublisher,
     }),
     publications,
+    ids: rootIds,
     events,
     embeddingProfile: options.embeddingProfile,
     stateNamespaceId: options.stateNamespaceId,
@@ -257,14 +262,6 @@ class LocalValueResolver
       throw new Error("local reference is unavailable");
     }
     return structuredClone(this.values[reference]);
-  }
-}
-
-class SequentialSourceIdGenerator implements SourceIdGenerator {
-  #next = 1;
-
-  nextSourceId(): string {
-    return `src_local${String(this.#next++)}`;
   }
 }
 

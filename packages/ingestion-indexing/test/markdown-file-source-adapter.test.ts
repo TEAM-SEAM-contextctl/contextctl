@@ -25,8 +25,9 @@ import {
   type BlockIdSource,
   type CredentialResolver,
   type SourceConfigurationResolver,
-  type SourceIdGenerator,
+  type SourceRootIdGenerator,
 } from "../src/index.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
@@ -333,11 +334,16 @@ class EmptyCredentialResolver implements CredentialResolver {
   }
 }
 
-class SequentialSourceIdGenerator implements SourceIdGenerator {
+class SequentialSourceIdGenerator implements SourceRootIdGenerator {
   #next = 1;
+  #nextObservation = 1;
 
   nextSourceId(): string {
-    return `src_markdown${this.#next++}`;
+    return rootId("src", `markdown-${String(this.#next++)}`);
+  }
+
+  nextObservationId(): string {
+    return rootId("obs", `markdown-${String(this.#nextObservation++)}`);
   }
 }
 

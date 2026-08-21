@@ -32,6 +32,7 @@ import {
   StaticQueryEmbeddingProviderRegistry,
   StaticVectorIndexConnectorRegistry,
   UuidSourceIdGenerator,
+  UuidV7RootIdGenerator,
   createLocalMarkdownPublicationRuntime,
   createSourceObservation,
   openIngestionDatabase,
@@ -45,6 +46,7 @@ import {
   type VectorIndexPort,
 } from "../src/index.js";
 import { createIndexManifestFixture } from "./fixtures/document-fixture.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
@@ -73,7 +75,8 @@ afterEach(async () => {
 describe("durable Index control plane", () => {
   it("generates collision-resistant Source IDs for durable compositions", () => {
     const generator = new UuidSourceIdGenerator({
-      randomUuid: () => "01890f5c-7b1a-7cc3-8a2f-123456789abc",
+      now: () => Number.parseInt("01890f5c7b1a", 16),
+      random: () => Uint8Array.from([12, 195, 10, 47, 18, 52, 86, 120, 154, 188]),
     });
 
     expect(generator.nextSourceId()).toBe(
@@ -81,9 +84,9 @@ describe("durable Index control plane", () => {
     );
     expect(
       () =>
-        new UuidSourceIdGenerator({ randomUuid: () => "not-a-uuid" })
+        new UuidSourceIdGenerator({ random: () => new Uint8Array(0) })
           .nextSourceId(),
-    ).toThrow(TypeError);
+    ).toThrow(RangeError);
   });
 
   it("versions the control-plane schema and rejects newer or malformed databases", async () => {
@@ -208,6 +211,68 @@ describe("durable Index control plane", () => {
     unchanged.close();
   });
 
+  it("fails closed on pre-UUIDv7 durable identities without advancing schema", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "contextctl-legacy-id-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "legacy.sqlite");
+    const database = openTestDatabase(databasePath);
+    database
+      .prepare(
+        `INSERT INTO markdown_publication_checkpoints (
+           source_id, target_key, source_type, document_id, checkpoint_json
+         ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "src_legacy",
+        "file:/legacy.md",
+        "markdown",
+        "doc_legacy",
+        "{}",
+      );
+    database.exec("PRAGMA user_version = 6");
+    database.close();
+
+    expect(() => openTestDatabase(databasePath)).toThrowError(
+      expect.objectContaining({ code: "identity_format_unsupported" }),
+    );
+    const inspection = new DatabaseSync(databasePath);
+    expect(inspection.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: 6,
+    });
+    expect(
+      inspection
+        .prepare("SELECT source_id FROM markdown_publication_checkpoints")
+        .get(),
+    ).toEqual({ source_id: "src_legacy" });
+    inspection.close();
+  });
+
+  it("does not treat external payload keys as control-plane identities", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "contextctl-payload-id-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "payload.sqlite");
+    const database = openTestDatabase(databasePath);
+    const observations = new SqliteSourceObservationStore(database);
+    const observation = createSourceObservation({
+      id: rootId("obs", "external-payload"),
+      sourceId: rootId("src", "external-payload"),
+      capturedAt: NOW,
+      contentDigest: `sha256:${"e".repeat(64)}`,
+      payload: {
+        sourceId: "customer-owned-source-key",
+        documentId: 42,
+      },
+    });
+    await observations.commit({ observation });
+    database.close();
+
+    const reopened = openTestDatabase(databasePath);
+    await expect(
+      new SqliteSourceObservationStore(reopened).find(observation.id),
+    ).resolves.toEqual(observation);
+    reopened.close();
+  });
+
   it("migrates schema v2 and preserves failed staging ownership across restart", async () => {
     const directory = await mkdtemp(join(tmpdir(), "contextctl-staging-state-"));
     temporaryDirectories.push(directory);
@@ -301,7 +366,8 @@ describe("durable Index control plane", () => {
     const migrated = openTestDatabase(databasePath);
     const observations = new SqliteSourceObservationStore(migrated);
     const observation = createSourceObservation({
-      sourceId: "src_durableobservation",
+      id: rootId("obs", "durable-observation"),
+      sourceId: rootId("src", "durable-observation"),
       capturedAt: NOW,
       contentDigest: `sha256:${"a".repeat(64)}`,
       payload: { kind: "test", value: "durable" },
@@ -437,6 +503,9 @@ describe("durable Index control plane", () => {
       ),
     );
     const scope = requiredManagedScope(retryUnit?.publishedScopes[0]);
+    const firstCheckpoint = requiredValue(
+      await first.checkpoints.findBySourceId(published.sourceId),
+    );
     const callsAfterPublish = embeddings.requests.length;
     firstDatabase.close();
 
@@ -456,6 +525,14 @@ describe("durable Index control plane", () => {
     });
 
     expect(repeated.status).toBe("unchanged");
+    expect(repeated.sourceId).toBe(published.sourceId);
+    expect(
+      (await second.checkpoints.findBySourceId(repeated.sourceId))?.documentId,
+    ).toBe(firstCheckpoint.documentId);
+    expect(published.sourceId).toMatch(/^src_.+-7[0-9a-f]{3}-[89ab]/);
+    expect(firstCheckpoint.documentId).toMatch(/^doc_.+-7[0-9a-f]{3}-[89ab]/);
+    expect(published.observationId).toMatch(/^obs_.+-7[0-9a-f]{3}-[89ab]/);
+    expect(publication.publicationId).toMatch(/^pub_.+-7[0-9a-f]{3}-[89ab]/);
     expect(repeated.publication?.publicationId).toBe(publication.publicationId);
     expect(hits.some((hit) => hit.text.includes("재시도"))).toBe(true);
     expect(embeddings.requests).toHaveLength(callsAfterPublish + 1);
@@ -1073,7 +1150,7 @@ function createDurableRuntime(
     observations: new SqliteSourceObservationStore(database),
     indexPublications: new SqliteIndexPublicationStore(database),
     stagingAttempts: new SqliteIndexStagingAttemptStore(database),
-    sourceIds: new UuidSourceIdGenerator(),
+    ids: new UuidV7RootIdGenerator(),
     ...(readyNotifier === undefined ? {} : { readyNotifier }),
     clock: () => NOW,
   });
@@ -1189,9 +1266,9 @@ function domainPublishedVersion(
   const manifest = {
     ...createIndexManifestFixture(),
     documentIndexId: `didx_${suffix}`,
-    sourceId: `src_${suffix}`,
-    observationId: `obs_${suffix}`,
-    documentId: `doc_${suffix}`,
+    sourceId: rootId("src", suffix),
+    observationId: rootId("obs", suffix),
+    documentId: rootId("doc", suffix),
     embeddingProfile: profile,
     scopeRevisions: [
       { scopeId: `scope_${suffix}`, scopeVersion: "scpv_aaaa" },

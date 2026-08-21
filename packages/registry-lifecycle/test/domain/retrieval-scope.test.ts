@@ -6,6 +6,7 @@ import {
   createIngestionPublicationFixture,
   createMultiScopePublicationFixture,
   createSqlPublicationFixture,
+  fixtureRootId,
 } from "../fixtures/ingestion-publication.fixture.js";
 
 function onlyScope(publication: ReturnType<typeof createSqlPublicationFixture>) {
@@ -28,8 +29,8 @@ describe("translatePublishedScope", () => {
       },
       documentIndex: {
         documentIndexId: "didx_payments",
-        sourceId: "src_payments",
-        documentId: "doc_payments",
+        sourceId: fixtureRootId("src", "payments"),
+        documentId: fixtureRootId("doc", "payments"),
         indexVersion: "idxv_aaaa",
       },
       selection: {

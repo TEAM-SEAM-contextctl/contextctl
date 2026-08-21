@@ -14,6 +14,7 @@ import {
   type IngestionPublicationStore,
 } from "../src/index.js";
 import { createDocumentFixture } from "./fixtures/document-fixture.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const BASE_TIME = "2026-08-19T02:00:00.000Z";
 const temporaryDirectories: string[] = [];
@@ -218,11 +219,15 @@ async function commitReadyPublication(
   const suffix = `ready${String(index)}`;
   const document = {
     ...createDocumentFixture(),
-    sourceId: `src_${suffix}`,
-    observationId: `obs_${suffix}`,
-    documentId: `doc_${suffix}`,
+    sourceId: rootId("src", suffix),
+    observationId: rootId("obs", suffix),
+    documentId: rootId("doc", suffix),
   };
-  const publication = buildEmptyMarkdownPublication({ document, producedAt });
+  const publication = buildEmptyMarkdownPublication({
+    publicationId: rootId("pub", suffix),
+    document,
+    producedAt,
+  });
   await store.prepareRecoveryIntent(publication);
   await store.commitReady(publication);
   return publication.publicationId;

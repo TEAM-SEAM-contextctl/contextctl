@@ -1,6 +1,6 @@
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
-import { isId } from "../domain/model-validation.js";
+import { isUuidV7Id } from "../domain/model-validation.js";
 import type {
   MarkdownPublicationCheckpoint,
   MarkdownPublicationCheckpointStore,
@@ -30,6 +30,7 @@ export class InMemoryMarkdownPublicationCheckpointStore
       return { status: "existing", checkpoint: structuredClone(existing) };
     }
     const checkpoint: MarkdownPublicationCheckpoint = { source, documentId };
+    assertCheckpointSnapshot(checkpoint);
     this.#bySourceId.set(source.id, structuredClone(checkpoint));
     this.#sourceIdByTargetKey.set(source.targetKey, source.id);
     return { status: "registered", checkpoint: structuredClone(checkpoint) };
@@ -75,8 +76,10 @@ function assertCheckpointSnapshot(
   checkpoint: MarkdownPublicationCheckpoint,
 ): void {
   if (
+    !isUuidV7Id(checkpoint.source.id, "src") ||
+    !isUuidV7Id(checkpoint.documentId, "doc") ||
     (checkpoint.observationId !== undefined &&
-      !isId(checkpoint.observationId, "obs")) ||
+      !isUuidV7Id(checkpoint.observationId, "obs")) ||
     (checkpoint.observationId !== undefined &&
       checkpoint.indexingSnapshot === undefined) ||
     (checkpoint.document === undefined) !==

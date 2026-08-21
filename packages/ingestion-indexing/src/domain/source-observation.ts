@@ -1,8 +1,7 @@
-import { stableIdentity } from "./revision-identity.js";
 import {
   isDigest,
-  isId,
   isIsoTimestamp,
+  isUuidV7Id,
 } from "./model-validation.js";
 
 export type SourceObservationPayload =
@@ -23,6 +22,7 @@ export interface SourceObservation {
 }
 
 export interface CreateSourceObservationInput {
+  readonly id: string;
   readonly sourceId: string;
   readonly capturedAt: string;
   readonly contentDigest: string;
@@ -43,10 +43,7 @@ export function createSourceObservation(
 ): SourceObservation {
   assertSourceObservationPayload(input.payload);
   const observation: SourceObservation = {
-    id: stableIdentity("obs", {
-      sourceId: input.sourceId,
-      contentDigest: input.contentDigest,
-    }),
+    id: input.id,
     sourceId: input.sourceId,
     capturedAt: input.capturedAt,
     contentDigest: input.contentDigest,
@@ -61,14 +58,9 @@ export function assertValidSourceObservation(
 ): void {
   try {
     assertSourceObservationPayload(observation.payload);
-    const expectedId = stableIdentity("obs", {
-      sourceId: observation.sourceId,
-      contentDigest: observation.contentDigest,
-    });
     if (
-      !isId(observation.id, "obs") ||
-      observation.id !== expectedId ||
-      !isId(observation.sourceId, "src") ||
+      !isUuidV7Id(observation.id, "obs") ||
+      !isUuidV7Id(observation.sourceId, "src") ||
       !isIsoTimestamp(observation.capturedAt) ||
       !isDigest(observation.contentDigest)
     ) {

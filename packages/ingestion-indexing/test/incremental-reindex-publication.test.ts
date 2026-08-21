@@ -32,6 +32,7 @@ import {
   type SemanticUnitIdSource,
   type VectorIndexPort,
 } from "../src/index.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const PROFILE: EmbeddingProfile = {
   id: "document-test",
@@ -225,6 +226,7 @@ describe("incremental reindex publication", () => {
     const current = createSnapshot(MODIFIED, "current", previous);
     const first = await harness.reindex({ current: previous });
     const initialPublication = buildMarkdownPublication({
+      publicationId: rootId("pub", "inherit-initial"),
       document: previous.document,
       semanticUnits: previous.semanticUnits,
       manifest: first.publication.manifest,
@@ -233,6 +235,7 @@ describe("incremental reindex publication", () => {
 
     const second = await harness.reindex({ previous, current });
     const publication = buildMarkdownPublication({
+      publicationId: rootId("pub", "inherit-current"),
       document: current.document,
       semanticUnits: current.semanticUnits,
       manifest: second.publication.manifest,
@@ -267,6 +270,7 @@ describe("incremental reindex publication", () => {
     const current = createSnapshot(TITLE_CHANGED, "current", previous);
     const first = await harness.reindex({ current: previous });
     const initialPublication = buildMarkdownPublication({
+      publicationId: rootId("pub", "title-initial"),
       document: previous.document,
       semanticUnits: previous.semanticUnits,
       manifest: first.publication.manifest,
@@ -275,6 +279,7 @@ describe("incremental reindex publication", () => {
 
     const second = await harness.reindex({ previous, current });
     const publication = buildMarkdownPublication({
+      publicationId: rootId("pub", "title-current"),
       document: current.document,
       semanticUnits: current.semanticUnits,
       manifest: second.publication.manifest,
@@ -347,6 +352,7 @@ describe("incremental reindex publication", () => {
     const error = await Promise.resolve()
       .then(() =>
         buildMarkdownPublication({
+          publicationId: rootId("pub", "fact-limit"),
           document,
           semanticUnits: snapshot.semanticUnits,
           manifest: indexed.publication.manifest,
@@ -520,15 +526,18 @@ function createSnapshot(
   embeddingProfile: EmbeddingProfile = PROFILE,
   observationSeed: string = seed,
 ): DocumentIndexingSnapshot {
-  const observationId = `obs_${observationSeed}`;
+  const observationId = rootId("obs", observationSeed);
   const capture = new MarkdownCapture({
     parser: new RemarkMarkdownParser(),
     ids: sequentialBlockIds(seed),
   });
   const document = capture.capture({
-    source: { id: "src_incremental", targetKey: "file:/runbook.md" },
+    source: {
+      id: rootId("src", "incremental"),
+      targetKey: "file:/runbook.md",
+    },
     observationId,
-    documentId: "doc_runbook",
+    documentId: rootId("doc", "runbook"),
     snapshot: {
       kind: "markdown",
       targetKey: "file:/runbook.md",

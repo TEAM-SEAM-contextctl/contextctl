@@ -42,12 +42,12 @@ describe("Published document Scope contract fixture", () => {
       {
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
-        documentId: "doc_payments",
+        documentId: "doc_01890f5c-7b1a-7002-8000-000000000002",
       },
       {
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
-        documentId: "doc_payments",
+        documentId: "doc_01890f5c-7b1a-7002-8000-000000000002",
         semanticUnitIds: [
           "unit_payment_failures",
           "unit_payment_retries",

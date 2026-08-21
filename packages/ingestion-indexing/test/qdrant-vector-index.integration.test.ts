@@ -7,6 +7,7 @@ import {
   type EmbeddingProfile,
   type VectorIndexRecord,
 } from "../src/index.js";
+import { rootId } from "./fixtures/root-id-fixture.js";
 
 const qdrantUrl = process.env.CONTEXTCTL_QDRANT_URL;
 const integration = qdrantUrl === undefined ? describe.skip : describe;
@@ -57,14 +58,16 @@ integration("QdrantVectorIndexAdapter integration", () => {
       scope: {
         documentIndexId: "didx_payments",
         indexVersion: "idxv_aaaa",
-        documentId: "doc_payments",
+        documentId: rootId("doc", "payments"),
         semanticUnitIds: ["unit_refunds"],
       },
       queryVector: [1, 0, 0],
       limit: 10,
     });
     expect(paymentsOnly).toHaveLength(1);
-    expect(paymentsOnly[0]?.metadata.documentId).toBe("doc_payments");
+    expect(paymentsOnly[0]?.metadata.documentId).toBe(
+      rootId("doc", "payments"),
+    );
     expect(
       await adapter.listVersionRecords({
         accessHandle: prepared.accessHandle,
@@ -132,7 +135,7 @@ integration("QdrantVectorIndexAdapter integration", () => {
         scope: {
           documentIndexId: "didx_payments",
           indexVersion: "idxv_aaaa",
-          documentId: "doc_payments",
+          documentId: rootId("doc", "payments"),
         },
         queryVector: [1, 0, 0],
         limit: 10,
@@ -144,7 +147,7 @@ integration("QdrantVectorIndexAdapter integration", () => {
         scope: {
           documentIndexId: "didx_inventory",
           indexVersion: "idxv_aaaa",
-          documentId: "doc_inventory",
+          documentId: rootId("doc", "inventory"),
         },
         queryVector: [1, 0, 0],
         limit: 10,
@@ -177,9 +180,9 @@ function record(
       payloadSchemaVersion: 2,
       stateNamespaceId,
       securityDomain,
-      sourceId: `src_${document}`,
-      observationId: `obs_${document}`,
-      documentId: `doc_${document}`,
+      sourceId: rootId("src", document),
+      observationId: rootId("obs", document),
+      documentId: rootId("doc", document),
       documentIndexId,
       indexVersion,
       semanticUnitId: `unit_${unit}`,

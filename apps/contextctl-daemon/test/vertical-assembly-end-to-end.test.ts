@@ -377,7 +377,10 @@ describe("daemon vertical assembly", () => {
 function documentIndexIdOf(result: PublishMarkdownSourceResult): string {
   for (const unit of result.publication?.knowledgeUnits ?? []) {
     for (const scope of unit.publishedScopes) {
-      if (scope.kind === "managed_document") {
+      if (
+        scope.kind === "managed_document" &&
+        scope.selector.kind === "document"
+      ) {
         return scope.documentIndex.documentIndexId;
       }
     }
@@ -390,7 +393,10 @@ function firstManagedScopeRef(
 ): { readonly scopeId: string; readonly scopeVersion: string } {
   for (const unit of result.publication?.knowledgeUnits ?? []) {
     for (const scope of unit.publishedScopes) {
-      if (scope.kind === "managed_document") {
+      if (
+        scope.kind === "managed_document" &&
+        scope.selector.kind === "document"
+      ) {
         return { scopeId: scope.scopeId, scopeVersion: scope.scopeVersion };
       }
     }

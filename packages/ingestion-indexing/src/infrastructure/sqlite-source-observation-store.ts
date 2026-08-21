@@ -4,7 +4,11 @@ import {
   assertValidSourceObservation,
   type SourceObservation,
 } from "../domain/source-observation.js";
-import { isId, isIsoTimestamp } from "../domain/model-validation.js";
+import {
+  isId,
+  isIsoTimestamp,
+  isUuidV7Id,
+} from "../domain/model-validation.js";
 import {
   canonicalDigest,
   canonicalJson,
@@ -53,7 +57,6 @@ export class SqliteSourceObservationStore implements SourceObservationStore {
           | undefined;
         const stored = existing === undefined ? candidate : parseRow(existing);
         if (
-          stored.id !== candidate.id ||
           stored.sourceId !== candidate.sourceId ||
           stored.contentDigest !== candidate.contentDigest
         ) {
@@ -425,17 +428,17 @@ function assertCandidateInput(
 }
 
 function assertLeaseIdentity(leaseId: string, observationId: string): void {
-  if (!isId(leaseId, "lease") || !isId(observationId, "obs")) {
+  if (!isId(leaseId, "lease") || !isUuidV7Id(observationId, "obs")) {
     throw new SourceObservationStoreConflict();
   }
 }
 
 function assertObservationId(value: string): void {
-  if (!isId(value, "obs")) throw new SourceObservationStoreConflict();
+  if (!isUuidV7Id(value, "obs")) throw new SourceObservationStoreConflict();
 }
 
 function assertSourceId(value: string): void {
-  if (!isId(value, "src")) throw new SourceObservationStoreConflict();
+  if (!isUuidV7Id(value, "src")) throw new SourceObservationStoreConflict();
 }
 
 function mapStoreError(error: unknown): Error {

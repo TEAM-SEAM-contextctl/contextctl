@@ -13,7 +13,10 @@ import {
   createDocumentCardVersion,
   createHttpCardVersion,
 } from "../fixtures/card-version.fixture.js";
-import { createIngestionPublicationFixture } from "../fixtures/ingestion-publication.fixture.js";
+import {
+  createIngestionPublicationFixture,
+  fixtureRootId,
+} from "../fixtures/ingestion-publication.fixture.js";
 
 // Taken from the fixture rather than written down: v2 refuses a unit whose
 // digest is not the canonical digest of its own content, so a change fixture
@@ -60,8 +63,8 @@ function createUpdatePublication(): IngestionPublication {
 
   return parseIngestionPublication({
     ...initial,
-    publicationId: "pub_second",
-    previousPublicationId: "pub_initial",
+    publicationId: fixtureRootId("pub", "second"),
+    previousPublicationId: fixtureRootId("pub", "initial"),
     knowledgeUnits: [unit],
     changes: [
       {
@@ -81,8 +84,8 @@ function createRemovalPublication(): IngestionPublication {
 
   return parseIngestionPublication({
     ...initial,
-    publicationId: "pub_removal",
-    previousPublicationId: "pub_initial",
+    publicationId: fixtureRootId("pub", "removal"),
+    previousPublicationId: fixtureRootId("pub", "initial"),
     knowledgeUnits: [],
     changes: [
       {
@@ -121,7 +124,7 @@ describe("assessPublicationImpact", () => {
         kind: "card_impact_assessed",
         cardId: "unit_payment_failures",
         occurredAt: "2026-08-03T00:00:00.000Z",
-        publicationId: "pub_second",
+        publicationId: fixtureRootId("pub", "second"),
         decision: "review",
         reasons: [
           {

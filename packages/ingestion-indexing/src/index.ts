@@ -349,6 +349,10 @@ export {
   type UuidSourceIdGeneratorOptions,
 } from "./infrastructure/uuid-source-id-generator.js";
 export {
+  UuidV7RootIdGenerator,
+  type UuidV7RootIdGeneratorOptions,
+} from "./infrastructure/uuid-v7-root-id-generator.js";
+export {
   type KnowledgeSource,
   type ObservationCapability,
   type SourceDiagnostic,
@@ -442,6 +446,7 @@ export {
   type PreparePublicationRecoveryIntentResult,
   type PublicationRecoveryIntent,
   type PublicationRecoveryIntentState,
+  type PublicationRootIdGenerator,
   type PublicationReadyNotifier,
   type RegisterMarkdownCheckpointResult,
   type ReschedulePublicationReadyDeliveryInput,
@@ -472,6 +477,7 @@ export {
   type SourceChangeSignal,
   type SourceConfigurationResolver,
   type SourceIdGenerator,
+  type SourceRootIdGenerator,
   type ObservedSourceChangeSignal,
   type SourceObservationAttempt,
   type ValidatedSourceConfiguration,

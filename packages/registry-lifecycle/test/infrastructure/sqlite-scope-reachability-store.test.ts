@@ -21,6 +21,7 @@ import { SqliteConsumerCheckpointStore } from "../../src/infrastructure/sqlite/s
 import { SqliteScopeReachabilityStore } from "../../src/infrastructure/sqlite/sqlite-scope-reachability-store.js";
 import type { Clock } from "../../src/ports/clock.js";
 import { createDocumentCardVersion } from "../fixtures/card-version.fixture.js";
+import { fixtureRootId } from "../fixtures/ingestion-publication.fixture.js";
 
 const meaning = {
   description: "결제 실패 재시도 정책",
@@ -84,8 +85,8 @@ describe("SqliteScopeReachabilityStore", () => {
     // consumed, so a Scope observed through a Card Version already knows it.
     await cards.saveCard(servingCard(), []);
     await checkpoints.markProcessed({
-      sourceId: "src_payments",
-      publicationId: "pub_initial",
+      sourceId: fixtureRootId("src", "payments"),
+      publicationId: fixtureRootId("pub", "initial"),
     });
 
     const report = await buildReachabilityReport({
@@ -95,7 +96,7 @@ describe("SqliteScopeReachabilityStore", () => {
       publications: emptyFeed,
     });
 
-    expect(report.scopes[0]?.sourceId).toBe("src_payments");
+    expect(report.scopes[0]?.sourceId).toBe(fixtureRootId("src", "payments"));
   });
 
   it("falls back to the Publication id when no claim row names the Source", async () => {
@@ -111,7 +112,7 @@ describe("SqliteScopeReachabilityStore", () => {
       publications: emptyFeed,
     });
 
-    expect(report.scopes[0]?.sourceId).toBe("pub_initial");
+    expect(report.scopes[0]?.sourceId).toBe(fixtureRootId("pub", "initial"));
   });
 
   it("reports a served Scope as reachable", async () => {

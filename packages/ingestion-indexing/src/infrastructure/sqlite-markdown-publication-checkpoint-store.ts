@@ -5,7 +5,7 @@ import {
   validateNormalizedDocument,
 } from "../domain/document-model.js";
 import { assertValidDocumentIndexingSnapshot } from "../domain/document-incremental-update.js";
-import { isId } from "../domain/model-validation.js";
+import { isUuidV7Id } from "../domain/model-validation.js";
 import type { KnowledgeSource } from "../domain/knowledge-source.js";
 import type {
   MarkdownPublicationCheckpoint,
@@ -167,14 +167,14 @@ function parseCheckpoint(input: unknown): MarkdownPublicationCheckpoint {
   }
   const candidate = input as unknown as MarkdownPublicationCheckpoint;
   if (
-    !isNonEmptyString(candidate.source.id) ||
+    !isUuidV7Id(candidate.source.id, "src") ||
     !isNonEmptyString(candidate.source.sourceType) ||
     !isNonEmptyString(candidate.source.displayName) ||
     !isNonEmptyString(candidate.source.targetKey) ||
     !isNonEmptyString(candidate.source.configReference) ||
-    !isNonEmptyString(candidate.documentId) ||
+    !isUuidV7Id(candidate.documentId, "doc") ||
     (candidate.observationId !== undefined &&
-      !isId(candidate.observationId, "obs")) ||
+      !isUuidV7Id(candidate.observationId, "obs")) ||
     (candidate.observationId !== undefined &&
       candidate.indexingSnapshot === undefined) ||
     (candidate.previousChangeToken !== undefined &&

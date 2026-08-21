@@ -46,6 +46,7 @@ import type {
   MarkdownPublicationStageEvent,
   MarkdownPublicationStageStatus,
   PublicationRecoveryIntent,
+  PublicationRootIdGenerator,
 } from "../ports/markdown-publication.js";
 import type { SourceObservationStore } from "../ports/source-observation.js";
 
@@ -107,6 +108,7 @@ export interface MarkdownPublicationWorkflowDependencies {
   ) => NormalizedDocument;
   readonly documentReindexer: IncrementalDocumentReindexer;
   readonly publications: IngestionPublicationStore;
+  readonly ids: PublicationRootIdGenerator;
   readonly events: MarkdownPublicationEventSink;
   readonly embeddingProfile: EmbeddingProfile;
   /** Stable identity of the durable daemon state this workflow belongs to. */
@@ -191,10 +193,7 @@ export class MarkdownPublicationWorkflow {
       );
       return this.#dependencies.checkpoints.register(
         candidate,
-        stableIdentity("doc", {
-          sourceId: candidate.id,
-          targetKey: candidate.targetKey,
-        }),
+        this.#dependencies.ids.nextDocumentId(),
       );
     });
     let checkpoint = registration.checkpoint;
@@ -506,10 +505,16 @@ export class MarkdownPublicationWorkflow {
 
     const previousSemanticUnits = checkpointSemanticUnits(checkpoint);
     let recoveryIntent = input.recoveryIntent;
+    let publicationId = recoveryIntent?.publication.publicationId;
+    const nextPublicationId = (): string => {
+      publicationId ??= this.#dependencies.ids.nextPublicationId();
+      return publicationId;
+    };
     const buildIndexedPublication = (
       indexPublication: PreparedReindexDocumentPublication,
     ): IngestionPublication =>
       buildMarkdownPublication({
+        publicationId: nextPublicationId(),
         document,
         semanticUnits,
         manifest: indexPublication.publication.manifest,
@@ -567,6 +572,7 @@ export class MarkdownPublicationWorkflow {
       const candidate =
         indexed === undefined
           ? buildEmptyMarkdownPublication({
+              publicationId: nextPublicationId(),
               document,
               producedAt:
                 recoveryIntent?.publication.producedAt ?? this.#clock(),

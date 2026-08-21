@@ -16,6 +16,7 @@ import { openRegistryDatabase } from "../../src/infrastructure/sqlite/registry-d
 import { SqliteCardStore } from "../../src/infrastructure/sqlite/sqlite-card-store.js";
 import { SqliteLifecycleEventStore } from "../../src/infrastructure/sqlite/sqlite-lifecycle-event-store.js";
 import { createDocumentCardVersion } from "../fixtures/card-version.fixture.js";
+import { fixtureRootId } from "../fixtures/ingestion-publication.fixture.js";
 
 const meaning = {
   description: "결제 실패 재시도 정책",
@@ -141,8 +142,8 @@ describe("SqliteCardStore", () => {
         },
         documentIndex: {
           documentIndexId: "didx_payments",
-          sourceId: "src_payments",
-          documentId: "doc_payments",
+          sourceId: fixtureRootId("src", "payments"),
+          documentId: fixtureRootId("doc", "payments"),
           indexVersion: "idxv_aaaa",
         },
         selection: {
