@@ -36,9 +36,9 @@ contextctl status --json   # 감시 도구가 읽는 형태
 
 ```
 resolve           ready      승인 Card 1개로 답할 수 있습니다. Registry 지연은 이 판정에 영향을 주지 않습니다.
-registry          degraded   소비하지 않은 Publication 이 있는 Source 1개: src_local1 (가장 오래된 지연 6분)
+registry          degraded   소비하지 않은 Publication 이 있는 Source 1개: src_01a02445-0d89-7c22-… (가장 오래된 지연 6분)
 selection_assets  ready      임베딩 자산을 쓸 수 있습니다: ~/.contextctl/embedding-assets/revisions/eb09231254…
-ingestion         degraded   게시가 끝나지 않은 Source 1개: src_local1 — contextctl ingest 를 다시 실행하면 이어서 마칩니다.
+ingestion         degraded   게시가 끝나지 않은 Source 1개: src_01a02445-0d89-7c22-… — contextctl ingest 를 다시 실행하면 이어서 마칩니다.
 
 서비스할 수 없는 lane 은 없습니다.
 ```
@@ -97,17 +97,51 @@ contextctl reachability --state orphaned     # 그 상태의 Scope 목록과 이
 
 ## 색인이 비었을 때
 
-Qdrant 없이 `ingest` 한 뒤 나중에 Qdrant 를 붙이면 이 상태가 됩니다. **승인된 Card 는 있는데
-검색할 벡터가 없습니다.**
+**승인된 Card 는 있는데 그 Card 가 가리키는 벡터가 없는** 상태입니다. Qdrant 컬렉션을 지웠거나,
+다른 Qdrant 를 가리키게 바꿨을 때 이렇게 됩니다. (주소를 아예 비우는 경우는 이제 시작 단계에서
+거부되므로 여기 오지 않습니다 → [설정](configuration.md#벡터-색인))
 
-`ingest` 를 다시 해도 풀리지 않습니다. `ingest` 는 문서가 바뀌었는지만 보고, 색인이 존재하는지는
-보지 않기 때문입니다. `source remove` 후 다시 `add` 해도 같은 판단이 나옵니다.
+질의는 조용히 비지 않고 항목마다 실패를 알립니다.
 
-**CLI 가 이 상황에서 절차를 직접 알려줍니다.** 요약하면 Ingestion 저장소를 지우고 다시
-수집하는 것이고, 이때 **승인은 유지됩니다** — 게시물 ID 가 문서 내용에서 계산되므로 같은 문서는
-같은 ID 를 만들고 Registry 가 이미 소비한 것으로 알아봅니다.
+```
+판정 집계: 승인 1 · 보류 0 · 기각 0
+  [1] managed_document · Scope scope_…@scpv_…
+    상태: failed (실행자 contextctl)
+    실패 코드: index_binding_unavailable
+    실패 단계: managed_search
+    재시도 가능(retriable): false
+```
 
-> ★ `registry.db` 는 지우지 마십시오. 그쪽을 지우면 승인이 사라져 다시 승인해야 합니다.
+`ingest` 를 다시 해도 풀리지 않습니다. `ingest` 는 **문서가 바뀌었는지만** 보고 색인이 있는지는
+보지 않으므로 `unchanged` 로 끝납니다. `source remove` 후 다시 `add` 해도 같은 판단입니다.
+
+### 벗어나는 방법
+
+Ingestion 저장소를 지우고 다시 수집하면 색인이 다시 만들어집니다.
+
+```bash
+contextctl paths                    # Ingestion 저장소 위치 확인
+rm ~/.contextctl/ingestion.db       # 기본 경로일 때
+contextctl ingest
+```
+
+**승인은 따라오지 않습니다.** 저장소를 지우면 Source 와 문서가 새 식별자를 받으므로, 같은 파일이
+새 Card 로 다시 들어옵니다. 그래서 이렇게 됩니다.
+
+- 새 Card 가 승인 대기로 생깁니다 — 기존 Card 와 내용은 같고 식별자만 다릅니다
+- 이전에 승인한 Card 는 남아 있지만 가리키던 Scope 가 더 이상 게시되지 않아
+  `scope_not_published` 로 실패합니다
+
+정리 순서는 이렇습니다.
+
+```bash
+contextctl cards list                     # 새로 생긴 Card 확인
+contextctl cards approve <새 cardId>       # 답할 수 있게 만든다
+contextctl cards disable <옛 cardId>       # 죽은 Scope 를 가리키는 것을 내린다
+```
+
+> ★ `registry.db` 는 지우지 마십시오. 승인 이력 전체가 사라집니다. 위 절차는 그것을 남긴 채
+> 새 Card 로 갈아타는 방법이고, 대가는 **한 번의 재승인**입니다.
 
 ---
 
@@ -149,8 +183,9 @@ rm ~/.contextctl/ingestion.db     # 관측·게시 이력 — 같은 문서를 �
 rm ~/.contextctl/sources.json     # 등록한 문서 목록
 ```
 
-되돌릴 수 없습니다. 셋은 따로 지울 수 있습니다 — Card 는 두고 수집만 초기화할 수 있습니다.
-색인만 다시 만들려는 것이라면 [색인이 비었을 때](#색인이-비었을-때)를 보십시오.
+되돌릴 수 없습니다. 셋은 따로 지울 수 있습니다. 다만 `ingestion.db` 만 지우는 것도 공짜가
+아닙니다 — 문서가 새 식별자로 다시 들어와 재승인이 필요합니다
+→ [색인이 비었을 때](#색인이-비었을-때)
 
 ### ④ Qdrant 컬렉션 — ★ contextctl 이 띄운 서버가 아닙니다
 
