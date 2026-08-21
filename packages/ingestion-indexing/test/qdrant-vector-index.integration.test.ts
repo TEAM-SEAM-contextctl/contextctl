@@ -307,9 +307,9 @@ function fixedEmbeddingServer(
       response.end(
         JSON.stringify({
           model: payload.model,
-          data: payload.input.map((_text, index) => ({
+          data: payload.input.map((text, index) => ({
             index,
-            embedding: [1, 0, 0],
+            embedding: text.includes("재시도") ? [1, 0, 0] : [0, 1, 0],
           })),
         }),
       );
