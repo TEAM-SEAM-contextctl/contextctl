@@ -17,6 +17,10 @@ import type {
   DocumentSemanticUnit,
   NormalizedDocument,
 } from "../domain/document-model.js";
+import {
+  derivePublicationKeywords,
+  DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION,
+} from "../domain/derived-publication-keywords.js";
 import type { IndexManifest } from "../domain/index-manifest.js";
 import { canonicalJson, stableIdentity } from "../domain/revision-identity.js";
 
@@ -188,6 +192,10 @@ function toPublishedKnowledgeUnit(
   if (unit.kind !== "document" && unit.title !== undefined) {
     facts.push({ name: "section.label", value: unit.title });
   }
+  const derivedKeywords = derivePublicationKeywords(blocks);
+  if (derivedKeywords.length > 0) {
+    facts.push({ name: "keywords.derived", value: [...derivedKeywords] });
+  }
   facts.sort((left, right) => compareText(left.name, right.name));
   assertFactLimits(facts);
   const published: Omit<PublishedKnowledgeUnit, "contentDigest"> = {
@@ -212,6 +220,7 @@ function toPublishedKnowledgeUnit(
         lineage: manifest.lineagePolicyVersion,
         normalization: manifest.normalizationPolicyVersion,
         payload: String(manifest.payloadSchemaVersion),
+        "schema.extraction": DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION,
         segmentation: manifest.segmentationPolicyVersion,
         chunking: manifest.chunkPolicyVersion,
         "text.measure": manifest.textMeasureProfileVersion,

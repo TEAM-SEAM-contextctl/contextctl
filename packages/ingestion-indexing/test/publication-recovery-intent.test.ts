@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION,
+} from "../src/domain/derived-publication-keywords.js";
+import {
   InMemoryIngestionPublicationStore,
   IngestionPublicationCommitIncomplete,
   IngestionPublicationStoreConflict,
@@ -50,6 +53,22 @@ describe("Publication recovery intent", () => {
     });
 
     expect(reordered).toEqual(ordered);
+    const section = ordered.knowledgeUnits.find(
+      (unit) => unit.id === "unit_payment_failures",
+    );
+    expect(section?.facts).toContainEqual({
+      name: "keywords.derived",
+      value: ["after", "failed", "five", "minutes", "payments", "retry"],
+    });
+    expect(section?.provenance.policyVersions["schema.extraction"]).toBe(
+      DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION,
+    );
+    const documentRoot = ordered.knowledgeUnits.find(
+      (unit) => unit.id === "unit_payments",
+    );
+    expect(
+      documentRoot?.facts.some((fact) => fact.name === "keywords.derived"),
+    ).toBe(false);
   });
 
   it.each(["memory", "sqlite"] as const)(
