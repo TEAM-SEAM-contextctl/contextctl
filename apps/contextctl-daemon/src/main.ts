@@ -665,7 +665,10 @@ function cardProviderOverride(
     return options.cardEmbeddingProvider;
   }
   if (cardProfileExecutionKind(profile) === undefined) {
-    return new DeterministicCardEmbeddingAdapter();
+    // Given its profile so it states it and answers under no other, the way a
+    // production adapter does; the network-free composition then binds it by
+    // the same rule instead of by kind alone.
+    return new DeterministicCardEmbeddingAdapter({ profile });
   }
   return undefined;
 }

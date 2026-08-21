@@ -119,6 +119,9 @@ export function localCardProfile(id = "card-granite-fake-v1"): CardSelectionProf
 export function remoteCardProfile(id = "card-hosted-fake-v1"): CardSelectionProfile {
   return {
     ...(localCardProfile(id) as unknown as Record<string, unknown>),
+    // A remote Card profile states provider_defined pooling: the provider, not
+    // the adapter, decides how tokens become one vector.
+    pooling: "provider_defined",
     execution: {
       kind: "remote",
       adapter: "openai-compatible",

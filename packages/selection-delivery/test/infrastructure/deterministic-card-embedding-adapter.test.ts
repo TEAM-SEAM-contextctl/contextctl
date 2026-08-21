@@ -2,11 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import { cosineSimilarity } from "../../src/domain/card-candidate-index.js";
 import {
-  assertCardEmbeddingProviderKind,
   DeterministicCardEmbeddingAdapter,
 } from "../../src/infrastructure/deterministic-card-embedding-adapter.js";
-import { CardEmbeddingFault } from "../../src/ports/card-embedding.js";
-import { TEST_CARD_PROFILE } from "../fixtures/card-embedding.fixture.js";
+import {
+  assertCardEmbeddingProviderBinding,
+  CardEmbeddingFault,
+} from "../../src/ports/card-embedding.js";
+import {
+  TEST_CARD_PROFILE,
+  TEST_PRODUCTION_CARD_PROFILE,
+} from "../fixtures/card-embedding.fixture.js";
 
 const adapter = new DeterministicCardEmbeddingAdapter();
 
@@ -93,11 +98,32 @@ describe("DeterministicCardEmbeddingAdapter", () => {
 
   it("is a test provider, and says so", () => {
     expect(adapter.providerKind).toBe("test");
+    // Without a profile it is bindable to nothing: a binding needs both the
+    // kind and the family the provider serves.
+    expect(adapter.profile).toBeUndefined();
+    expect(() => assertCardEmbeddingProviderBinding(TEST_CARD_PROFILE, adapter)).toThrow(
+      /states the profile/,
+    );
+  });
+
+  it("binds to the profile it was given, and refuses every other", async () => {
+    const bound = new DeterministicCardEmbeddingAdapter({ profile: TEST_CARD_PROFILE });
+
+    expect(bound.profile).toBe(TEST_CARD_PROFILE);
+    expect(() => assertCardEmbeddingProviderBinding(TEST_CARD_PROFILE, bound)).not.toThrow();
     expect(() =>
-      assertCardEmbeddingProviderKind(TEST_CARD_PROFILE, adapter, "local"),
-    ).toThrow(TypeError);
+      assertCardEmbeddingProviderBinding({ ...TEST_CARD_PROFILE, version: "other" }, bound),
+    ).toThrow(/does not match/);
+    // A profile that pins an artifact refuses a test provider on kind alone.
     expect(() =>
-      assertCardEmbeddingProviderKind(TEST_CARD_PROFILE, adapter, "test"),
-    ).not.toThrow();
+      assertCardEmbeddingProviderBinding(TEST_PRODUCTION_CARD_PROFILE, bound),
+    ).toThrow(/requires a local provider/);
+
+    await expect(
+      bound.embed({
+        profile: { ...TEST_CARD_PROFILE, version: "other" },
+        inputs: [{ key: "k0", text: "x" }],
+      }),
+    ).rejects.toMatchObject({ name: "CardEmbeddingFault", code: "invalid_request" });
   });
 });

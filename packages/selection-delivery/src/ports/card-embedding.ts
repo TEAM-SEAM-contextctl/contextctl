@@ -1,4 +1,8 @@
-import type { CardSelectionProfile } from "../domain/card-selection-profile.js";
+import {
+  cardSelectionProfilesMatch,
+  isCardSelectionEmbeddingProfile,
+  type CardSelectionProfile,
+} from "../domain/card-selection-profile.js";
 
 /**
  * Turns Card selection text and query text into vectors.
@@ -26,6 +30,17 @@ export interface CardEmbeddingPort {
    * never valid under a profile that pins an artifact.
    */
   readonly providerKind?: CardEmbeddingProviderKind;
+  /**
+   * The exact vector family this provider serves.
+   *
+   * Kind alone is not a binding: two remote endpoints, or two local artifacts,
+   * report the same kind and produce incompatible vectors. A production
+   * adapter states the whole profile it was built for, and composition compares
+   * it field for field with the profile the index is keyed on before anything
+   * is embedded — see `assertCardEmbeddingProviderBinding`. A test double may
+   * omit it, and is then bindable to nothing but a test profile.
+   */
+  readonly profile?: CardSelectionProfile;
   embed(
     request: CardEmbeddingRequest,
   ): Promise<readonly CardEmbeddingOutput[]>;
@@ -60,12 +75,23 @@ export interface CardEmbeddingOutput {
   readonly vector: readonly number[];
 }
 
+/**
+ * Why a provider could not answer.
+ *
+ * `authentication_failed` and `rate_limited` are facts about a remote
+ * provider's account and quota. They are in this vocabulary because a Card
+ * selection can be served by a remote endpoint, and an operator diagnosing a
+ * 401 needs to see a 401 rather than a generic unavailability — the two are
+ * fixed in different places. A local provider never raises either.
+ */
 export type CardEmbeddingFaultCode =
+  | "authentication_failed"
   | "embedding_artifact_unavailable"
   | "input_limit_exceeded"
   | "invalid_request"
   | "invalid_response"
-  | "provider_unavailable";
+  | "provider_unavailable"
+  | "rate_limited";
 
 /**
  * A failure of the provider itself, as the provider states it.
@@ -84,5 +110,44 @@ export class CardEmbeddingFault extends Error {
     this.name = "CardEmbeddingFault";
     this.code = code;
     this.retriable = retriable;
+  }
+}
+
+/**
+ * Refuses a provider that is not bound to exactly this profile.
+ *
+ * Two checks, both required. The kind has to be the kind the profile's
+ * execution declares — `test` for a profile that pins no artifact — so hash
+ * vectors are never served under a model's name. And the provider has to state
+ * a profile that matches this one field for field, so two providers of one
+ * kind cannot be swapped for each other: a local adapter over a different
+ * artifact digest, or a remote endpoint serving a different model, would
+ * produce vectors the candidate index compares as if they were comparable.
+ *
+ * Checked where the graph is assembled rather than on the first query, so a
+ * wrong binding ends the assembly instead of producing an index nothing can be
+ * scored against.
+ */
+export function assertCardEmbeddingProviderBinding(
+  profile: CardSelectionProfile,
+  provider: CardEmbeddingPort,
+): void {
+  const expected: CardEmbeddingProviderKind = isCardSelectionEmbeddingProfile(profile)
+    ? profile.execution.kind
+    : "test";
+  if (provider.providerKind !== expected) {
+    throw new TypeError(
+      `Card selection profile ${profile.id} requires a ${expected} provider, received ${String(provider.providerKind)}`,
+    );
+  }
+  if (provider.profile === undefined) {
+    throw new TypeError(
+      `Card selection profile ${profile.id} requires a provider that states the profile it serves`,
+    );
+  }
+  if (!cardSelectionProfilesMatch(provider.profile, profile)) {
+    throw new TypeError(
+      `Card selection profile ${profile.id} does not match the profile the provider serves (${provider.profile.id})`,
+    );
   }
 }

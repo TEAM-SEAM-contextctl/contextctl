@@ -7,7 +7,7 @@ import {
   type QueryEmbeddingProviderRegistration,
 } from "@contextctl/ingestion-indexing";
 import {
-  assertCardEmbeddingProviderKind,
+  assertCardEmbeddingProviderBinding,
   isCardSelectionEmbeddingProfile,
   type CardEmbeddingPort,
   type CardSelectionProfile,
@@ -327,15 +327,17 @@ export function composeCardEmbedding(
   );
 
   if (input.providerOverride !== undefined) {
-    // Same check as the document layer, for the same reason: a production Card
-    // profile refuses a provider whose kind does not match, so a deterministic
-    // adapter cannot reach a Card index whose profile claims a model.
+    // Same check as the document layer, for the same reason, and one step
+    // stricter: a production Card profile refuses a provider whose kind does
+    // not match, so a deterministic adapter cannot reach a Card index whose
+    // profile claims a model — and it refuses one of the right kind over a
+    // different profile, so a local adapter over another artifact or a remote
+    // endpoint serving another model cannot fill the index with vectors from
+    // another space. A profile without execution semantics is left to the
+    // caller, which is what lets a test double that states no profile be
+    // injected under one.
     if (isCardSelectionEmbeddingProfile(profile)) {
-      assertCardEmbeddingProviderKind(
-        profile,
-        input.providerOverride,
-        profile.execution.kind,
-      );
+      assertCardEmbeddingProviderBinding(profile, input.providerOverride);
     }
     return {
       provider: input.providerOverride,
