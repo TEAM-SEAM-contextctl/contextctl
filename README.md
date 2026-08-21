@@ -50,7 +50,7 @@ Keeping the responsibility narrow is the design, not a missing feature.
 | | |
 |---|---|
 | **Node.js** | **24 or newer** — the stores are built on `node:sqlite`, first shipped in Node 24 |
-| **Qdrant** | Effectively required. Without it the index lives only in process memory |
+| **Qdrant** | Required. `ingest`, `query` and `serve` refuse to start without `CONTEXTCTL_QDRANT_URL` |
 | **Disk** | **396.1 MiB** for the embedding model |
 
 > ★ **Using `fnm`, `nvm` or `asdf`?** They install into the **active Node
@@ -103,12 +103,12 @@ contextctl query "How do I take a half day?"
 nothing. A Card you do not approve is never used, and one you did approve can be
 withdrawn with `cards disable` and approved again later — without re-capturing.
 
-> ★ **Without a Card meaning generator configured, step 6 returns nothing.** The
-> default generator uses no model, so a Card's keywords are schema field names
-> with no words in common with a natural-language question. The reason and the
-> setup are in
+> ★ **Configure a Card meaning generator.** Without one, capture falls back to a
+> generator that restates the observed facts — it answers simple questions, but a
+> Card's description reads as a list of field values rather than a sentence about
+> the area. What each generator produces, measured, is in
 > [설정 / Configuration](docs/configuration.md#card-의미-생성기--설정을-권장합니다)
-> (Korean), with measurements.
+> (Korean).
 
 ---
 
