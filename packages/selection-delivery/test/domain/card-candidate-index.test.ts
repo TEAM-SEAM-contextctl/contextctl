@@ -146,6 +146,38 @@ describe("CardCandidateIndex", () => {
     ).not.toThrow();
   });
 
+  it("searches only the eligible Card Versions, and fills the limit from them", () => {
+    const index = indexOf([
+      record("cv_closest", [1, 0, 0, 0]),
+      record("cv_second", [0.9, 0.1, 0, 0]),
+      record("cv_third", [0.8, 0.2, 0, 0]),
+      record("cv_far", [0, 0, 1, 0]),
+    ]);
+
+    const eligible = new Set(["cv_third", "cv_far"]);
+    const hits = index.topK([1, 0, 0, 0], 2, { eligibleVersionIds: eligible });
+
+    // The two closest records are ineligible and never take a place in the
+    // limit: a post-filter over `topK(…, 2)` would have returned nothing.
+    expect(hits.map((hit) => hit.cardVersionId)).toEqual(["cv_third", "cv_far"]);
+  });
+
+  it("returns nothing, not everything, for an empty eligible set", () => {
+    const index = indexOf([record("cv_a", [1, 0, 0, 0])]);
+
+    expect(index.topK([1, 0, 0, 0], 5, { eligibleVersionIds: new Set() })).toEqual([]);
+  });
+
+  it("searches the whole index when no eligible set is given", () => {
+    const index = indexOf([
+      record("cv_a", [1, 0, 0, 0]),
+      record("cv_b", [0, 1, 0, 0]),
+    ]);
+
+    expect(index.topK([1, 0, 0, 0], 5)).toHaveLength(2);
+    expect(index.topK([1, 0, 0, 0], 5, {})).toHaveLength(2);
+  });
+
   it("reports coverage on the Card Version and its digest together", () => {
     const index = indexOf([record("a", [1, 0, 0, 0])]);
 

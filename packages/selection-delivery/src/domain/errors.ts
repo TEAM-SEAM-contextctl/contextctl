@@ -126,3 +126,31 @@ export class ManagedResolutionInvariantError extends Error {
     this.name = "ManagedResolutionInvariantError";
   }
 }
+
+/**
+ * Thrown when the approved catalog cannot be read as one.
+ *
+ * A Card whose policy is not the shape the read model promises — a usage list
+ * that is empty or repeats itself, a sensitivity flag that is not a boolean —
+ * is refused with the whole catalog rather than dropped on its own. Dropping it
+ * would present the readable remainder as the approved catalog, and a consumer
+ * could not tell that from a catalog that was simply small (SOT L88).
+ */
+export class CardCatalogInvariantError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CardCatalogInvariantError";
+  }
+}
+
+/**
+ * Thrown when the policy context a deployment was configured with is not one
+ * this package defines. Configuration, not a request: a caller cannot state a
+ * policy at all, so a bad one is the Composition Root's to fix.
+ */
+export class PolicyContextInvariantError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PolicyContextInvariantError";
+  }
+}

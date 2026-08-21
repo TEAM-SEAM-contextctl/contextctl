@@ -24,6 +24,7 @@ import {
   scoreCardsAgainstQuery,
   type CandidateScore,
 } from "../domain/query-scoring.js";
+import { DEFAULT_POLICY_CONTEXT } from "../domain/policy-context.js";
 import {
   planningLimitViolations,
   planSelectedScopes,
@@ -221,6 +222,10 @@ export async function selectContext(
       candidates: scored.candidates,
       selection,
       mode: scored.mode,
+      // Recorded, not yet enforced: the pre-filter that fills `excluded` is
+      // wired in the following change, and until then every approved Card is
+      // scored, which is exactly what an empty exclusion list states.
+      policy: { context: DEFAULT_POLICY_CONTEXT, excluded: [] },
     },
     items: planned.items,
     managedTargets: planned.managedTargets,

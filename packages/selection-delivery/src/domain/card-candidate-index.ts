@@ -167,8 +167,21 @@ export class CardCandidateIndex {
    *
    * Ties break on `cardVersionId` ascending, matching `selection-verdict.ts`, so
    * two Cards at the same distance always come back in the same order.
+   *
+   * `eligibleVersionIds`, when given, restricts the search to those Card
+   * Versions *before* anything is ranked or cut. That ordering is the whole
+   * point: the index is built over the approved catalog so a policy change
+   * never forces a rebuild, and the policy is applied at search time as a
+   * pre-filter over the exact scan — a record outside the set is never
+   * compared, so it cannot occupy a place in the `limit` that an eligible Card
+   * would have taken. Removing it after the cut would be the post-filter SOT
+   * L88 forbids, and a top-K of twenty could come back with three.
    */
-  topK(queryVector: readonly number[], limit: number): readonly CardSimilarity[] {
+  topK(
+    queryVector: readonly number[],
+    limit: number,
+    options: { readonly eligibleVersionIds?: ReadonlySet<string> } = {},
+  ): readonly CardSimilarity[] {
     if (limit <= 0) {
       return [];
     }
@@ -178,7 +191,13 @@ export class CardCandidateIndex {
       );
     }
 
-    return this.#records
+    const eligible = options.eligibleVersionIds;
+    const searched =
+      eligible === undefined
+        ? this.#records
+        : this.#records.filter((record) => eligible.has(record.cardVersionId));
+
+    return searched
       .map((record) => ({
         cardId: record.cardId,
         cardVersionId: record.cardVersionId,

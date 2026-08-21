@@ -1,10 +1,12 @@
 import {
   CanonicalDigestInvariantError,
   CardCandidateIndexInvariantError,
+  CardCatalogInvariantError,
   CardSelectionInputLimitError,
   CardSelectionProfileInvariantError,
   ContextBudgetInvariantError,
   ManagedResolutionInvariantError,
+  PolicyContextInvariantError,
   SelectionCandidateInvariantError,
   SelectionModeInvariantError,
   SelectionPlanInvariantError,
@@ -250,10 +252,14 @@ export function toResolveContextErrorCode(
     // value that survives that check cannot break the assembly invariant.
     return "invalid_context_budget";
   }
-  if (cause instanceof CardSelectionInputLimitError) {
-    // A Card whose canonical text is longer than its own profile admits is a
-    // catalog we cannot index, not a rule this package broke: nothing here
-    // wrote the Card, and no threshold or policy of ours would make it usable.
+  if (
+    cause instanceof CardSelectionInputLimitError ||
+    cause instanceof CardCatalogInvariantError
+  ) {
+    // A Card whose canonical text is longer than its own profile admits, or
+    // whose policy cannot be read as one, is a catalog we cannot select over,
+    // not a rule this package broke: nothing here wrote the Card, and no
+    // threshold or policy of ours would make it usable.
     return "selection_catalog_invalid";
   }
   if (
@@ -265,7 +271,8 @@ export function toResolveContextErrorCode(
     cause instanceof CanonicalDigestInvariantError ||
     cause instanceof CardSelectionProfileInvariantError ||
     cause instanceof CardCandidateIndexInvariantError ||
-    cause instanceof SelectionModeInvariantError
+    cause instanceof SelectionModeInvariantError ||
+    cause instanceof PolicyContextInvariantError
   ) {
     return "selection_invariant_violation";
   }

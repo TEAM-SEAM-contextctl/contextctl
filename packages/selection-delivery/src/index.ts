@@ -87,10 +87,12 @@ export {
 export {
   CanonicalDigestInvariantError,
   CardCandidateIndexInvariantError,
+  CardCatalogInvariantError,
   CardSelectionInputLimitError,
   CardSelectionProfileInvariantError,
   ContextBudgetInvariantError,
   ManagedResolutionInvariantError,
+  PolicyContextInvariantError,
   SelectionCandidateInvariantError,
   SelectionModeInvariantError,
   SelectionPlanInvariantError,
@@ -137,7 +139,18 @@ export {
   type SelectedByList,
   type SelectionPlan,
   type SelectionPlanSummary,
+  type SelectionPolicySummary,
 } from "./domain/selection-plan.js";
+export {
+  applyPolicyContext,
+  assertValidPolicyContext,
+  DEFAULT_POLICY_CONTEXT,
+  validateCatalogPolicies,
+  type PolicyApplication,
+  type PolicyContext,
+  type PolicyExclusion,
+  type PolicyExclusionReason,
+} from "./domain/policy-context.js";
 export {
   QUERY_SCORING_POLICY_VERSION,
   scoreCardsAgainstQuery,
