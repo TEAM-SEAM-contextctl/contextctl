@@ -5,6 +5,7 @@ import {
   SelectionScopeInvariantError,
 } from "./errors.js";
 import type { SelectionMode } from "./hybrid-ranking.js";
+import type { PolicyContext, PolicyExclusion } from "./policy-context.js";
 import type { CandidateScore } from "./query-scoring.js";
 import {
   buildRetrievalGuide,
@@ -112,6 +113,24 @@ export interface SelectionPlanSummary {
    * it was, so it says so once and the response transcribes it.
    */
   readonly mode: SelectionMode;
+  /**
+   * The policy this selection ran under and the Cards it kept out of scoring.
+   *
+   * On the plan and not on the response: the response's counts describe the
+   * Cards that were evaluated, and a Card the policy excluded was not (SOT
+   * L2486). The exclusions are named here so that an operator reading the plan
+   * can tell a Card the policy refused from a Card the threshold rejected —
+   * the two look identical from the outside, and only one of them is a
+   * question about the catalog.
+   */
+  readonly policy: SelectionPolicySummary;
+}
+
+/** Which policy applied, and what it decided before any score existed. */
+export interface SelectionPolicySummary {
+  readonly context: PolicyContext;
+  /** Cards kept out before scoring, in catalog order. Empty when none were. */
+  readonly excluded: readonly PolicyExclusion[];
 }
 
 /**
