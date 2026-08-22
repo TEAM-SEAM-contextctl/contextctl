@@ -36,6 +36,7 @@ import {
 } from "./status.js";
 import { buildPathsReport, renderPathsReport } from "./paths-report.js";
 import {
+  describeGrounding,
   renderCardListings,
   renderResolution,
   renderSourceListing,
@@ -233,12 +234,23 @@ export async function runIngest(
     }
     for (const version of claimed.cardVersions) {
       claimedVersions += 1;
-      const findings =
-        version.findings.length === 0
+      // The two severities are different sentences: fatal findings are why the
+      // version was rejected; review findings mark a promotable version an
+      // operator still has to judge. Calling a review a validation failure
+      // would tell the operator a model-authored version is broken when it is
+      // merely unjudged.
+      const fatal = version.findings.filter((finding) => finding.severity === "fatal");
+      const review = version.findings.filter((finding) => finding.severity === "review");
+      const suffix = [
+        fatal.length === 0
           ? ""
-          : ` — 근거 검증 실패: ${version.findings.map((finding) => finding.rule).join(", ")}`;
+          : ` — 근거 검증 실패: ${fatal.map((finding) => finding.rule).join(", ")}`,
+        review.length === 0
+          ? ""
+          : ` — 검토 필요: ${review.map((finding) => finding.rule).join(", ")}`,
+      ].join("");
       lines.push(
-        `  Card ${version.cardId} / 버전 ${version.versionId} [${version.validationState}]${findings}`,
+        `  Card ${version.cardId} / 버전 ${version.versionId} [${version.validationState}]${suffix}`,
       );
     }
   }
@@ -398,7 +410,28 @@ export async function runCardsDecision(
     command,
     [command.decision, command.cardId, versionId, "--by", decidedBy],
     decidedBy,
+    // The evidence, shown at the moment of decision: verdict, who wrote the
+    // words, fact coverage, and what changed against the previous version
+    // (SEAM-106 §9.1). Printed even though the approval already went through —
+    // the operator who skipped `cards list` still sees what they approved.
+    command.decision === "approve"
+      ? await groundingPreface(cli, command.cardId, versionId)
+      : [],
   );
+}
+
+/** The approved version's grounding evidence, or nothing when unavailable. */
+async function groundingPreface(
+  cli: RegistryOnlyRuntime,
+  cardId: string,
+  versionId: string,
+): Promise<readonly string[]> {
+  const card = await cli.cards.findCard(cardId);
+  const version = card?.versions.versions.find((entry) => entry.id === versionId);
+  if (version === undefined) {
+    return [];
+  }
+  return describeGrounding(version).map((text) => `  ${text}`);
 }
 
 /**
@@ -413,6 +446,7 @@ async function decide(
   command: Extract<CliCommand, { kind: "cards_decision" }>,
   argv: readonly string[],
   decidedBy: string,
+  evidence: readonly string[] = [],
 ): Promise<CommandOutcome> {
   const result = await runOperatorCommand(
     operatorPorts(cli),
@@ -421,7 +455,9 @@ async function decide(
 
   const trail = `결정자: ${decidedBy}`;
   if (result.status === "ok") {
-    return ok([result.output, trail, "", ...nextStepFor(command.decision)].join("\n"));
+    return ok(
+      [result.output, ...evidence, trail, "", ...nextStepFor(command.decision)].join("\n"),
+    );
   }
   // The reason is reported as Registry gave it — the vocabulary belongs to the
   // domain that refused — but the status is not flattened into it. A script has

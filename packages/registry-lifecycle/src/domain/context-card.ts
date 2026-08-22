@@ -5,13 +5,9 @@ import {
   type CardVersionHistory,
 } from "./card-version.js";
 
-/** Expression fields an LLM may generate; grounded against Observation before use. */
-export interface CardMeaning {
-  readonly description: string;
-  readonly representativeQuestions: readonly string[];
-  readonly aliases: readonly string[];
-  readonly keywords: readonly string[];
-}
+import type { CardMeaning } from "./card-meaning.js";
+
+export type { CardMeaning, CardMeaningOrigin } from "./card-meaning.js";
 
 export interface CardPolicy {
   readonly sensitive: boolean;
@@ -42,6 +38,20 @@ export function withCardVersions(
 
 export function isCardApproved(card: ContextCard): boolean {
   return card.versions.currentVersionId !== undefined;
+}
+
+/**
+ * The Card with its expression replaced.
+ *
+ * Used when a promotion moves the current pointer to a version that carries
+ * its own meaning: the Card-level meaning is the projection consumers read, so
+ * it has to say what the serving version says, not what the first version did.
+ */
+export function withCardMeaning(
+  card: ContextCard,
+  meaning: CardMeaning,
+): ContextCard {
+  return { ...card, meaning };
 }
 
 export type { CardId, CardVersion, CardVersionHistory };

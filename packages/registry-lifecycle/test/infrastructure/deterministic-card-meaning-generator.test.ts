@@ -83,14 +83,20 @@ const summary: PublishedFact = {
 
 describe("DeterministicCardMeaningGenerator", () => {
   it("produces meaning that passes grounding for a document coordinate", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [summary],
     });
 
-    expect(groundCardVersion(documentCoordinate, [documentScope], meaning)).toEqual(
-      { outcome: "validated" },
-    );
+    expect(
+      groundCardVersion({
+        coordinate: documentCoordinate,
+        facts: [summary],
+        scopes: [documentScope],
+        meaning,
+        origin: { generator: "deterministic" },
+      }).verdict,
+    ).toBe("validated");
     expect(meaning.description).toContain("doc_payments");
     expect(meaning.description).toContain(
       "Failed payments are retried after five minutes.",
@@ -98,33 +104,45 @@ describe("DeterministicCardMeaningGenerator", () => {
   });
 
   it("produces meaning that passes grounding for a table coordinate", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: sqlCoordinate,
       facts: [{ name: "sql.approximate_row_count", value: 1200 }],
     });
 
-    expect(groundCardVersion(sqlCoordinate, [sqlScope], meaning)).toEqual({
-      outcome: "validated",
-    });
+    expect(
+      groundCardVersion({
+        coordinate: sqlCoordinate,
+        facts: [{ name: "sql.approximate_row_count", value: 1200 }],
+        scopes: [sqlScope],
+        meaning,
+        origin: { generator: "deterministic" },
+      }).verdict,
+    ).toBe("validated");
     expect(meaning.aliases).toContain("public.payments");
     expect(meaning.keywords).toContain("failed");
     expect(meaning.keywords).toContain("reason");
   });
 
   it("produces meaning that passes grounding for an operation coordinate", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: httpCoordinate,
       facts: [{ name: "http.operation_id", value: "getPayment" }],
     });
 
-    expect(groundCardVersion(httpCoordinate, [httpScope], meaning)).toEqual({
-      outcome: "validated",
-    });
+    expect(
+      groundCardVersion({
+        coordinate: httpCoordinate,
+        facts: [{ name: "http.operation_id", value: "getPayment" }],
+        scopes: [httpScope],
+        meaning,
+        origin: { generator: "deterministic" },
+      }).verdict,
+    ).toBe("validated");
     expect(meaning.aliases).toContain("GET /payments/{id}");
   });
 
   it("still passes grounding when evidence carries only one bare fact", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [{ name: "section.path", value: "" }],
     });
@@ -135,8 +153,14 @@ describe("DeterministicCardMeaningGenerator", () => {
     expect(meaning.representativeQuestions).toHaveLength(1);
     expect(meaning.representativeQuestions[0]?.trim()).not.toBe("");
     expect(
-      groundCardVersion(documentCoordinate, [documentScope], meaning),
-    ).toEqual({ outcome: "validated" });
+      groundCardVersion({
+        coordinate: documentCoordinate,
+        facts: [{ name: "section.path", value: "" }],
+        scopes: [documentScope],
+        meaning,
+        origin: { generator: "deterministic" },
+      }).verdict,
+    ).toBe("validated");
   });
 
   it("returns the same meaning for the same request", async () => {
@@ -148,7 +172,7 @@ describe("DeterministicCardMeaningGenerator", () => {
   });
 
   it("flattens a list-valued fact instead of printing an object", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: sqlCoordinate,
       facts: [{ name: "sql.columns", value: ["failed", "paid"] }],
     });
@@ -159,7 +183,7 @@ describe("DeterministicCardMeaningGenerator", () => {
 
   it("names nothing the request did not contain", async () => {
     const facts = [summary];
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: sqlCoordinate,
       facts,
     });
@@ -197,7 +221,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   ];
 
   it("tokenizes the Korean title, label and path into keywords", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: sectionFacts,
     });
@@ -206,7 +230,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("keeps machine-measured facts and fact names out of the keywords", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: sectionFacts,
     });
@@ -224,7 +248,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("keeps document and unit identifiers out of the keywords", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: sectionFacts,
     });
@@ -239,7 +263,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("includes derived keywords when Ingestion publishes them", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [
         ...sectionFacts,
@@ -255,7 +279,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("drops a token that is digits alone", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [
         { name: "section.label", value: "반차" },
@@ -275,7 +299,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("keeps identifier tokens that mix letters and digits", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: {
         ...sqlCoordinate,
         columns: ["v2_flag", "col_2023", "status"],
@@ -292,7 +316,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   it("does not let a dropped digit token take a slot under the ceiling", async () => {
     const words = Array.from({ length: 62 }, (_, index) => `파생${String(index).padStart(2, "0")}`);
     const digits = Array.from({ length: 10 }, (_, index) => String(index + 1));
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [
         { name: "section.label", value: "환불 처리" },
@@ -308,7 +332,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("adds the section label and document title as aliases after the coordinate's own", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: sectionFacts,
     });
@@ -322,7 +346,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("still takes a table's schema, name and columns as keywords", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: sqlCoordinate,
       facts: [],
     });
@@ -333,7 +357,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("takes an HTTP path but not the method as keywords", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: httpCoordinate,
       facts: [],
     });
@@ -344,11 +368,11 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("produces the same keywords whatever order the facts arrive in", async () => {
-    const forward = await generator.generate({
+    const { meaning: forward } = await generator.generate({
       coordinate: documentCoordinate,
       facts: sectionFacts,
     });
-    const reversed = await generator.generate({
+    const { meaning: reversed } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [...sectionFacts].reverse(),
     });
@@ -359,7 +383,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
 
   it("caps keywords at the read-model ceiling, keeping the heading words", async () => {
     const derived = Array.from({ length: 80 }, (_, index) => `파생${String(index).padStart(2, "0")}`);
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: sqlCoordinate,
       facts: [
         { name: "section.label", value: "환불 처리" },
@@ -383,13 +407,13 @@ describe("keywords and aliases carry the words a person wrote", () => {
           { name: "keywords.derived", value: [...derived].reverse() },
           { name: "section.label", value: "환불 처리" },
         ],
-      })).keywords,
+      })).meaning.keywords,
     ).toEqual(meaning.keywords);
   });
 
   it("drops a token over 64 code units rather than cutting it", async () => {
     const long = "가".repeat(65);
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [{ name: "section.label", value: `${long} 환불` }],
     });
@@ -400,7 +424,7 @@ describe("keywords and aliases carry the words a person wrote", () => {
 
   it("drops an alias over 128 code units rather than cutting it", async () => {
     const long = "가".repeat(129);
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: [{ name: "section.label", value: long }],
     });
@@ -409,14 +433,23 @@ describe("keywords and aliases carry the words a person wrote", () => {
   });
 
   it("passes grounding with Korean headings in the matched lists", async () => {
-    const meaning = await generator.generate({
+    const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: sectionFacts,
     });
 
-    expect(groundCardVersion(documentCoordinate, [documentScope], meaning)).toEqual(
-      { outcome: "validated" },
-    );
+    expect(
+      groundCardVersion({
+        coordinate: documentCoordinate,
+        // The same facts the generator consumed: grounding checks the text
+        // against what it was written from, and `structure.block_count` puts a
+        // bare number in the description that only these facts account for.
+        facts: sectionFacts,
+        scopes: [documentScope],
+        meaning,
+        origin: { generator: "deterministic" },
+      }).verdict,
+    ).toBe("validated");
   });
 });
 

@@ -186,11 +186,17 @@ async function toCardVersion(
   // Every published scope is translated: dropping one would silently narrow the
   // search range a Card claims to cover.
   const scopes = unit.publishedScopes.map(translatePublishedScope);
-  const meaning = await ports.meanings.generate({
+  const { meaning, origin } = await ports.meanings.generate({
     coordinate: unit.sourceCoordinate,
     facts: unit.facts,
   });
-  const grounding = groundCardVersion(unit.sourceCoordinate, scopes, meaning);
+  const grounding = groundCardVersion({
+    coordinate: unit.sourceCoordinate,
+    facts: unit.facts,
+    scopes,
+    meaning,
+    origin,
+  });
 
   return {
     version: {
@@ -202,10 +208,14 @@ async function toCardVersion(
         knowledgeUnitId: unit.id,
       },
       scopes,
-      validationState:
-        grounding.outcome === "validated" ? "validated" : "rejected",
+      // `needs_review` stays promotable: the review axis is the report, the
+      // promotion gate stays "did deterministic validation pass". Rejection is
+      // the only verdict that closes the gate.
+      validationState: grounding.verdict === "rejected" ? "rejected" : "validated",
       createdAt,
+      meaning,
+      grounding,
     },
-    findings: grounding.outcome === "validated" ? [] : grounding.findings,
+    findings: grounding.findings,
   };
 }

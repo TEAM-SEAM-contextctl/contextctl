@@ -7,6 +7,7 @@ import type { CardMeaning } from "../../domain/context-card.js";
 import type {
   CardMeaningGenerator,
   CardMeaningRequest,
+  GeneratedCardMeaning,
 } from "../../ports/card-meaning-generator.js";
 
 /**
@@ -82,7 +83,7 @@ export class OpenAiCompatibleCardMeaningGenerator
     this.#fetch = config.fetch ?? globalThis.fetch;
   }
 
-  async generate(request: CardMeaningRequest): Promise<CardMeaning> {
+  async generate(request: CardMeaningRequest): Promise<GeneratedCardMeaning> {
     const prompt = buildPrompt(request);
     const budget = this.#config.contextTokens - this.#config.maxOutputTokens;
     const estimated = estimateTokens(prompt);
@@ -94,7 +95,10 @@ export class OpenAiCompatibleCardMeaningGenerator
     }
 
     const response = await this.#post(prompt);
-    return readMeaning(await this.#readContent(response));
+    return {
+      meaning: readMeaning(await this.#readContent(response)),
+      origin: { generator: "model", model: this.#config.model },
+    };
   }
 
   async #post(prompt: string): Promise<Response> {
