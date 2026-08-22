@@ -1,3 +1,4 @@
+import { DaemonRuntimeControl } from "../../src/runtime/runtime-control.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,6 +72,10 @@ async function cliThatClaims(result: RegistryIntakeResult): Promise<CliRuntime> 
         },
       },
       registryIntake: { claim: async () => result },
+      // A real control rather than a stub. `ingest` now admits both halves of
+      // its loop, so a fixture without lanes would be testing a path the
+      // command no longer takes.
+      control: new DaemonRuntimeControl(),
     },
     // Cast once, and only over the parts a claim-to-exit-code mapping never
     // reads. Widening this fake later is the signal that the mapping started

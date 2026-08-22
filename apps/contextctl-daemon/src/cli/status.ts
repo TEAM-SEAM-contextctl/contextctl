@@ -25,6 +25,8 @@ import {
   localAssetsAreRequired,
   type EmbeddingObservation,
 } from "../embedding/readiness.js";
+import type { LaneDepth } from "../runtime/admission.js";
+import type { DaemonLifecycleState } from "../runtime/lifecycle.js";
 
 export type LaneName = "resolve" | "registry" | "selection_assets" | "ingestion";
 
@@ -45,8 +47,28 @@ export interface LaneVerdict {
   readonly detail: string;
 }
 
+/**
+ * What the four execution lanes are doing, when the process being asked is this
+ * one.
+ *
+ * Absent from a one-shot CLI probe, which runs in its own process and has no
+ * lanes to report — a `status` invocation is not the daemon. Present when a
+ * running daemon answers about itself.
+ *
+ * Counts only. A queue depth says how loaded a lane is; the queries inside it,
+ * the text they carry and the bindings they would reach are none of a status
+ * surface's business, and a field that could hold them is a field that
+ * eventually does.
+ */
+export interface RuntimeActivity {
+  readonly lifecycle: DaemonLifecycleState;
+  readonly profileVersion: string;
+  readonly depths: readonly LaneDepth[];
+}
+
 export interface StatusReport {
   readonly lanes: readonly LaneVerdict[];
+  readonly activity?: RuntimeActivity;
   /** False when any lane is `not_ready`. A `degraded` lane is still serving. */
   readonly serviceable: boolean;
 }
@@ -128,7 +150,10 @@ const LANE_ORDER: readonly LaneName[] = [
 ];
 
 /** Judges every lane from one set of observations. Pure and total. */
-export function judgeLanes(observation: StatusObservation): StatusReport {
+export function judgeLanes(
+  observation: StatusObservation,
+  activity?: RuntimeActivity,
+): StatusReport {
   const verdicts: readonly LaneVerdict[] = [
     judgeResolve(observation),
     judgeRegistry(observation.registry),
@@ -145,7 +170,13 @@ export function judgeLanes(observation: StatusObservation): StatusReport {
 
   return {
     lanes,
-    serviceable: lanes.every((verdict) => verdict.status !== "not_ready"),
+    ...(activity === undefined ? {} : { activity }),
+    // A draining daemon is not serviceable: it has stopped admitting, so a
+    // monitor that kept routing to it would be sending requests that are
+    // refused by design rather than by fault.
+    serviceable:
+      lanes.every((verdict) => verdict.status !== "not_ready") &&
+      (activity === undefined || activity.lifecycle === "accepting"),
   };
 }
 

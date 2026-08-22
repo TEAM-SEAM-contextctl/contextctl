@@ -10,6 +10,7 @@ import {
   type ContextCard,
   type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
+import { ResolveContextFailure } from "@contextctl/selection-delivery";
 
 import type { CliCommand } from "./arguments.js";
 import { EXIT_CODES, operatorExitCode, type ExitCode } from "./exit-codes.js";
@@ -198,16 +199,23 @@ export async function runIngest(
     if (source === undefined) {
       continue;
     }
-    const published = await cli.runtime.ingestion.workflow.publish({
-      source: {
-        sourceType: "markdown",
-        displayName: source.displayName,
-        configReference: each,
-        polling: { enabled: false },
-      },
-      connectorId: cli.runtime.connectorId,
-      securityDomain: cli.runtime.securityDomain,
-    });
+    // Admitted rather than called. One Source job at a time is the design's
+    // limit for this lane, and an `ingest` run over several Sources is exactly
+    // the caller that would otherwise start all of them at once.
+    const published = await cli.runtime.control.ingestion.run(
+      async (signal) =>
+        await cli.runtime.ingestion.workflow.publish({
+          source: {
+            sourceType: "markdown",
+            displayName: source.displayName,
+            configReference: each,
+            polling: { enabled: false },
+          },
+          connectorId: cli.runtime.connectorId,
+          securityDomain: cli.runtime.securityDomain,
+          signal,
+        }),
+    );
 
     lines.push(`${each}: ${published.status}`);
     const publicationId = published.publication?.publicationId;
@@ -219,7 +227,11 @@ export async function runIngest(
       continue;
     }
 
-    const claimed = await cli.runtime.registryIntake.claim(publicationId);
+    // Registry claims one Publication at a time. The lane is what makes that a
+    // property of the process rather than of this loop happening to be serial.
+    const claimed = await cli.runtime.control.registryConsume.run(
+      async () => await cli.runtime.registryIntake.claim(publicationId),
+    );
     lines.push(`  Publication ${publicationId} — ${claimed.status}`);
     if (claimed.status === "deferred" || claimed.status === "forked") {
       // The code and the Source are printed, not just the status word. A refusal
@@ -841,12 +853,32 @@ export async function runQuery(
   cli: CliRuntime,
   command: Extract<CliCommand, { kind: "query" }>,
 ): Promise<CommandOutcome> {
-  const resolution = await cli.runtime.contextApplication.resolveContext({
-    query: command.text,
-    ...(command.maxContextCharacters === undefined
-      ? {}
-      : { maxContextCharacters: command.maxContextCharacters }),
-  });
+  let resolution;
+  try {
+    resolution = await cli.runtime.contextApplication.resolveContext({
+      query: command.text,
+      ...(command.maxContextCharacters === undefined
+        ? {}
+        : { maxContextCharacters: command.maxContextCharacters }),
+    });
+  } catch (cause: unknown) {
+    // The same two outcomes HTTP reports as 429 and 504, and MCP as an
+    // `isError` payload. Caught here rather than left to the process handler so
+    // the CLI projects them as a fixed code a script can branch on, instead of
+    // the generic failure exit every unexpected throw produces.
+    if (cause instanceof ResolveContextFailure) {
+      const error = cause.toResolveContextError();
+      return {
+        stdout: command.json ? JSON.stringify(error, undefined, 2) : "",
+        stderr: [
+          `질의를 처리하지 못했습니다: ${error.code}` +
+            (error.retriable ? " (재시도 가능)" : ""),
+        ],
+        exitCode: EXIT_CODES.resolveUnavailable,
+      };
+    }
+    throw cause;
+  }
 
   const stdout = command.json
     ? JSON.stringify(resolution, undefined, 2)
