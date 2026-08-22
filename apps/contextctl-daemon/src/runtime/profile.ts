@@ -32,7 +32,8 @@ export interface LaneCapacity {
 }
 
 /**
- * The four lanes, sized independently.
+ * The four operating areas and Ingestion's provider sub-boundary, sized
+ * independently.
  *
  * Independent rather than drawn from a shared pool, and that independence is
  * what implements the design's reservation rule: Resolve capacity is not a
@@ -49,6 +50,8 @@ export interface DaemonLaneProfile {
   readonly selectionAssets: LaneCapacity;
   /** Source observation, capture and index publication. */
   readonly ingestion: LaneCapacity;
+  /** Embedding provider batches inside an admitted Ingestion Source job. */
+  readonly ingestionEmbedding: LaneCapacity;
 }
 
 /**
@@ -78,6 +81,9 @@ export interface DaemonRuntimeProfile {
   readonly deadlines: DaemonDeadlineProfile;
 }
 
+/** Ingestion provider batches admitted at once. */
+export const INGESTION_EMBEDDING_BATCH_LIMIT = 2;
+
 /**
  * The design's own values.
  *
@@ -95,10 +101,17 @@ export const DAEMON_RUNTIME_PROFILE_V1: DaemonRuntimeProfile = Object.freeze({
     // snapshot it was started for, so one running rebuild is one of each and a
     // single concurrency of one expresses both.
     selectionAssets: Object.freeze({ concurrency: 1, queueDepth: 1 }),
-    // One Source job. The design also caps embedding batches at two, and that
-    // second limit lives on the embedding runtime rather than here: it bounds
-    // how much of one job runs in parallel, not how many jobs are admitted.
+    // One Source job. Provider batches inside it use the separate sub-boundary
+    // below, because the two limits bound different units of work.
     ingestion: Object.freeze({ concurrency: 1, queueDepth: 4 }),
+    // A provider call is already one bounded batch. There is deliberately no
+    // second in-memory wait queue here: the Ingestion pipeline owns its batch
+    // sequence and retries a retriable refusal, while the shared priority
+    // scheduler and its background queue belong to the next runtime issue.
+    ingestionEmbedding: Object.freeze({
+      concurrency: INGESTION_EMBEDDING_BATCH_LIMIT,
+      queueDepth: 0,
+    }),
   }),
   deadlines: Object.freeze({
     totalMs: 3_000,
@@ -111,14 +124,10 @@ export const DAEMON_RUNTIME_PROFILE_V1: DaemonRuntimeProfile = Object.freeze({
 /**
  * The background embedding batch ceiling the design names separately.
  *
- * Stated here so the value has one home, and deliberately not enforced by this
- * module: it bounds concurrent embedding calls inside an admitted job, which is
- * the shared-session scheduler's subject. Recording it without implementing it
- * would be worse than leaving it out, so the constant is exported for the lane
- * that will own it and nothing here reads it.
+ * Stated here so the value has one home. The daemon applies it to Ingestion's
+ * provider boundary; it is not the shared-session priority scheduler, which is
+ * a separate operating concern and a later issue.
  */
-export const INGESTION_EMBEDDING_BATCH_LIMIT = 2;
-
 export type DaemonRuntimeProfileProblem =
   | "version_missing"
   | "concurrency_invalid"
@@ -177,6 +186,9 @@ export function defineDaemonRuntimeProfile(
         DAEMON_RUNTIME_PROFILE_V1.lanes.selectionAssets,
       ingestion:
         overrides.lanes?.ingestion ?? DAEMON_RUNTIME_PROFILE_V1.lanes.ingestion,
+      ingestionEmbedding:
+        overrides.lanes?.ingestionEmbedding ??
+        DAEMON_RUNTIME_PROFILE_V1.lanes.ingestionEmbedding,
     },
     deadlines: {
       ...DAEMON_RUNTIME_PROFILE_V1.deadlines,
@@ -191,13 +203,16 @@ export function defineDaemonRuntimeProfile(
       registryConsume: Object.freeze({ ...profile.lanes.registryConsume }),
       selectionAssets: Object.freeze({ ...profile.lanes.selectionAssets }),
       ingestion: Object.freeze({ ...profile.lanes.ingestion }),
+      ingestionEmbedding: Object.freeze({
+        ...profile.lanes.ingestionEmbedding,
+      }),
     }),
     deadlines: Object.freeze({ ...profile.deadlines }),
   });
 }
 
 /**
- * Checks every rule the four numbers have to satisfy together.
+ * Checks every rule the profile values have to satisfy together.
  *
  * Exported so a composition can validate a profile it received rather than
  * built, and total over the profile: nothing here reports the first problem and
@@ -215,6 +230,7 @@ export function assertDaemonRuntimeProfile(
     ["registryConsume", profile.lanes.registryConsume],
     ["selectionAssets", profile.lanes.selectionAssets],
     ["ingestion", profile.lanes.ingestion],
+    ["ingestionEmbedding", profile.lanes.ingestionEmbedding],
   ];
   for (const [name, lane] of lanes) {
     if (!Number.isSafeInteger(lane.concurrency) || lane.concurrency < 1) {

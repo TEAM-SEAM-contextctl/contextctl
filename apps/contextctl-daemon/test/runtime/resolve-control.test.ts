@@ -142,25 +142,30 @@ describe("AdmissionControlledResolve", () => {
     await settle();
 
     const queued = resolve.resolveContext({ query: "waiting" });
+    const queuedFailure = queued.catch((cause: unknown) => cause);
+    const activeResults = Promise.allSettled(inflight);
     await settle();
     expect(control.resolve.depth.queued).toBe(1);
 
-    // The wait alone consumes the request's whole allowance. When a slot finally
-    // opens there is nothing left to spend, and the answer is a deadline rather
-    // than a late success.
+    // The wait alone consumes the request's whole allowance. It is removed at
+    // the deadline rather than lingering until an unrelated running request
+    // happens to release a slot.
     clock.advance(3_000);
-    releaseAll();
-
-    let failed: unknown;
-    try {
-      await queued;
-    } catch (cause: unknown) {
-      failed = cause;
-    }
+    const failed = await queuedFailure;
     expect((failed as ResolveContextFailure).code).toBe("deadline_exceeded");
     expect(resolveContextErrorStatus("deadline_exceeded")).toBe(504);
+    expect(control.resolve.depth.queued).toBe(0);
 
-    await Promise.all(inflight);
+    releaseAll();
+    const active = await activeResults;
+    expect(
+      active.every(
+        (result) =>
+          result.status === "rejected" &&
+          result.reason instanceof ResolveContextFailure &&
+          result.reason.code === "deadline_exceeded",
+      ),
+    ).toBe(true);
   });
 
   it("passes a budget whose clock is the runtime's", async () => {
@@ -178,5 +183,20 @@ describe("AdmissionControlledResolve", () => {
     expect(observed?.remainingMs).toBe(3_000);
     clock.advance(1_000);
     expect(observed?.remainingMs).toBe(2_000);
+  });
+
+  it("drops a success returned after the total deadline", async () => {
+    const clock = new ManualRuntimeClock();
+    const control = new DaemonRuntimeControl({ clock });
+    const resolve = new AdmissionControlledResolve(control, {
+      resolveWithin: async () => {
+        clock.advance(3_000);
+        return EMPTY_RESOLUTION;
+      },
+    });
+
+    await expect(resolve.resolveContext({ query: "late" })).rejects.toEqual(
+      expect.objectContaining({ code: "deadline_exceeded" }),
+    );
   });
 });

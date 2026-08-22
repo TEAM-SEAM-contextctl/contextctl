@@ -106,6 +106,51 @@ export class RequestBudget {
   }
 
   /**
+   * A signal for the whole request, including time spent waiting for admission.
+   *
+   * The Resolve lane consumes this signal while an entry is queued. Merely
+   * checking the clock after promotion would account for queue time in a metric
+   * but would not bound it: a saturated queue could keep an expired request in
+   * memory indefinitely. Aborting at the remaining total removes it at the
+   * actual deadline and also gives running cancellable work the same reason.
+   */
+  totalSignal(): {
+    readonly signal: AbortSignal;
+    readonly dispose: () => void;
+  } {
+    const controller = new AbortController();
+    const remaining = this.remainingMs;
+    if (this.cancelled || remaining <= 0) {
+      controller.abort(new RequestDeadlineExceededError());
+      return { signal: controller.signal, dispose: () => undefined };
+    }
+
+    const cancelTimer = this.#clock.schedule(remaining, () => {
+      controller.abort(new RequestDeadlineExceededError());
+    });
+    const onCallerAbort = (): void => {
+      controller.abort(new RequestDeadlineExceededError());
+    };
+    this.#caller?.addEventListener("abort", onCallerAbort, { once: true });
+    // Close the same lost-abort window as the admission queue. A caller may
+    // cancel between the initial check and listener attachment.
+    if (this.#caller?.aborted === true) {
+      onCallerAbort();
+    }
+
+    let disposed = false;
+    return {
+      signal: controller.signal,
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        cancelTimer();
+        this.#caller?.removeEventListener("abort", onCallerAbort);
+      },
+    };
+  }
+
+  /**
    * The selection stage's allowance.
    *
    * Its own ceiling or whatever is workable, whichever is smaller. A selection
@@ -156,6 +201,10 @@ export class RequestBudget {
    * work the request had already given up on.
    */
   async raceStage<T>(stage: string, limitMs: number, work: Promise<T>): Promise<T> {
+    if (this.cancelled) {
+      void work.catch(() => undefined);
+      throw new RequestDeadlineExceededError();
+    }
     if (limitMs <= 0) {
       void work.catch(() => undefined);
       throw new StageDeadlineExceededError(stage);
@@ -178,6 +227,9 @@ export class RequestBudget {
             settleWith(new RequestDeadlineExceededError());
           };
           this.#caller.addEventListener("abort", onCallerAbort, { once: true });
+          if (this.#caller.aborted) {
+            onCallerAbort();
+          }
         }
         work.then(
           (value) => {
@@ -228,6 +280,9 @@ export class RequestBudget {
       controller.abort(new RequestDeadlineExceededError());
     };
     this.#caller?.addEventListener("abort", onCallerAbort, { once: true });
+    if (this.#caller?.aborted === true) {
+      onCallerAbort();
+    }
     return {
       signal: controller.signal,
       dispose: () => {
