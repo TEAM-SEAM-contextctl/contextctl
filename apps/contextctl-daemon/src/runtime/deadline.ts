@@ -72,12 +72,13 @@ export class RequestBudget {
     clock: RuntimeClock,
     profile: DaemonDeadlineProfile,
     caller?: AbortSignal | undefined,
+    startedAt: number = clock.now(),
   ): RequestBudget {
-    return new RequestBudget(clock, profile, clock.now(), caller);
+    return new RequestBudget(clock, profile, startedAt, caller);
   }
 
   get elapsedMs(): number {
-    return this.#clock.now() - this.#startedAt;
+    return Math.max(0, this.#clock.now() - this.#startedAt);
   }
 
   /** Time before the total deadline. Never negative. */

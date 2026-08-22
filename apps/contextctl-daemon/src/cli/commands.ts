@@ -53,6 +53,7 @@ type IngestRefusal = Extract<
 >;
 import { DEFAULT_SECURITY_DOMAIN } from "../main.js";
 import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
+import { toResolveFailure } from "../runtime/runtime-control.js";
 import {
   readActiveEmbeddingProfiles,
   readEmbeddingCompositionConfiguration,
@@ -853,21 +854,29 @@ export async function runQuery(
   cli: CliRuntime,
   command: Extract<CliCommand, { kind: "query" }>,
 ): Promise<CommandOutcome> {
-  let resolution;
   try {
-    resolution = await cli.runtime.contextApplication.resolveContext({
-      query: command.text,
-      ...(command.maxContextCharacters === undefined
-        ? {}
-        : { maxContextCharacters: command.maxContextCharacters }),
-    });
+    const arrivedAt = cli.runtime.control.clock.now();
+    return await cli.runtime.control.runTransportRequest(async () => {
+      const resolution = await cli.runtime.contextApplication.resolveContext({
+        query: command.text,
+        ...(command.maxContextCharacters === undefined
+          ? {}
+          : { maxContextCharacters: command.maxContextCharacters }),
+      });
+      const stdout = command.json
+        ? JSON.stringify(resolution, undefined, 2)
+        : renderResolution(resolution);
+      cli.runtime.control.assertResponseCanCommit();
+      return ok(stdout);
+    }, { arrivedAt });
   } catch (cause: unknown) {
     // The same two outcomes HTTP reports as 429 and 504, and MCP as an
     // `isError` payload. Caught here rather than left to the process handler so
     // the CLI projects them as a fixed code a script can branch on, instead of
     // the generic failure exit every unexpected throw produces.
-    if (cause instanceof ResolveContextFailure) {
-      const error = cause.toResolveContextError();
+    const failure = toResolveFailure(cause);
+    if (failure instanceof ResolveContextFailure) {
+      const error = failure.toResolveContextError();
       return {
         stdout: command.json ? JSON.stringify(error, undefined, 2) : "",
         stderr: [
@@ -879,12 +888,6 @@ export async function runQuery(
     }
     throw cause;
   }
-
-  const stdout = command.json
-    ? JSON.stringify(resolution, undefined, 2)
-    : renderResolution(resolution);
-
-  return ok(stdout);
 }
 
 

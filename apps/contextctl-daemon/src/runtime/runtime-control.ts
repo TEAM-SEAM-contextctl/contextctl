@@ -1,6 +1,7 @@
 import {
   ResolveContextFailure,
   type ContextResolution,
+  type DeliveryRequestExecution,
   type ResolveContextApplication,
   type ResolveContextRequest,
 } from "@contextctl/selection-delivery";
@@ -20,6 +21,7 @@ import {
   StageDeadlineExceededError,
 } from "./deadline.js";
 import { DaemonLifecycle } from "./lifecycle.js";
+import { RequestExecutionContext } from "./request-execution-context.js";
 import {
   assertDaemonRuntimeProfile,
   DAEMON_RUNTIME_PROFILE_V1,
@@ -43,6 +45,7 @@ export class DaemonRuntimeControl {
   readonly ingestion: AdmissionLane;
   readonly ingestionEmbedding: AdmissionLane;
   readonly lifecycle: DaemonLifecycle;
+  readonly #requests = new RequestExecutionContext();
 
   constructor(
     options: {
@@ -98,10 +101,74 @@ export class DaemonRuntimeControl {
     ];
   }
 
-  /** Opens a request budget at the current instant. Called before admission. */
-  openBudget(caller?: AbortSignal | undefined): RequestBudget {
-    return RequestBudget.open(this.clock, this.profile.deadlines, caller);
+  /** Opens a request budget at transport arrival. Called before admission. */
+  openBudget(
+    caller?: AbortSignal | undefined,
+    startedAt?: number | undefined,
+  ): RequestBudget {
+    return RequestBudget.open(
+      this.clock,
+      this.profile.deadlines,
+      caller,
+      startedAt ?? this.clock.now(),
+    );
   }
+
+  async runTransportRequest<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    options: {
+      readonly arrivedAt?: number;
+      readonly signal?: AbortSignal;
+    } = {},
+  ): Promise<T> {
+    const budget = this.openBudget(options.signal, options.arrivedAt);
+    const lifetime = budget.totalSignal();
+    try {
+      return await this.#requests.run(
+        { budget, signal: lifetime.signal },
+        () => operation(lifetime.signal),
+      );
+    } catch (cause: unknown) {
+      throw toResolveFailure(cause);
+    } finally {
+      lifetime.dispose();
+    }
+  }
+
+  currentRequestBudget(): RequestBudget | undefined {
+    return this.#requests.budget;
+  }
+
+  currentRequestSignal(): AbortSignal | undefined {
+    return this.#requests.signal;
+  }
+
+  markResolutionReady(): void {
+    this.#requests.markResolutionReady();
+  }
+
+  assertResponseCanCommit(): void {
+    this.#requests.assertResponseCanCommit();
+  }
+}
+
+/** Delivery-owned transports call this adapter; daemon keeps every policy. */
+export function createDeliveryRequestExecution(
+  control: DaemonRuntimeControl,
+): DeliveryRequestExecution {
+  return {
+    maximumInFlightRequests:
+      control.profile.lanes.resolve.concurrency +
+      control.profile.lanes.resolve.queueDepth +
+      1,
+    now: () => control.clock.now(),
+    runRequest: async (input, operation) =>
+      await control.runTransportRequest(operation, {
+        arrivedAt: input.arrivedAt,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      }),
+    assertResponseCanCommit: () => control.assertResponseCanCommit(),
+  };
 }
 
 /**
@@ -113,11 +180,10 @@ export class DaemonRuntimeControl {
  * Folding admission into the application would make every focused test of the
  * pipeline go through a queue it is not testing.
  *
- * The budget is opened here, before admission, so queue time is inside the
- * request's total. That ordering is the whole reason this class exists rather
- * than a bare `lane.run(...)` at each entry point — three transports opening
- * their own budgets would be three chances to start the clock in the wrong
- * place.
+ * A Delivery transport opens the budget at byte arrival through the injected
+ * execution adapter. Direct application callers, including focused tests, get
+ * a budget here immediately before admission. In both paths the same wrapper
+ * is the only object allowed to enter the Resolve lane.
  */
 export class AdmissionControlledResolve implements ResolveContextApplication {
   readonly #control: DaemonRuntimeControl;
@@ -134,10 +200,14 @@ export class AdmissionControlledResolve implements ResolveContextApplication {
   async resolveContext(
     request: ResolveContextRequest,
   ): Promise<ContextResolution> {
-    const budget = this.#control.openBudget();
-    const lifetime = budget.totalSignal();
+    const transportBudget = this.#control.currentRequestBudget();
+    const budget = transportBudget ?? this.#control.openBudget();
+    const localLifetime =
+      transportBudget === undefined ? budget.totalSignal() : undefined;
+    const signal =
+      this.#control.currentRequestSignal() ?? localLifetime?.signal;
     try {
-      return await this.#control.resolve.run(
+      const resolution = await this.#control.resolve.run(
         async () => {
           // Re-checked after the wait. A request that queued past its own total
           // has nothing left to spend, and starting a selection for it would be
@@ -154,12 +224,14 @@ export class AdmissionControlledResolve implements ResolveContextApplication {
           budget.assertCanAssemble();
           return resolution;
         },
-        { signal: lifetime.signal },
+        { ...(signal === undefined ? {} : { signal }) },
       );
+      this.#control.markResolutionReady();
+      return resolution;
     } catch (cause: unknown) {
       throw toResolveFailure(cause);
     } finally {
-      lifetime.dispose();
+      localLifetime?.dispose();
     }
   }
 }

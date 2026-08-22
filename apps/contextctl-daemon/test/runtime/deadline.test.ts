@@ -139,6 +139,14 @@ describe("RequestBudget", () => {
       expect(budget.remainingMs).toBe(1_000);
       expect(budget.managedSearchMs).toBe(500);
     });
+
+    it("can start at the transport's earlier arrival instant", () => {
+      const clock = new ManualRuntimeClock(1_000);
+      const budget = RequestBudget.open(clock, DEADLINES, undefined, 250);
+
+      expect(budget.elapsedMs).toBe(750);
+      expect(budget.remainingMs).toBe(2_250);
+    });
   });
 
   describe("assembly", () => {
