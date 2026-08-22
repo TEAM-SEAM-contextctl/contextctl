@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -86,6 +87,7 @@ import {
   DaemonRuntimeControl,
 } from "./runtime/runtime-control.js";
 import { LaneBoundCardCandidateIndexStore } from "./runtime/lane-bound-card-candidate-index.js";
+import { LaneBoundIngestionEmbedding } from "./runtime/lane-bound-ingestion-embedding.js";
 import type { RuntimeClock } from "./runtime/clock.js";
 import type { DaemonRuntimeProfile } from "./runtime/profile.js";
 import { IngestionPublicationRepository } from "./adapters/ingestion-publication-repository.js";
@@ -382,8 +384,8 @@ export interface DaemonRuntime {
    *
    * Exposed because operating entry points outside this file admit through it:
    * the CLI runs ingest in the Ingestion lane, Registry intake claims in its
-   * own, and shutdown stops all four. A runtime that hid it would leave those
-   * callers to invent their own limits.
+   * own, and shutdown stops every admission boundary. A runtime that hid it
+   * would leave those callers to invent their own limits.
    */
   readonly control: DaemonRuntimeControl;
 }
@@ -559,7 +561,13 @@ export function createDaemonRuntime(
     connectorId,
     stateNamespaceId,
     securityDomain,
-    embeddingProvider,
+    // Publication batches have their own capacity. Managed-search query
+    // embeddings keep the unwrapped provider reference above, so background
+    // work cannot turn its batch ceiling into Resolve's ceiling.
+    embeddingProvider: new LaneBoundIngestionEmbedding(
+      embeddingProvider,
+      control.ingestionEmbedding,
+    ),
     vectorIndex,
     publications: ingestionPublications,
     indexPublications: publications,
@@ -886,37 +894,66 @@ export async function runDaemon(
     throw error;
   }
   const { lifecycle } = runtime.control;
-  // Registered outermost first, because shutdown releases in reverse: the HTTP
-  // listener stops before the database it would otherwise still be handing
-  // requests to.
+  // Registered from the inside out because shutdown releases in reverse: the
+  // HTTP listener stops before the database it would otherwise still be
+  // handing requests to.
+  lifecycle.registerCloseable("registry_database", () => {
+    runtime.database.close();
+  });
+
+  let stopHttpAccepting: (() => Promise<void>) | undefined;
   const httpPort = readHttpPort(environment);
   if (httpPort !== undefined) {
     const server = createDeliveryHttpServer(runtime.httpHandler);
     server.listen(httpPort);
+    let closeStarted: Promise<void> | undefined;
+    stopHttpAccepting = () => {
+      closeStarted ??= new Promise<void>((resolve, reject) => {
+        server.close((cause) =>
+          cause === undefined ? resolve() : reject(cause),
+        );
+      });
+      return closeStarted;
+    };
     lifecycle.registerCloseable(
       "http_server",
-      () =>
-        new Promise<void>((resolve, reject) => {
-          server.close((cause) => (cause === undefined ? resolve() : reject(cause)));
-        }),
+      async () => {
+        const stopped = stopHttpAccepting?.() ?? Promise.resolve();
+        // Admission has already drained. Connections still reading an
+        // incomplete body were never admitted and must not hold shutdown open
+        // forever; admitted responses have finished before this point.
+        server.closeAllConnections();
+        await stopped;
+      },
     );
   }
-  lifecycle.registerCloseable("registry_database", () => {
-    runtime.database.close();
-  });
+
+  // The Selection-owned stdio transport resolves only when its input ends.
+  // Ending process.stdin is not ours to do, so a small daemon-owned proxy gives
+  // a signal handler a closeable MCP ingress without mutating the caller's
+  // stream. It also lets the transport finish every message already framed
+  // before resources are released.
+  const mcpInput = new PassThrough();
+  const onStdinError = (cause: Error): void => {
+    mcpInput.destroy(cause);
+  };
+  process.stdin.once("error", onStdinError);
+  process.stdin.pipe(mcpInput);
 
   const onSignal = (): void => {
     // Refusal is immediate and separate from the wait. A daemon that started
     // draining only once the shutdown promise was awaited would keep admitting
     // for as long as it took the handler to get scheduled.
     lifecycle.beginDraining();
-    void lifecycle.shutdown();
+    void stopHttpAccepting?.().catch(() => undefined);
+    process.stdin.unpipe(mcpInput);
+    mcpInput.end();
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
 
   try {
-    await runStdioServer(runtime.mcpServer, process.stdin, process.stdout);
+    await runStdioServer(runtime.mcpServer, mcpInput, process.stdout);
   } finally {
     // stdin ending is an MCP client saying it is finished, which is the same
     // event as a signal from the process's point of view: stop admitting, let
@@ -925,6 +962,10 @@ export async function runDaemon(
     // start a second shutdown that closes everything twice.
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
+    process.stdin.removeListener("error", onStdinError);
+    process.stdin.unpipe(mcpInput);
+    lifecycle.beginDraining();
+    void stopHttpAccepting?.().catch(() => undefined);
     const failures = await lifecycle.shutdown();
     for (const failure of failures) {
       process.stderr.write(

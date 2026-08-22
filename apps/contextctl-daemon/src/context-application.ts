@@ -207,7 +207,13 @@ export class DaemonContextApplication
     // checks is what spends the time.
     deadline.assertCanAssemble();
 
-    return assembleContext(plan, outcomes, { budget });
+    const resolution = assembleContext(plan, outcomes, { budget });
+    // Assembly is synchronous and cannot be interrupted, so check again after
+    // it returns and discard a result that consumed the rest of the total. The
+    // earlier check protects the work from starting late; this one prevents a
+    // late result from crossing the application boundary as a success.
+    deadline.assertCanAssemble();
+    return resolution;
   }
 
   /**

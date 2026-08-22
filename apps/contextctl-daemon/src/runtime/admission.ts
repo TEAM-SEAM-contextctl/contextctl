@@ -3,15 +3,16 @@ import type { LaneCapacity } from "./profile.js";
 /**
  * The lanes the daemon admits work into.
  *
- * Named rather than free-form so a lane cannot be created by a caller that
- * wanted its own capacity. The design fixes four, and a fifth would be capacity
- * nobody sized.
+ * Named rather than free-form so a caller cannot invent capacity. The design
+ * fixes four operating areas and one explicit sub-boundary for Ingestion's
+ * provider batches; every value is therefore sized by the runtime profile.
  */
 export type LaneName =
   | "resolve"
   | "registry_consume"
   | "selection_assets"
-  | "ingestion";
+  | "ingestion"
+  | "ingestion_embedding";
 
 /**
  * The lane refused the work outright.
@@ -35,7 +36,10 @@ export class LaneOverloadedError extends Error {
 
 /** The work was cancelled before or while it ran. */
 export class LaneCancelledError extends Error {
-  constructor(readonly lane: LaneName) {
+  constructor(
+    readonly lane: LaneName,
+    readonly reason?: unknown,
+  ) {
     super(`${lane} lane work was cancelled`);
     this.name = "LaneCancelledError";
   }
@@ -149,7 +153,7 @@ export class AdmissionLane {
       throw new LaneClosedError(this.#name);
     }
     if (options.signal?.aborted === true) {
-      throw new LaneCancelledError(this.#name);
+      throw new LaneCancelledError(this.#name, options.signal.reason);
     }
 
     if (this.#active < this.#capacity.concurrency) {
@@ -169,7 +173,7 @@ export class AdmissionLane {
         entry.settled = true;
         entry.detach();
         this.#removeQueued(entry as QueuedEntry<unknown>);
-        reject(new LaneCancelledError(this.#name));
+        reject(new LaneCancelledError(this.#name, options.signal?.reason));
       };
       const entry: QueuedEntry<T> = {
         run: task,
@@ -183,6 +187,15 @@ export class AdmissionLane {
       };
 
       options.signal?.addEventListener("abort", onAbort, { once: true });
+      // AbortSignal does not replay an abort to a listener attached after the
+      // event. The signal can change between the check at the top of `run` and
+      // this subscription, so re-check before the entry becomes visible in the
+      // queue. Otherwise an already abandoned request can occupy capacity until
+      // some unrelated running task happens to promote it.
+      if (options.signal?.aborted === true) {
+        onAbort();
+        return;
+      }
       this.#queue.push(entry as QueuedEntry<unknown>);
     });
   }
@@ -201,7 +214,9 @@ export class AdmissionLane {
     this.#active += 1;
     const controller = new AbortController();
     const onCallerAbort = (): void => {
-      controller.abort(new LaneCancelledError(this.#name));
+      controller.abort(
+        caller?.reason ?? new LaneCancelledError(this.#name),
+      );
     };
     if (caller !== undefined) {
       if (caller.aborted) {

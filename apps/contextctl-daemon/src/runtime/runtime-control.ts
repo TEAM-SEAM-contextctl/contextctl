@@ -8,6 +8,7 @@ import {
 import type { BudgetedResolveApplication } from "../context-application.js";
 import {
   AdmissionLane,
+  LaneCancelledError,
   LaneClosedError,
   LaneOverloadedError,
   type LaneDepth,
@@ -26,9 +27,9 @@ import {
 } from "./profile.js";
 
 /**
- * The four lanes and the lifecycle that closes them.
+ * The operating lanes and the lifecycle that closes them.
  *
- * One object rather than four loose values, because they are only correct
+ * One object rather than loose values, because they are only correct
  * together: the lifecycle has to know every lane in order to stop admitting
  * into all of them at once, and a status surface has to read every lane in
  * order to report a process rather than a part of one.
@@ -40,6 +41,7 @@ export class DaemonRuntimeControl {
   readonly registryConsume: AdmissionLane;
   readonly selectionAssets: AdmissionLane;
   readonly ingestion: AdmissionLane;
+  readonly ingestionEmbedding: AdmissionLane;
   readonly lifecycle: DaemonLifecycle;
 
   constructor(
@@ -65,6 +67,10 @@ export class DaemonRuntimeControl {
       this.profile.lanes.selectionAssets,
     );
     this.ingestion = new AdmissionLane("ingestion", this.profile.lanes.ingestion);
+    this.ingestionEmbedding = new AdmissionLane(
+      "ingestion_embedding",
+      this.profile.lanes.ingestionEmbedding,
+    );
 
     this.lifecycle = new DaemonLifecycle({
       clock: this.clock,
@@ -76,12 +82,13 @@ export class DaemonRuntimeControl {
         this.registryConsume,
         this.selectionAssets,
         this.ingestion,
+        this.ingestionEmbedding,
       ],
       drainTimeoutMs: this.profile.deadlines.totalMs,
     });
   }
 
-  /** Every lane's activity, in a fixed order an operator can scan. */
+  /** Every top-level operating area's activity, in a fixed order. */
   depths(): readonly LaneDepth[] {
     return [
       this.resolve.depth,
@@ -128,16 +135,31 @@ export class AdmissionControlledResolve implements ResolveContextApplication {
     request: ResolveContextRequest,
   ): Promise<ContextResolution> {
     const budget = this.#control.openBudget();
+    const lifetime = budget.totalSignal();
     try {
-      return await this.#control.resolve.run(async () => {
-        // Re-checked after the wait. A request that queued past its own total
-        // has nothing left to spend, and starting a selection for it would be
-        // work done on behalf of a caller who is no longer there.
-        budget.assertCanAssemble();
-        return await this.#application.resolveWithin(request, budget);
-      });
+      return await this.#control.resolve.run(
+        async () => {
+          // Re-checked after the wait. A request that queued past its own total
+          // has nothing left to spend, and starting a selection for it would be
+          // work done on behalf of a caller who is no longer there.
+          budget.assertCanAssemble();
+          const resolution = await this.#application.resolveWithin(
+            request,
+            budget,
+          );
+          // The concrete daemon application checks after assembly too, but the
+          // admission boundary must hold for every implementation of this
+          // internal port. A late success from a replacement implementation is
+          // still a late success and must not reach a transport.
+          budget.assertCanAssemble();
+          return resolution;
+        },
+        { signal: lifetime.signal },
+      );
     } catch (cause: unknown) {
       throw toResolveFailure(cause);
+    } finally {
+      lifetime.dispose();
     }
   }
 }
@@ -152,6 +174,15 @@ export class AdmissionControlledResolve implements ResolveContextApplication {
  * failure, which says the daemon broke rather than that it is full.
  */
 export function toResolveFailure(cause: unknown): unknown {
+  if (
+    cause instanceof LaneCancelledError &&
+    cause.reason instanceof RequestDeadlineExceededError
+  ) {
+    return new ResolveContextFailure(
+      "deadline_exceeded",
+      "The request exceeded its time budget.",
+    );
+  }
   if (cause instanceof LaneOverloadedError || cause instanceof LaneClosedError) {
     return new ResolveContextFailure(
       "overloaded",

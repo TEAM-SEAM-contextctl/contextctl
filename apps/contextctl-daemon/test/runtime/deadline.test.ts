@@ -27,6 +27,10 @@ describe("daemon runtime profile", () => {
       concurrency: 8,
       queueDepth: 32,
     });
+    expect(DAEMON_RUNTIME_PROFILE_V1.lanes.ingestionEmbedding).toEqual({
+      concurrency: 2,
+      queueDepth: 0,
+    });
     expect(DAEMON_RUNTIME_PROFILE_V1.version).toBe("daemon-runtime-profile-v1");
   });
 
@@ -165,6 +169,39 @@ describe("RequestBudget", () => {
       expect(() => budget.assertCanAssemble()).toThrowError(
         RequestDeadlineExceededError,
       );
+    });
+  });
+
+  describe("whole-request signalling", () => {
+    it("aborts at the total deadline and disarms on dispose", () => {
+      const clock = new ManualRuntimeClock();
+      const budget = RequestBudget.open(clock, DEADLINES);
+      clock.advance(1_000);
+
+      const lifetime = budget.totalSignal();
+      expect(clock.pending).toBe(1);
+      clock.advance(1_999);
+      expect(lifetime.signal.aborted).toBe(false);
+      clock.advance(1);
+      expect(lifetime.signal.reason).toBeInstanceOf(
+        RequestDeadlineExceededError,
+      );
+      lifetime.dispose();
+      expect(clock.pending).toBe(0);
+    });
+
+    it("opens aborted when its caller already left", () => {
+      const clock = new ManualRuntimeClock();
+      const caller = new AbortController();
+      caller.abort();
+      const budget = RequestBudget.open(clock, DEADLINES, caller.signal);
+
+      const lifetime = budget.totalSignal();
+      expect(lifetime.signal.aborted).toBe(true);
+      expect(lifetime.signal.reason).toBeInstanceOf(
+        RequestDeadlineExceededError,
+      );
+      expect(clock.pending).toBe(0);
     });
   });
 
