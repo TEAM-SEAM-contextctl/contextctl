@@ -179,8 +179,9 @@ describe("resolveCardMeaningBackend", () => {
       Promise.reject(new Error(`connect ECONNREFUSED ${SECRET}`));
     const { backend, fallbacks } = resolveWith(fullEnvironment, failingFetch);
 
-    const meaning = await backend.generator.generate(request);
+    const { meaning, origin } = await backend.generator.generate(request);
 
+    expect(origin.fallbackFromModel).toBe("gemma4-12b-qat");
     expect(meaning.description).toBe(
       "Semantic unit unit_01890f5c-7b1a-7898-8dae-639abbaee4d4 of document doc_a. document.title: 운영 안내",
     );
@@ -211,9 +212,10 @@ describe("resolveCardMeaningBackend", () => {
     };
     const { backend, fallbacks } = resolveWith(fullEnvironment, okFetch);
 
-    const meaning = await backend.generator.generate(request);
+    const generated = await backend.generator.generate(request);
 
-    expect(meaning).toEqual(written);
+    expect(generated.meaning).toEqual(written);
+    expect(generated.origin).toEqual({ generator: "model", model: "gemma4-12b-qat" });
     expect(fallbacks).toHaveLength(0);
     expect(requestedUrls).toEqual([
       "https://gllm.example.test/v1/chat/completions",

@@ -1,4 +1,7 @@
-import type { PublishedSourceCoordinate } from "@contextctl/contracts";
+import type {
+  PublishedFact,
+  PublishedSourceCoordinate,
+} from "@contextctl/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { CardMeaning } from "../../src/domain/context-card.js";
@@ -47,6 +50,14 @@ const documentScope: ManagedDocumentScope = {
   },
 };
 
+/** The unit's observed facts, the closed vocabulary grounding checks against. */
+const FACTS: readonly PublishedFact[] = [
+  { name: "section.label", value: "Payment failures" },
+];
+
+/** The baseline origin: deterministic text needs no semantic review. */
+const DETERMINISTIC = { generator: "deterministic" } as const;
+
 const meaning: CardMeaning = {
   description: "환불 실패 결제의 재시도 정책",
   representativeQuestions: ["결제가 실패하면 언제 재시도되나요?"],
@@ -55,16 +66,21 @@ const meaning: CardMeaning = {
 };
 
 function rules(result: ReturnType<typeof groundCardVersion>): string[] {
-  return result.outcome === "rejected"
-    ? result.findings.map((finding) => finding.rule)
-    : [];
+  return result.findings.map((finding) => finding.rule);
 }
 
 describe("groundCardVersion", () => {
   it("validates a card whose scope matches the observed coordinate", () => {
-    expect(
-      groundCardVersion(documentCoordinate, [documentScope], meaning),
-    ).toEqual({ outcome: "validated" });
+    const report = groundCardVersion({
+      coordinate: documentCoordinate,
+      facts: FACTS,
+      scopes: [documentScope],
+      meaning,
+      origin: DETERMINISTIC,
+    });
+
+    expect(report.verdict).toBe("validated");
+    expect(report.findings).toEqual([]);
   });
 
   it("rejects a SQL column that the observed table does not have", () => {
@@ -77,7 +93,7 @@ describe("groundCardVersion", () => {
       columns: ["status", "card_number"],
     };
 
-    const result = groundCardVersion(sqlCoordinate, [scope], meaning);
+    const result = groundCardVersion({ coordinate: sqlCoordinate, facts: FACTS, scopes: [scope], meaning: meaning, origin: DETERMINISTIC });
 
     expect(rules(result)).toEqual(["scope.sql.columns"]);
   });
@@ -92,7 +108,7 @@ describe("groundCardVersion", () => {
       columns: ["status"],
     };
 
-    expect(rules(groundCardVersion(sqlCoordinate, [scope], meaning))).toEqual([
+    expect(rules(groundCardVersion({ coordinate: sqlCoordinate, facts: FACTS, scopes: [scope], meaning: meaning, origin: DETERMINISTIC }))).toEqual([
       "scope.sql.table",
     ]);
   });
@@ -116,7 +132,7 @@ describe("groundCardVersion", () => {
       parameters: [],
     };
 
-    expect(rules(groundCardVersion(httpCoordinate, [scope], meaning))).toEqual([
+    expect(rules(groundCardVersion({ coordinate: httpCoordinate, facts: FACTS, scopes: [scope], meaning: meaning, origin: DETERMINISTIC }))).toEqual([
       "scope.http.path",
     ]);
   });
@@ -128,7 +144,7 @@ describe("groundCardVersion", () => {
     };
 
     expect(
-      rules(groundCardVersion(documentCoordinate, [scope], meaning)),
+      rules(groundCardVersion({ coordinate: documentCoordinate, facts: FACTS, scopes: [scope], meaning: meaning, origin: DETERMINISTIC })),
     ).toEqual(["scope.document.documentId"]);
   });
 
@@ -139,12 +155,12 @@ describe("groundCardVersion", () => {
     };
 
     expect(
-      rules(groundCardVersion(documentCoordinate, [scope], meaning)),
+      rules(groundCardVersion({ coordinate: documentCoordinate, facts: FACTS, scopes: [scope], meaning: meaning, origin: DETERMINISTIC })),
     ).toEqual(["scope.document.semanticUnitIds"]);
   });
 
   it("rejects a scope kind incompatible with the coordinate", () => {
-    expect(rules(groundCardVersion(sqlCoordinate, [documentScope], meaning))).toEqual(
+    expect(rules(groundCardVersion({ coordinate: sqlCoordinate, facts: FACTS, scopes: [documentScope], meaning: meaning, origin: DETERMINISTIC }))).toEqual(
       ["scope.kind"],
     );
   });
@@ -158,12 +174,12 @@ describe("groundCardVersion", () => {
     };
 
     expect(
-      rules(groundCardVersion(documentCoordinate, [documentScope], blank)),
+      rules(groundCardVersion({ coordinate: documentCoordinate, facts: FACTS, scopes: [documentScope], meaning: blank, origin: DETERMINISTIC })),
     ).toEqual(["meaning.description", "meaning.representativeQuestions"]);
   });
 
   it("rejects a card version that carries no scope at all", () => {
-    expect(rules(groundCardVersion(documentCoordinate, [], meaning))).toEqual([
+    expect(rules(groundCardVersion({ coordinate: documentCoordinate, facts: FACTS, scopes: [], meaning: meaning, origin: DETERMINISTIC }))).toEqual([
       "scope.present",
     ]);
   });
@@ -173,21 +189,21 @@ describe("groundCardVersion", () => {
     // like a description, so it would be served as if it were whole and the
     // operator who could have fixed it never learns it was too long.
     function ground(overrides: Partial<CardMeaning>) {
-      return groundCardVersion(documentCoordinate, [documentScope], {
+      return groundCardVersion({ coordinate: documentCoordinate, facts: FACTS, scopes: [documentScope], meaning: {
         ...meaning,
         ...overrides,
-      });
+      }, origin: DETERMINISTIC });
     }
 
     it("rejects a description over 1,024 code units", () => {
       const result = ground({ description: "가".repeat(1_025) });
 
       expect(rules(result)).toContain("meaning.description");
-      expect(result.outcome).toBe("rejected");
+      expect(result.verdict).toBe("rejected");
     });
 
     it("accepts a description exactly at the limit", () => {
-      expect(ground({ description: "가".repeat(1_024) }).outcome).toBe(
+      expect(ground({ description: "가".repeat(1_024) }).verdict).toBe(
         "validated",
       );
     });
@@ -258,7 +274,7 @@ describe("groundCardVersion", () => {
         },
       }));
 
-      const result = groundCardVersion(documentCoordinate, scopes, meaning);
+      const result = groundCardVersion({ coordinate: documentCoordinate, facts: FACTS, scopes: scopes, meaning: meaning, origin: DETERMINISTIC });
 
       expect(rules(result)).toContain("scope.count");
     });
@@ -266,9 +282,156 @@ describe("groundCardVersion", () => {
     it("accepts exactly 64 scopes", () => {
       const scopes = Array.from({ length: 64 }, () => documentScope);
 
-      expect(rules(groundCardVersion(documentCoordinate, scopes, meaning))).not.toContain(
+      expect(rules(groundCardVersion({ coordinate: documentCoordinate, facts: FACTS, scopes: scopes, meaning: meaning, origin: DETERMINISTIC }))).not.toContain(
         "scope.count",
       );
+    });
+  });
+
+  describe("machine fragments are checked against the facts", () => {
+    // The completion condition of SEAM-106 §6.4, as behaviour: identifiers,
+    // numbers and enumerated values that look machine-readable must exist in
+    // the unit's facts or coordinate. Values from another knowledge unit fail
+    // the same way fabricated ones do — they are absent from *this* unit.
+    const sqlFacts: readonly PublishedFact[] = [
+      { name: "sql.approximate_row_count", value: 1200 },
+      { name: "sql.columns", value: ["created_at", "failed_reason", "status"] },
+    ];
+    const sqlScope: RetrievalScope = {
+      kind: "sql_source",
+      reference: { scopeId: "scope_payments_table", scopeVersion: "scpv_cccc" },
+      connector: "postgres.main",
+      schema: "public",
+      table: "payments",
+      columns: ["failed_reason", "status"],
+    };
+
+    function groundSql(overrides: Partial<CardMeaning>) {
+      return groundCardVersion({
+        coordinate: sqlCoordinate,
+        facts: sqlFacts,
+        scopes: [sqlScope],
+        meaning: { ...meaning, ...overrides },
+        origin: DETERMINISTIC,
+      });
+    }
+
+    it("accepts values that all exist in the facts and coordinate", () => {
+      const report = groundSql({
+        description: "public.payments 테이블의 failed_reason, 약 1200행",
+      });
+
+      expect(report.verdict).toBe("validated");
+    });
+
+    it("rejects a column carried over from a different knowledge unit", () => {
+      // `shipment_status` is a real-looking column — of some other table. It is
+      // absent from this unit's facts and coordinate, which is the only test a
+      // deterministic checker can apply, and the right one: mixing units and
+      // inventing values are the same defect seen from here.
+      const report = groundSql({
+        description: "payments 테이블은 shipment_status 컬럼을 담는다",
+      });
+
+      expect(report.verdict).toBe("rejected");
+      expect(report.findings).toEqual([
+        expect.objectContaining({
+          rule: "meaning.fabricatedValue",
+          severity: "fatal",
+        }),
+      ]);
+    });
+
+    it("rejects an altered number", () => {
+      // The observed row count is 1200. A description that says 8000 reads as
+      // authoritative and is checkable — so it is checked.
+      const report = groundSql({ description: "약 8000행을 담는 테이블" });
+
+      expect(report.verdict).toBe("rejected");
+      expect(report.findings[0]?.message).toContain("8000");
+    });
+
+    it("rejects an enumerated value the coordinate contradicts", () => {
+      const report = groundCardVersion({
+        coordinate: httpCoordinate,
+        facts: [{ name: "http.operation_id", value: "getPayment" }],
+        scopes: [
+          {
+            kind: "http_source",
+            reference: { scopeId: "scope_get_payment", scopeVersion: "scpv_dddd" },
+            connector: "payments.api",
+            method: "GET",
+            path: "/payments/{id}",
+            operationId: "getPayment",
+            parameters: [{ location: "path", name: "id", required: true }],
+          },
+        ],
+        meaning: { ...meaning, description: "POST /payments/{id} 를 호출한다" },
+        origin: DETERMINISTIC,
+      });
+
+      expect(report.verdict).toBe("rejected");
+      expect(report.findings[0]?.message).toContain("POST");
+    });
+
+    it("does not reject prose for being prose", () => {
+      // Sentences in any language carry no machine-shaped token, so nothing is
+      // extracted and nothing can be fabricated.
+      const report = groundSql({
+        description: "결제 실패가 기록되는 곳을 설명하는 문서",
+      });
+
+      expect(report.verdict).toBe("validated");
+    });
+  });
+
+  describe("three-way verdict and coverage", () => {
+    it("marks model-authored expression for review, never plain validated", () => {
+      // Structure and facts check out, and the verdict still is not
+      // `validated`: a machine cannot prove the model's sentence faithful, so
+      // the judgement is recorded as pending. Auto-approval of a model version
+      // is impossible twice over — promotion is an operator command, and now
+      // the report says review even before anyone reads the text.
+      const report = groundCardVersion({
+        coordinate: documentCoordinate,
+        facts: FACTS,
+        scopes: [documentScope],
+        meaning,
+        origin: { generator: "model", model: "gemma4-12b-qat" },
+      });
+
+      expect(report.verdict).toBe("needs_review");
+      expect(report.findings).toEqual([
+        expect.objectContaining({ rule: "meaning.modelAuthored", severity: "review" }),
+      ]);
+      expect(report.origin).toEqual({
+        generator: "model",
+        model: "gemma4-12b-qat",
+      });
+    });
+
+    it("counts a fact as covered only when its value appears in the text", () => {
+      const report = groundCardVersion({
+        coordinate: documentCoordinate,
+        facts: [
+          { name: "section.label", value: "Payment failures" },
+          { name: "document.title", value: "운영 안내" },
+        ],
+        scopes: [documentScope],
+        meaning: {
+          ...meaning,
+          description: "운영 안내 문서의 결제 절",
+        },
+        origin: DETERMINISTIC,
+      });
+
+      // Informational, not a gate: coverage tells the reviewing operator what
+      // the text reflects, and the glossary forbids using it as approval basis.
+      expect(report.factCoverage).toEqual({
+        covered: ["document.title"],
+        uncovered: ["section.label"],
+      });
+      expect(report.verdict).toBe("validated");
     });
   });
 });

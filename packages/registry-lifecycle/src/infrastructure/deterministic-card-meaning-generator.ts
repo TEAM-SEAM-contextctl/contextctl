@@ -4,10 +4,10 @@ import type {
   PublishedSourceCoordinate,
 } from "@contextctl/contracts";
 
-import type { CardMeaning } from "../domain/context-card.js";
 import type {
   CardMeaningGenerator,
   CardMeaningRequest,
+  GeneratedCardMeaning,
 } from "../ports/card-meaning-generator.js";
 
 /**
@@ -34,14 +34,17 @@ import type {
  * therefore select none; a Korean heading is true of one.
  */
 export class DeterministicCardMeaningGenerator implements CardMeaningGenerator {
-  async generate(request: CardMeaningRequest): Promise<CardMeaning> {
+  async generate(request: CardMeaningRequest): Promise<GeneratedCardMeaning> {
     const { coordinate, facts } = request;
 
     return {
-      description: describe(coordinate, facts),
-      representativeQuestions: [askAbout(coordinate)],
-      aliases: aliasesFor(coordinate, facts),
-      keywords: keywordsFor(coordinate, facts),
+      meaning: {
+        description: describe(coordinate, facts),
+        representativeQuestions: [askAbout(coordinate)],
+        aliases: aliasesFor(coordinate, facts),
+        keywords: keywordsFor(coordinate, facts),
+      },
+      origin: { generator: "deterministic" },
     };
   }
 }

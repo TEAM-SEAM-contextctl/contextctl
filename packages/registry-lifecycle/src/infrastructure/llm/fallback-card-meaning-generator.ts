@@ -1,7 +1,7 @@
-import type { CardMeaning } from "../../domain/context-card.js";
 import type {
   CardMeaningGenerator,
   CardMeaningRequest,
+  GeneratedCardMeaning,
 } from "../../ports/card-meaning-generator.js";
 import {
   CardMeaningGenerationError,
@@ -36,19 +36,29 @@ export interface CardMeaningFallbackReport {
 export class FallbackCardMeaningGenerator implements CardMeaningGenerator {
   readonly #primary: CardMeaningGenerator;
   readonly #fallback: CardMeaningGenerator;
+  readonly #primaryModel: string;
   readonly #report: (report: CardMeaningFallbackReport) => void;
 
   constructor(
     primary: CardMeaningGenerator,
     fallback: CardMeaningGenerator,
-    report: (report: CardMeaningFallbackReport) => void = () => {},
+    options: {
+      /**
+       * The model the primary would have used, for the version's origin
+       * record. The primary threw before it could say so itself, and the
+       * composition that constructed it is the one place that knows.
+       */
+      readonly primaryModel: string;
+      readonly report?: (report: CardMeaningFallbackReport) => void;
+    },
   ) {
     this.#primary = primary;
     this.#fallback = fallback;
-    this.#report = report;
+    this.#primaryModel = options.primaryModel;
+    this.#report = options.report ?? (() => {});
   }
 
-  async generate(request: CardMeaningRequest): Promise<CardMeaning> {
+  async generate(request: CardMeaningRequest): Promise<GeneratedCardMeaning> {
     try {
       return await this.#primary.generate(request);
     } catch (error) {
@@ -60,7 +70,13 @@ export class FallbackCardMeaningGenerator implements CardMeaningGenerator {
       });
       // The fallback is deterministic and needs nothing external, so a failure
       // here is a defect rather than an outage. It is left to propagate.
-      return this.#fallback.generate(request);
+      const degraded = await this.#fallback.generate(request);
+      // The words are the fallback's, but the version has to say the model was
+      // down when they were written — that is the whole point of the record.
+      return {
+        ...degraded,
+        origin: { ...degraded.origin, fallbackFromModel: this.#primaryModel },
+      };
     }
   }
 }

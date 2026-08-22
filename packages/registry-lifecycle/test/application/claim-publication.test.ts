@@ -63,7 +63,9 @@ function createFakePorts(
       },
       listCursors: async () => [...cursors.values()],
     },
-    meanings: { generate: async () => meaning },
+    meanings: {
+      generate: async () => ({ meaning, origin: { generator: "deterministic" } }),
+    },
     clock: { now: () => "2026-07-30T00:00:00.000Z" },
     ids: {
       nextId: () => {
@@ -116,6 +118,15 @@ describe("claimPublication", () => {
             ],
             validationState: "validated",
             createdAt: "2026-07-30T00:00:00.000Z",
+            // The version carries what it was judged with: the words, and the
+            // report that judged them.
+            meaning: groundedMeaning,
+            grounding: {
+              verdict: "validated",
+              findings: [],
+              factCoverage: { covered: [], uncovered: ["section.label"] },
+              origin: { generator: "deterministic" },
+            },
           },
           findings: [],
         },

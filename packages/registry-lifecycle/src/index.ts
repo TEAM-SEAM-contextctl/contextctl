@@ -1,13 +1,16 @@
 export {
   createContextCard,
   isCardApproved,
+  withCardMeaning,
   withCardVersions,
   type CardMeaning,
+  type CardMeaningOrigin,
   type CardPolicy,
   type ContextCard,
 } from "./domain/context-card.js";
 export {
   appendCardVersion,
+  compareCardVersionMeaning,
   createCardVersionHistory,
   getCurrentCardVersion,
   precedesCurrentCardVersion,
@@ -18,6 +21,7 @@ export {
   type CardVersion,
   type CardVersionHistory,
   type CardVersionId,
+  type MeaningChangeComparison,
 } from "./domain/card-version.js";
 export {
   checkCatalogSnapshotLimits,
@@ -78,8 +82,11 @@ export {
 } from "./domain/retrieval-scope.js";
 export {
   groundCardVersion,
+  type FactCoverage,
   type GroundingFinding,
-  type GroundingResult,
+  type GroundingInput,
+  type GroundingReport,
+  type GroundingVerdict,
 } from "./domain/fact-grounding.js";
 export {
   analyzeCardImpact,

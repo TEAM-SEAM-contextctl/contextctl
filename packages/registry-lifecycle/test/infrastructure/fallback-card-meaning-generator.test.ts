@@ -32,6 +32,11 @@ const modelMeaning: CardMeaning = {
   keywords: [],
 };
 
+const modelAnswer = {
+  meaning: modelMeaning,
+  origin: { generator: "model", model: "gemma4-12b-qat" },
+} as const;
+
 function failing(error: unknown): CardMeaningGenerator {
   return {
     generate: async () => {
@@ -44,12 +49,14 @@ describe("FallbackCardMeaningGenerator", () => {
   it("uses the model when it answers", async () => {
     const reports: CardMeaningFallbackReport[] = [];
     const generator = new FallbackCardMeaningGenerator(
-      { generate: async () => modelMeaning },
+      { generate: async () => modelAnswer },
       new DeterministicCardMeaningGenerator(),
-      (report) => reports.push(report),
+      { primaryModel: "gemma4-12b-qat", report: (report) => reports.push(report) },
     );
 
-    await expect(generator.generate(request)).resolves.toEqual(modelMeaning);
+    // The origin passes through untouched: nothing degraded, so nothing may
+    // claim it did.
+    await expect(generator.generate(request)).resolves.toEqual(modelAnswer);
     expect(reports).toEqual([]);
   });
 
@@ -59,11 +66,18 @@ describe("FallbackCardMeaningGenerator", () => {
     const generator = new FallbackCardMeaningGenerator(
       failing(new CardMeaningGenerationError("transport", "unreachable")),
       new DeterministicCardMeaningGenerator(),
+      { primaryModel: "gemma4-12b-qat" },
     );
 
-    const meaning = await generator.generate(request);
+    const { meaning, origin } = await generator.generate(request);
 
     expect(meaning.description).toContain("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd");
+    // The durable trace of the outage, on the version it shaped: the words are
+    // the deterministic generator's, and the origin says which model was down.
+    expect(origin).toEqual({
+      generator: "deterministic",
+      fallbackFromModel: "gemma4-12b-qat",
+    });
   });
 
   it("reports each fallback with the reason kept distinct", async () => {
@@ -73,7 +87,7 @@ describe("FallbackCardMeaningGenerator", () => {
       await new FallbackCardMeaningGenerator(
         failing(new CardMeaningGenerationError(kind, `${kind} happened`)),
         deterministic,
-        (report) => reports.push(report),
+        { primaryModel: "gemma4-12b-qat", report: (report) => reports.push(report) },
       ).generate(request);
     }
 
@@ -91,7 +105,7 @@ describe("FallbackCardMeaningGenerator", () => {
     const generator = new FallbackCardMeaningGenerator(
       failing(new Error("something else broke")),
       new DeterministicCardMeaningGenerator(),
-      (report) => reports.push(report),
+      { primaryModel: "gemma4-12b-qat", report: (report) => reports.push(report) },
     );
 
     await generator.generate(request);
@@ -106,6 +120,7 @@ describe("FallbackCardMeaningGenerator", () => {
     const generator = new FallbackCardMeaningGenerator(
       failing(new CardMeaningGenerationError("timeout", "slow")),
       failing(new Error("deterministic generator is broken")),
+      { primaryModel: "gemma4-12b-qat" },
     );
 
     await expect(generator.generate(request)).rejects.toThrow(

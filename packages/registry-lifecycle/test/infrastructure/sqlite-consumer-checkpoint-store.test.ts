@@ -63,10 +63,13 @@ describe("SqliteConsumerCheckpointStore", () => {
       publications: { findById: async () => publication },
       meanings: {
         generate: async () => ({
-          description: "결제 실패 재시도 정책",
-          representativeQuestions: ["결제가 실패하면 언제 재시도되나요?"],
-          aliases: [],
-          keywords: [],
+          meaning: {
+            description: "결제 실패 재시도 정책",
+            representativeQuestions: ["결제가 실패하면 언제 재시도되나요?"],
+            aliases: [],
+            keywords: [],
+          },
+          origin: { generator: "deterministic" as const },
         }),
       },
       clock: { now },

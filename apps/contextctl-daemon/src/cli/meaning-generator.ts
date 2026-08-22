@@ -151,13 +151,12 @@ export function resolveCardMeaningBackend(input: {
 
   return {
     kind: "llm_with_fallback",
-    generator: new FallbackCardMeaningGenerator(
-      primary,
-      deterministic,
-      (report) => {
+    generator: new FallbackCardMeaningGenerator(primary, deterministic, {
+      primaryModel: model,
+      report: (report) => {
         input.onFallback(maskSecret(describeFallback(report), apiKey));
       },
-    ),
+    }),
     model: maskSecret(model, apiKey),
     endpoint: maskSecret(baseUrl, apiKey),
     notices: redundantVersionPrefixNotices(baseUrl, apiKey),
