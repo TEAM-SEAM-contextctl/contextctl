@@ -1,14 +1,12 @@
-import type {
-  IngestionPublication,
-  PublicationId,
-  PublishedKnowledgeUnit,
-} from "@contextctl/contracts";
+import type { IngestionPublication, PublicationId } from "@contextctl/contracts";
 
 import type { CardImpact } from "../domain/card-impact.js";
 import {
   appendCardVersion,
+  compareCardVersionMeaning,
   withdrawCurrentVersion,
   type CardId,
+  type CardVersion,
 } from "../domain/card-version.js";
 import {
   createContextCard,
@@ -17,7 +15,6 @@ import {
   type ContextCard,
 } from "../domain/context-card.js";
 import type { LifecycleEvent } from "../domain/lifecycle-event.js";
-import type { CardMeaningRequest } from "../ports/card-meaning-generator.js";
 import type { CardStore } from "../ports/card-store.js";
 import type { IntakeStore, IntakenCard } from "../ports/intake-store.js";
 import { assessPublicationImpact } from "./assess-publication-impact.js";
@@ -89,7 +86,7 @@ export async function intakePublication(
   }
 
   const draft = new IntakeDraft();
-  await addClaimedVersions(ports, options, publication, claimed.cardVersions, draft);
+  await addClaimedVersions(ports, options, claimed.cardVersions, draft);
   await applyImpacts(ports, publication, draft);
 
   await ports.intake.commit({ cards: draft.entries(), cursor: claimed.cursor });
@@ -129,16 +126,11 @@ class IntakeDraft {
 async function addClaimedVersions(
   ports: IntakePublicationPorts,
   options: IntakePublicationOptions,
-  publication: IngestionPublication,
   claimedVersions: readonly ClaimedCardVersion[],
   draft: IntakeDraft,
 ): Promise<void> {
-  const units = new Map(
-    publication.knowledgeUnits.map((unit) => [unit.id, unit] as const),
-  );
-
   for (const { version } of claimedVersions) {
-    const card = await loadOrCreateCard(ports, options, version.cardId, units);
+    const card = await loadOrCreateCard(ports, options, version);
     const event: LifecycleEvent = {
       id: ports.ids.nextId(),
       kind: "card_version_added",
@@ -149,10 +141,30 @@ async function addClaimedVersions(
     };
     draft.set(
       version.cardId,
-      withCardVersions(card, appendCardVersion(card.versions, version)),
+      withCardVersions(
+        card,
+        appendCardVersion(card.versions, withChangeComparison(card, version)),
+      ),
       [event],
     );
   }
+}
+
+/**
+ * The version, annotated with what it changes against the Card's latest one.
+ *
+ * Computed here rather than in the claim because only intake holds the stored
+ * Card: the claim decides from the Publication alone and has no predecessor to
+ * compare against. First versions, and successors of versions written before
+ * meanings were stored, carry no comparison.
+ */
+function withChangeComparison(card: ContextCard, version: CardVersion): CardVersion {
+  const previous = card.versions.versions.at(-1);
+  if (previous === undefined) {
+    return version;
+  }
+  const comparison = compareCardVersionMeaning(previous, version);
+  return comparison === undefined ? version : { ...version, changeFromPrevious: comparison };
 }
 
 /**
@@ -243,46 +255,28 @@ async function cardUnderImpact(
 }
 
 /**
- * The stored Card, or a new one described from its Knowledge Unit.
+ * The stored Card, or a new one carrying the version's own meaning.
  *
- * The meaning is generated again here rather than reused from the claim — the
- * local generator is deterministic, so the text is the same one grounding
- * accepted. A model-backed generator makes the two differ, and carrying the
- * meaning on the claim result is the fix; it belongs with the fact-grounding
- * work (SEAM-112) rather than here, because that is where the two texts start
- * being compared at all.
+ * The claim already generated the meaning once and the version carries it, so
+ * intake reuses that text instead of calling the generator again. With the
+ * deterministic generator the two calls were identical; with a model they are
+ * not, and a Card whose stored meaning differed from the text grounding
+ * actually judged would make the grounding report describe words the catalog
+ * never serves.
  */
 async function loadOrCreateCard(
   ports: IntakePublicationPorts,
   options: IntakePublicationOptions,
-  cardId: CardId,
-  units: ReadonlyMap<string, PublishedKnowledgeUnit>,
+  version: CardVersion,
 ): Promise<ContextCard> {
-  const existing = await ports.cards.findCard(cardId);
-  return (
-    existing ??
-    createContextCard(
-      cardId,
-      await ports.meanings.generate(meaningRequestFor(cardId, units)),
-      options.policy,
-    )
-  );
-}
-
-/**
- * The generator input for a Card being created, from the unit it describes.
- *
- * Unreachable for anything a claim produced — a claimed version always names a
- * unit of the Publication it came from — so the throw is a statement about that
- * invariant rather than a case a caller has to handle.
- */
-function meaningRequestFor(
-  cardId: string,
-  units: ReadonlyMap<string, PublishedKnowledgeUnit>,
-): CardMeaningRequest {
-  const unit = units.get(cardId);
-  if (unit === undefined) {
-    throw new Error(`claimed card ${cardId} has no knowledge unit`);
+  const existing = await ports.cards.findCard(version.cardId);
+  if (existing !== undefined) {
+    return existing;
   }
-  return { coordinate: unit.sourceCoordinate, facts: unit.facts };
+  if (version.meaning === undefined) {
+    // A claim always grounds a meaning before returning a version, so this is
+    // an invariant statement, not a case a Publication can reach.
+    throw new Error(`claimed card ${version.cardId} carries no meaning`);
+  }
+  return createContextCard(version.cardId, version.meaning, options.policy);
 }

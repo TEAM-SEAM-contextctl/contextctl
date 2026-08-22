@@ -10,7 +10,11 @@ import {
   checkCatalogSnapshotLimits,
   toCardCatalogEntry,
 } from "../domain/card-catalog.js";
-import { withCardVersions, type ContextCard } from "../domain/context-card.js";
+import {
+  withCardMeaning,
+  withCardVersions,
+  type ContextCard,
+} from "../domain/context-card.js";
 import { CardVersionInvariantError } from "../domain/errors.js";
 import type { LifecycleEvent } from "../domain/lifecycle-event.js";
 import { CardNotFoundError } from "./errors.js";
@@ -46,7 +50,14 @@ export async function approveCardVersion(
   const card = await loadCard(ports, cardId);
   const previousVersionId = card.versions.currentVersionId;
   const versions = promoteCardVersion(card.versions, versionId);
-  const promoted = withCardVersions(card, versions);
+  // The Card-level meaning is the projection the approved catalog serves, so a
+  // promotion has to carry the promoted version's own words into it. Versions
+  // from before meanings were stored leave the projection as it was.
+  const serving = versions.versions.find((version) => version.id === versionId);
+  const promoted = withCardVersions(
+    serving?.meaning === undefined ? card : withCardMeaning(card, serving.meaning),
+    versions,
+  );
   await refuseOversizedCatalog(ports, promoted);
 
   return save(ports, promoted, {

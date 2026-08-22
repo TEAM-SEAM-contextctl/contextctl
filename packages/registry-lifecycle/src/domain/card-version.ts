@@ -1,4 +1,6 @@
+import type { CardMeaning } from "./card-meaning.js";
 import { CardVersionInvariantError } from "./errors.js";
+import type { GroundingReport } from "./fact-grounding.js";
 import type { CardLineage } from "./lineage.js";
 import type { RetrievalScope } from "./retrieval-scope.js";
 
@@ -8,6 +10,21 @@ export type CardVersionId = string;
 /** Deterministic evidence-check outcome for one Card Version. Never LLM-decided. */
 export type CardValidationState = "draft" | "validated" | "rejected";
 
+/**
+ * What changed against the version before this one, computed at intake and
+ * stored so an operator's approval screen can show the diff without loading
+ * two versions and comparing them by eye.
+ */
+export interface MeaningChangeComparison {
+  readonly previousVersionId: CardVersionId;
+  /** Meaning fields whose value differs from the previous version. */
+  readonly changedFields: readonly (keyof CardMeaning)[];
+  /** Facts that were covered before and no longer are — regressions first. */
+  readonly coverageLost: readonly string[];
+  /** Facts newly covered by this version's expression. */
+  readonly coverageGained: readonly string[];
+}
+
 export interface CardVersion {
   readonly id: CardVersionId;
   readonly cardId: CardId;
@@ -15,6 +32,14 @@ export interface CardVersion {
   readonly scopes: readonly RetrievalScope[];
   readonly validationState: CardValidationState;
   readonly createdAt: string;
+  /**
+   * The expression this version was validated with. Optional only because
+   * rows written before grounding-v1 have none; every new version carries it.
+   */
+  readonly meaning?: CardMeaning | undefined;
+  /** The grounding report that decided this version's validation state. */
+  readonly grounding?: GroundingReport | undefined;
+  readonly changeFromPrevious?: MeaningChangeComparison | undefined;
 }
 
 /** Append-only Card Version history with a current pointer to the last-known-good version. */
@@ -102,6 +127,39 @@ export function precedesCurrentCardVersion(
     (version) => version.id === history.currentVersionId,
   );
   return target !== -1 && current !== -1 && target < current;
+}
+
+/**
+ * What `next` changes against `previous`, or undefined when there is nothing
+ * to compare — a predecessor written before versions carried their meaning.
+ *
+ * Field equality is structural. Coverage is compared as sets of fact names:
+ * a fact that was reflected and no longer is reads as a regression, which is
+ * the thing an approving operator most needs pushed in front of them.
+ */
+export function compareCardVersionMeaning(
+  previous: CardVersion,
+  next: CardVersion,
+): MeaningChangeComparison | undefined {
+  if (previous.meaning === undefined || next.meaning === undefined) {
+    return undefined;
+  }
+  const fields = (
+    ["description", "representativeQuestions", "aliases", "keywords"] as const
+  ).filter(
+    (field) =>
+      JSON.stringify(previous.meaning?.[field]) !==
+      JSON.stringify(next.meaning?.[field]),
+  );
+
+  const before = new Set(previous.grounding?.factCoverage.covered ?? []);
+  const after = new Set(next.grounding?.factCoverage.covered ?? []);
+  return {
+    previousVersionId: previous.id,
+    changedFields: fields,
+    coverageLost: [...before].filter((name) => !after.has(name)),
+    coverageGained: [...after].filter((name) => !before.has(name)),
+  };
 }
 
 export function getCurrentCardVersion(

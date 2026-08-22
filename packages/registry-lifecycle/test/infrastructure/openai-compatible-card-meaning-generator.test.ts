@@ -59,10 +59,13 @@ function generator(
 
 describe("OpenAiCompatibleCardMeaningGenerator", () => {
   it("reads the model's JSON answer into a Card meaning", async () => {
-    const meaning = await generator(async () =>
+    const { meaning, origin } = await generator(async () =>
       chatResponse(JSON.stringify(answer)),
     ).generate(request);
 
+    // The origin names the model, so the version this text lands on can say a
+    // model wrote it — the record grounding turns into a review finding.
+    expect(origin).toEqual({ generator: "model", model: "test-model" });
     expect(meaning.description).toBe(answer.description);
     expect(meaning.representativeQuestions).toEqual([
       "결제가 왜 실패했나요?",
@@ -82,13 +85,23 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
       columns: ["status", "failed_reason"],
     };
 
-    const meaning = await generator(async () =>
+    const { meaning, origin } = await generator(async () =>
       chatResponse(JSON.stringify(answer)),
     ).generate(request);
-
-    expect(groundCardVersion(coordinate, [scope], meaning)).toEqual({
-      outcome: "validated",
+    const report = groundCardVersion({
+      coordinate,
+      facts: request.facts,
+      scopes: [scope],
+      meaning,
+      origin,
     });
+
+    // Structurally sound and factually accounted for — and still not plain
+    // `validated`, because a model's sentence awaits a person's judgement.
+    expect(report.verdict).toBe("needs_review");
+    expect(report.findings).toEqual([
+      expect.objectContaining({ rule: "meaning.modelAuthored", severity: "review" }),
+    ]);
   });
 
   it("sends the credential as a bearer token and asks for the configured model", async () => {
@@ -166,7 +179,7 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
   it("takes the JSON object out of a fenced code block", async () => {
     // What the deployed gemma4-12b-qat actually returns: the object wrapped in
     // a ```json fence despite being asked for JSON only.
-    const meaning = await generator(async () =>
+    const { meaning } = await generator(async () =>
       chatResponse(`\`\`\`json\n${JSON.stringify(answer, null, 2)}\n\`\`\``),
     ).generate(request);
 
@@ -174,7 +187,7 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
   });
 
   it("takes the JSON object out of an answer wrapped in prose", async () => {
-    const meaning = await generator(async () =>
+    const { meaning } = await generator(async () =>
       chatResponse(`설명드리겠습니다.\n${JSON.stringify(answer)}\n이상입니다.`),
     ).generate(request);
 
@@ -227,9 +240,10 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
     };
 
     async function meaningFrom(answerOverrides: Record<string, unknown>) {
-      return generator(async () =>
+      const generated = await generator(async () =>
         chatResponse(JSON.stringify({ ...answer, ...answerOverrides })),
       ).generate(request);
+      return generated.meaning;
     }
 
     it("folds a multi-line description into one line that grounds", async () => {
@@ -241,8 +255,14 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
         "결제 상태를 담는다. 실패 사유도 함께 담는다.",
       );
       expect(
-        groundCardVersion(coordinate, [sqlScope], meaning),
-      ).toEqual({ outcome: "validated" });
+        groundCardVersion({
+          coordinate,
+          facts: request.facts,
+          scopes: [sqlScope],
+          meaning,
+          origin: { generator: "model", model: "gemma4-12b-qat" },
+        }).findings.filter((finding) => finding.severity === "fatal"),
+      ).toEqual([]);
     });
 
     it("replaces a newline with a space instead of dropping it", async () => {
@@ -285,7 +305,13 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
       });
       const meaning = await failed;
       expect(
-        groundCardVersion(coordinate, [sqlScope], meaning).outcome,
+        groundCardVersion({
+          coordinate,
+          facts: request.facts,
+          scopes: [sqlScope],
+          meaning,
+          origin: { generator: "model", model: "gemma4-12b-qat" },
+        }).verdict,
       ).toBe("rejected");
     });
 
@@ -307,7 +333,13 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
 
       expect(meaning.description).toHaveLength(1_025);
       expect(
-        groundCardVersion(coordinate, [sqlScope], meaning).outcome,
+        groundCardVersion({
+          coordinate,
+          facts: request.facts,
+          scopes: [sqlScope],
+          meaning,
+          origin: { generator: "model", model: "gemma4-12b-qat" },
+        }).verdict,
       ).toBe("rejected");
     });
   });
@@ -362,9 +394,10 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
     async function meaningFromAnswer(
       extra: Record<string, unknown>,
     ): Promise<CardMeaning> {
-      return generator(async () =>
+      const generated = await generator(async () =>
         chatResponse(JSON.stringify({ ...answer, ...extra })),
       ).generate(request);
+      return generated.meaning;
     }
 
     it("returns the four expression fields and nothing else", async () => {
@@ -410,9 +443,15 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
       expect(meaning.representativeQuestions).toEqual(
         answer.representativeQuestions,
       );
-      expect(groundCardVersion(coordinate, [scope], meaning)).toEqual({
-        outcome: "validated",
-      });
+      expect(
+        groundCardVersion({
+          coordinate,
+          facts: request.facts,
+          scopes: [scope],
+          meaning,
+          origin: { generator: "model", model: "gemma4-12b-qat" },
+        }).findings.filter((finding) => finding.severity === "fatal"),
+      ).toEqual([]);
     });
 
     it("treats an instruction inside a legal field as text", async () => {
@@ -432,10 +471,16 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
         "representativeQuestions",
       ]);
       // Grounding reads it as one more string to check, which is the point: an
-      // instruction has no privileged reading anywhere in this package.
-      expect(groundCardVersion(coordinate, [scope], meaning)).toEqual({
-        outcome: "validated",
+      // instruction has no privileged reading anywhere in this package. It is
+      // model-authored, so what it earns is a review — never an approval.
+      const report = groundCardVersion({
+        coordinate,
+        facts: request.facts,
+        scopes: [scope],
+        meaning,
+        origin: { generator: "model", model: "gemma4-12b-qat" },
       });
+      expect(report.verdict).toBe("needs_review");
     });
   });
 });
