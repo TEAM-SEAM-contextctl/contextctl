@@ -475,7 +475,17 @@ describe("durable Index control plane", () => {
         database === undefined
           ? new InMemoryIndexPublicationStore()
           : new SqliteIndexPublicationStore(database);
-      const initial = publishedVersion("aaaa", NOW);
+      const base = publishedVersion("aaaa", NOW);
+      const initial: PublishedIndexVersion = {
+        ...base,
+        manifest: {
+          ...base.manifest,
+          fallbackCounts: {
+            "chunk:token_window": 2,
+            "segmentation:size_fallback": 1,
+          },
+        },
+      };
       const latest = publishedVersion("bbbb", "2026-08-14T01:00:00.000Z");
 
       expect(await store.commitCurrent(initial)).toMatchObject({

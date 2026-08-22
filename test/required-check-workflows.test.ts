@@ -49,6 +49,21 @@ describe("required external check workflows", () => {
       "scripts/run-document-retrieval-resource-probe.mjs",
     );
     expect(workflow).toContain(
+      "npm run test:benchmark:ingestion-indexing",
+    );
+    expect(workflow).toContain(
+      "CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH:",
+    );
+    expect(workflow).toContain(
+      "CONTEXTCTL_INGESTION_BENCHMARK_RESULT_PATH:",
+    );
+    expect(workflow).toContain(
+      "qdrant/qdrant@sha256:0fb8897412abc81d1c0430a899b9a81eb8328aa634e7242d1bc804c1fe8fe863",
+    );
+    expect(workflow).toContain(
+      "${{ runner.temp }}/ingestion-indexing-benchmark.json",
+    );
+    expect(workflow).toContain(
       'if [[ "${EVALUATION_REQUIRED}" == "true" && "${EVALUATION_RESULT}" != "success" ]]',
     );
   });

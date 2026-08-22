@@ -51,6 +51,22 @@ describe("external test runner", () => {
       "requires CONTEXTCTL_EVAL_RESULT_PATH; refusing to report a skipped test as success",
     );
   });
+
+  it("fails closed when the ingestion benchmark cannot read or write its evidence", () => {
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      CONTEXTCTL_QDRANT_URL: "http://127.0.0.1:6333",
+      CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH: "/tmp/retrieval.json",
+    };
+    delete environment["CONTEXTCTL_INGESTION_BENCHMARK_RESULT_PATH"];
+
+    const result = run(["ingestion-indexing-benchmark"], environment);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(
+      "requires CONTEXTCTL_INGESTION_BENCHMARK_RESULT_PATH; refusing to report a skipped test as success",
+    );
+  });
 });
 
 function run(
