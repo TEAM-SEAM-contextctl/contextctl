@@ -3,7 +3,7 @@ import type {
   PublishedSourceCoordinate,
 } from "@contextctl/contracts";
 
-import type { CardMeaning } from "../domain/context-card.js";
+import type { CardMeaning, CardMeaningOrigin } from "../domain/card-meaning.js";
 
 /**
  * Observed input a generator may describe. Carries no raw source payload.
@@ -30,6 +30,18 @@ export interface CardMeaningRequest {
  * is the same split as `SqliteCardStore`, which writes to a database the
  * daemon opened.
  */
+/**
+ * A meaning together with what produced it.
+ *
+ * The origin travels with the text rather than being logged beside it, because
+ * the question it answers — "what wrote the words on this version" — is asked
+ * per version, at review time, long after any log has rotated.
+ */
+export interface GeneratedCardMeaning {
+  readonly meaning: CardMeaning;
+  readonly origin: CardMeaningOrigin;
+}
+
 export interface CardMeaningGenerator {
-  generate(request: CardMeaningRequest): Promise<CardMeaning>;
+  generate(request: CardMeaningRequest): Promise<GeneratedCardMeaning>;
 }

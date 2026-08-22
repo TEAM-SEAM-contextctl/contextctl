@@ -137,6 +137,7 @@ export function checkCatalogSnapshotLimits(
 
   if (cards.length > SNAPSHOT_LIMITS.cards) {
     findings.push({
+      severity: "fatal",
       rule: "catalog.cardCount",
       message: `catalog would hold ${cards.length} cards, over the ${SNAPSHOT_LIMITS.cards} allowed by approved-card-read-v1`,
     });
@@ -145,6 +146,7 @@ export function checkCatalogSnapshotLimits(
   const bytes = canonicalContractByteLength(cards);
   if (bytes > SNAPSHOT_LIMITS.canonicalBytes) {
     findings.push({
+      severity: "fatal",
       rule: "catalog.canonicalBytes",
       message: `catalog canonical JSON would be ${bytes} bytes, over the ${SNAPSHOT_LIMITS.canonicalBytes} allowed by approved-card-read-v1`,
     });
@@ -154,6 +156,7 @@ export function checkCatalogSnapshotLimits(
     for (const token of [card.cardId, card.versionId]) {
       if (token.length > SNAPSHOT_LIMITS.token) {
         findings.push({
+          severity: "fatal",
           rule: "catalog.token",
           message: `${token.slice(0, 32)}… is ${token.length} code units, over the ${SNAPSHOT_LIMITS.token} allowed by approved-card-read-v1`,
         });

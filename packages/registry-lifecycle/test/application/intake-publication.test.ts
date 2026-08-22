@@ -104,7 +104,9 @@ function createPorts(
         cursors.set(intake.cursor.sourceId, intake.cursor);
       },
     },
-    meanings: { generate: async () => meaning },
+    meanings: {
+      generate: async () => ({ meaning, origin: { generator: "deterministic" } }),
+    },
     clock: { now: () => "2026-08-21T00:00:00.000Z" },
     ids: {
       nextId: () => {
