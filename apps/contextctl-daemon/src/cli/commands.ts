@@ -36,6 +36,7 @@ import {
 } from "./status.js";
 import { buildPathsReport, renderPathsReport } from "./paths-report.js";
 import {
+  describeGrounding,
   renderCardListings,
   renderResolution,
   renderSourceListing,
@@ -398,7 +399,28 @@ export async function runCardsDecision(
     command,
     [command.decision, command.cardId, versionId, "--by", decidedBy],
     decidedBy,
+    // The evidence, shown at the moment of decision: verdict, who wrote the
+    // words, fact coverage, and what changed against the previous version
+    // (SEAM-106 §9.1). Printed even though the approval already went through —
+    // the operator who skipped `cards list` still sees what they approved.
+    command.decision === "approve"
+      ? await groundingPreface(cli, command.cardId, versionId)
+      : [],
   );
+}
+
+/** The approved version's grounding evidence, or nothing when unavailable. */
+async function groundingPreface(
+  cli: RegistryOnlyRuntime,
+  cardId: string,
+  versionId: string,
+): Promise<readonly string[]> {
+  const card = await cli.cards.findCard(cardId);
+  const version = card?.versions.versions.find((entry) => entry.id === versionId);
+  if (version === undefined) {
+    return [];
+  }
+  return describeGrounding(version).map((text) => `  ${text}`);
 }
 
 /**
@@ -413,6 +435,7 @@ async function decide(
   command: Extract<CliCommand, { kind: "cards_decision" }>,
   argv: readonly string[],
   decidedBy: string,
+  evidence: readonly string[] = [],
 ): Promise<CommandOutcome> {
   const result = await runOperatorCommand(
     operatorPorts(cli),
@@ -421,7 +444,9 @@ async function decide(
 
   const trail = `결정자: ${decidedBy}`;
   if (result.status === "ok") {
-    return ok([result.output, trail, "", ...nextStepFor(command.decision)].join("\n"));
+    return ok(
+      [result.output, ...evidence, trail, "", ...nextStepFor(command.decision)].join("\n"),
+    );
   }
   // The reason is reported as Registry gave it — the vocabulary belongs to the
   // domain that refused — but the status is not flattened into it. A script has

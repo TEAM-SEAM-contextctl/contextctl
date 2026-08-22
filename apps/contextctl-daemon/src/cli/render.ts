@@ -1,4 +1,9 @@
-import type { ContextCard } from "@contextctl/registry-lifecycle";
+import type {
+  CardMeaningOrigin,
+  CardVersion,
+  ContextCard,
+  MeaningChangeComparison,
+} from "@contextctl/registry-lifecycle";
 import type {
   ContextOmission,
   ContextResolution,
@@ -365,6 +370,7 @@ function renderCardListing(listing: CardListing, position: number): string {
           2,
           `- ${version.id} (${version.validationState}, Scope ${String(version.scopes.length)}개)${marker}`,
         ),
+        ...describeGrounding(version).map((text) => line(3, text)),
       );
     }
   }
@@ -372,6 +378,69 @@ function renderCardListing(listing: CardListing, position: number): string {
   lines.push(line(1, `승인 대기 버전: ${joinOrEmpty(pendingVersionIds)}`));
 
   return lines.join("\n");
+}
+
+/**
+ * The grounding evidence an operator reads before deciding, per version.
+ *
+ * Everything here is what SEAM-106 §9.1 requires to be visible: the verdict,
+ * who wrote the words, how much of the observed facts the words reflect, and
+ * what changed against the previous version. A version from before
+ * grounding-v1 says so instead of pretending it was judged.
+ */
+export function describeGrounding(version: CardVersion): readonly string[] {
+  const { grounding, changeFromPrevious } = version;
+  if (grounding === undefined) {
+    return ["근거: 기록 없음 (grounding-v1 이전 버전)"];
+  }
+
+  const covered = grounding.factCoverage.covered.length;
+  const total = covered + grounding.factCoverage.uncovered.length;
+  const lines = [
+    `판정: ${grounding.verdict} · 생성: ${describeOrigin(grounding.origin)} · 사실 반영 ${String(covered)}/${String(total)}`,
+  ];
+  if (grounding.factCoverage.uncovered.length > 0) {
+    lines.push(`미반영 사실: ${grounding.factCoverage.uncovered.join(", ")}`);
+  }
+  for (const finding of grounding.findings.filter(
+    (entry) => entry.severity === "review",
+  )) {
+    lines.push(`검토 필요: ${finding.message}`);
+  }
+  if (changeFromPrevious !== undefined) {
+    lines.push(...describeChange(changeFromPrevious));
+  }
+  return lines;
+}
+
+function describeOrigin(origin: CardMeaningOrigin): string {
+  if (origin.fallbackFromModel !== undefined) {
+    // The degradation is the headline: the operator is reading this line to
+    // learn that a model outage shaped this version's words.
+    return `결정적 생성기 (모델 ${origin.fallbackFromModel} 장애로 대체)`;
+  }
+  return origin.generator === "model"
+    ? `모델 ${origin.model ?? "unknown"}`
+    : "결정적 생성기";
+}
+
+/** The stored comparison against the previous version, one line per change. */
+function describeChange(change: MeaningChangeComparison): readonly string[] {
+  const lines: string[] = [];
+  if (change.changedFields.length > 0) {
+    lines.push(
+      `이전 버전(${change.previousVersionId}) 대비 변경: ${change.changedFields.join(", ")}`,
+    );
+  }
+  if (change.coverageLost.length > 0) {
+    lines.push(`반영이 사라진 사실: ${change.coverageLost.join(", ")}`);
+  }
+  if (change.coverageGained.length > 0) {
+    lines.push(`새로 반영된 사실: ${change.coverageGained.join(", ")}`);
+  }
+  return lines.length === 0
+    ? [`이전 버전(${change.previousVersionId})과 표현 차이 없음`]
+    : lines;
 }
 
 /** `contextctl source list` 의 사람용 출력. */
