@@ -241,6 +241,10 @@ export {
   type DeliveryHttpResponse,
 } from "./infrastructure/http/http-query-handler.js";
 export { createDeliveryHttpServer } from "./infrastructure/http/node-http-server.js";
+export type {
+  DeliveryRequestExecution,
+  DeliveryRequestExecutionInput,
+} from "./infrastructure/transport/request-execution.js";
 export {
   createMcpQueryServer,
   MCP_PROTOCOL_VERSION,
