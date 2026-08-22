@@ -21,6 +21,35 @@ import {
   type SemanticSelectionPorts,
 } from "@contextctl/selection-delivery";
 
+import { SystemRuntimeClock, type RuntimeClock } from "./runtime/clock.js";
+import {
+  RequestBudget,
+  RequestDeadlineExceededError,
+  StageDeadlineExceededError,
+} from "./runtime/deadline.js";
+import {
+  DAEMON_RUNTIME_PROFILE_V1,
+  type DaemonDeadlineProfile,
+} from "./runtime/profile.js";
+
+/**
+ * The daemon-internal entry point that carries a request's remaining time.
+ *
+ * Separate from `ResolveContextApplication` because that interface is the public
+ * one a transport calls, and its signature says a request is a query and a
+ * ceiling and nothing else — which is correct, since a caller may not state its
+ * own deadline. The budget is the daemon's, opened when the transport received
+ * the request, and it has to cross the admission queue to get here: a budget
+ * created on this side would start after the wait and give a request queued for
+ * two seconds a full three to answer in.
+ */
+export interface BudgetedResolveApplication {
+  resolveWithin(
+    request: ResolveContextRequest,
+    budget: RequestBudget,
+  ): Promise<ContextResolution>;
+}
+
 /**
  * The single method of `ManagedDocumentSearch` this application calls.
  *
@@ -67,6 +96,16 @@ export interface DaemonContextApplicationDependencies {
    * never widen it — `narrowContextBudget` is where that rule lives.
    */
   readonly budget?: ContextBudget;
+  /**
+   * The time budget a request runs under when one was not handed in.
+   *
+   * Only reached through the public `resolveContext`, which every operating
+   * transport goes past rather than through — they call `resolveWithin` with a
+   * budget opened at arrival. Kept so the public interface stays honest for a
+   * caller that has no admission controller, such as a focused unit test.
+   */
+  readonly deadlines?: DaemonDeadlineProfile;
+  readonly clock?: RuntimeClock;
 }
 
 /**
@@ -85,13 +124,17 @@ export interface DaemonContextApplicationDependencies {
  * assembles them. Nothing in the first step can cause a read, and nothing in
  * the last one can.
  */
-export class DaemonContextApplication implements ResolveContextApplication {
+export class DaemonContextApplication
+  implements ResolveContextApplication, BudgetedResolveApplication
+{
   readonly #catalog: ApprovedCardCatalog;
   readonly #search: ManagedDocumentSearchPort;
   readonly #securityDomain: string;
   readonly #semantic: SemanticSelectionPorts | undefined;
   readonly #selection: SelectContextOptions;
   readonly #budget: ContextBudget | undefined;
+  readonly #deadlines: DaemonDeadlineProfile;
+  readonly #clock: RuntimeClock;
 
   constructor(dependencies: DaemonContextApplicationDependencies) {
     this.#catalog = dependencies.catalog;
@@ -100,10 +143,30 @@ export class DaemonContextApplication implements ResolveContextApplication {
     this.#semantic = dependencies.semantic;
     this.#selection = dependencies.selection ?? {};
     this.#budget = dependencies.budget;
+    this.#deadlines = dependencies.deadlines ?? DAEMON_RUNTIME_PROFILE_V1.deadlines;
+    this.#clock = dependencies.clock ?? new SystemRuntimeClock();
   }
 
   async resolveContext(
     request: ResolveContextRequest,
+  ): Promise<ContextResolution> {
+    return await this.resolveWithin(
+      request,
+      RequestBudget.open(this.#clock, this.#deadlines),
+    );
+  }
+
+  /**
+   * Runs one query across all three steps, inside the time it was given.
+   *
+   * The stages spend the budget in the order they run, and each reads what is
+   * left rather than what it was originally promised. A selection that finished
+   * in 700ms leaves the search less than a ceiling would suggest, and that is
+   * the point — the ceilings bound a stage, the remainder bounds the request.
+   */
+  async resolveWithin(
+    request: ResolveContextRequest,
+    deadline: RequestBudget,
   ): Promise<ContextResolution> {
     // Before the catalog is touched, and before any read is planned. A request
     // that misstates its ceiling has not asked a question we can answer, so
@@ -112,23 +175,45 @@ export class DaemonContextApplication implements ResolveContextApplication {
     // failure inside an answer that should never have been assembled.
     const budget = narrowContextBudget(this.#budget, request.maxContextCharacters);
 
-    const plan = await selectContext(
-      {
-        catalog: this.#catalog,
-        // Spread rather than assigned, because `exactOptionalPropertyTypes`
-        // makes `{ semantic: undefined }` different from an absent key, and only
-        // the absent key selects the lexical composition.
-        ...(this.#semantic === undefined ? {} : { semantic: this.#semantic }),
-      },
-      request.query,
-      this.#selection,
+    // Raced rather than cancelled: `selectContext` takes no `AbortSignal`, and
+    // adding one is a change to a domain package this composition does not own.
+    // A selection that overruns is abandoned and the request fails; its late
+    // result is discarded rather than assembled, because work the request had
+    // already given up on is not an answer.
+    const plan = await deadline.raceStage(
+      "selection",
+      deadline.selectionMs,
+      selectContext(
+        {
+          catalog: this.#catalog,
+          // Spread rather than assigned, because `exactOptionalPropertyTypes`
+          // makes `{ semantic: undefined }` different from an absent key, and only
+          // the absent key selects the lexical composition.
+          ...(this.#semantic === undefined ? {} : { semantic: this.#semantic }),
+        },
+        request.query,
+        this.#selection,
+      ),
     );
+
     const outcomes = await this.#executeManagedTargets(
       plan.query,
       plan.managedTargets,
+      deadline,
     );
 
-    return assembleContext(plan, outcomes, { budget });
+    // The reserve exists for exactly this call and the serialization after it.
+    // Checked here rather than only on entry, because the search between the two
+    // checks is what spends the time.
+    deadline.assertCanAssemble();
+
+    const resolution = assembleContext(plan, outcomes, { budget });
+    // Assembly is synchronous and cannot be interrupted, so check again after
+    // it returns and discard a result that consumed the rest of the total. The
+    // earlier check protects the work from starting late; this one prevents a
+    // late result from crossing the application boundary as a success.
+    deadline.assertCanAssemble();
+    return resolution;
   }
 
   /**
@@ -144,11 +229,17 @@ export class DaemonContextApplication implements ResolveContextApplication {
   async #executeManagedTargets(
     queryText: string,
     targets: readonly ManagedDocumentResolutionTarget[],
+    deadline: RequestBudget,
   ): Promise<readonly ManagedResolutionOutcome[]> {
     if (targets.length === 0) {
       return [];
     }
 
+    // `min(ceiling, remaining - reserve)`. A budget that has already fallen to
+    // zero still opens an aborted signal rather than skipping the call, so the
+    // targets report a deadline they actually hit instead of silently returning
+    // nothing.
+    const stage = deadline.stageSignal(deadline.managedSearchMs);
     const command: BatchManagedDocumentSearchCommand = {
       queryText,
       // The one field that is added rather than translated, and the only field
@@ -156,23 +247,35 @@ export class DaemonContextApplication implements ResolveContextApplication {
       // `securityDomain` on the dependencies.
       securityDomain: this.#securityDomain,
       targets: targets.map(toSearchTarget),
+      signal: stage.signal,
     };
 
     let items: readonly BatchManagedDocumentSearchItem[];
     try {
       items = await this.#search.searchBatch(command);
     } catch (cause: unknown) {
+      // The caller gave up, or the whole request ran out. Neither is a per-item
+      // failure: there is no answer to attach one to, so it leaves as a
+      // request-level error and nothing is assembled.
+      if (
+        stage.signal.reason instanceof RequestDeadlineExceededError ||
+        cause instanceof RequestDeadlineExceededError
+      ) {
+        throw new RequestDeadlineExceededError();
+      }
       // A throw out of `searchBatch` is a whole-batch rejection — a malformed
       // command, a cancelled signal — so every target failed, and each one says
       // so with the code the search itself used. Failing the resolution instead
       // would discard the SQL and HTTP items the same query selected, which
       // were never affected by a document search that did not run.
-      const failure = toManagedFailure(cause);
+      const failure = toManagedFailure(cause, stage.signal);
       return targets.map((target) => ({
         targetKey: target.targetKey,
         status: "failed",
         failure,
       }));
+    } finally {
+      stage.dispose();
     }
 
     return projectSearchItems(items, targets);
@@ -284,11 +387,24 @@ function toResolvedChunk(hit: DocumentSearchHit): ResolvedDocumentChunk {
  * from an arbitrary exception would be a claim about infrastructure nobody
  * checked.
  */
-function toManagedFailure(cause: unknown): {
-  readonly stage: "managed_search";
+function toManagedFailure(
+  cause: unknown,
+  stageSignal: AbortSignal,
+): {
+  readonly stage: "managed_search" | "deadline";
   readonly code: string;
   readonly retriable: boolean;
 } {
+  // The stage ran out while the request still had its assembly reserve. Delivery
+  // has a dedicated stage for exactly this, and it requires this code and this
+  // retriability — an item that timed out is worth asking for again, and saying
+  // so is what lets the rest of the answer still be sent.
+  if (
+    stageSignal.reason instanceof StageDeadlineExceededError ||
+    cause instanceof StageDeadlineExceededError
+  ) {
+    return { stage: "deadline", code: "deadline_exceeded", retriable: true };
+  }
   if (cause instanceof ManagedDocumentSearchError) {
     return {
       stage: "managed_search",

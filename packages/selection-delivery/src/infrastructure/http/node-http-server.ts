@@ -5,6 +5,13 @@ import {
   type ServerResponse,
 } from "node:http";
 
+import {
+  ResolveContextFailure,
+  resolveContextError,
+  resolveContextErrorStatus,
+  toResolveContextErrorCode,
+} from "../../application/errors.js";
+import type { DeliveryRequestExecution } from "../transport/request-execution.js";
 import type { DeliveryHttpHandler } from "./http-query-handler.js";
 
 /**
@@ -26,21 +33,23 @@ import type { DeliveryHttpHandler } from "./http-query-handler.js";
  * `error.code` and `error.retriable` must not meet a second, adapter-shaped
  * error object on the one path where the handler never ran.
  */
-const INTERNAL_ERROR_BODY = JSON.stringify({
-  error: { code: "unexpected_failure", retriable: false },
-});
+const MAXIMUM_REQUEST_BODY_BYTES = 64 * 1024;
 
 /**
  * Wraps a handler in an HTTP server that is bound to nothing.
  *
  * The caller decides where it listens, and whether it listens at all.
  */
-export function createDeliveryHttpServer(handler: DeliveryHttpHandler): Server {
+export function createDeliveryHttpServer(
+  handler: DeliveryHttpHandler,
+  execution?: DeliveryRequestExecution,
+): Server {
   return createServer((request: IncomingMessage, response: ServerResponse) => {
+    const arrivedAt = execution?.now();
     // The listener cannot be async: `node:http` ignores a returned promise, and
     // an unhandled rejection inside it would take the process down instead of
     // failing the one request.
-    void answer(handler, request, response);
+    void answer(handler, request, response, execution, arrivedAt);
   });
 }
 
@@ -57,20 +66,59 @@ async function answer(
   handler: DeliveryHttpHandler,
   request: IncomingMessage,
   response: ServerResponse,
+  execution: DeliveryRequestExecution | undefined,
+  arrivedAt: number | undefined,
 ): Promise<void> {
-  try {
-    const body = await readBody(request);
-    const answered = await handler({
-      // Node populates both for any request it parsed; the fallbacks exist so a
-      // missing value routes to a 404 rather than crashing the listener.
-      method: request.method ?? "GET",
-      path: request.url ?? "/",
-      body,
-    });
+  const caller = new AbortController();
+  const onCallerAbort = (): void => {
+    caller.abort(new Error("HTTP caller disconnected"));
+  };
+  const onResponseClose = (): void => {
+    if (!response.writableEnded) onCallerAbort();
+  };
+  request.once("aborted", onCallerAbort);
+  response.once("close", onResponseClose);
 
-    writeJson(response, answered.status, answered.body);
-  } catch {
-    writeJson(response, 500, INTERNAL_ERROR_BODY);
+  try {
+    const operation = async (signal: AbortSignal): Promise<void> => {
+      const body = await readBody(request, signal);
+      const answered = await handler({
+        // Node populates both for any request it parsed; the fallbacks exist so a
+        // missing value routes to a 404 rather than crashing the listener.
+        method: request.method ?? "GET",
+        path: request.url ?? "/",
+        body,
+      });
+
+      if (answered.status >= 200 && answered.status < 300) {
+        execution?.assertResponseCanCommit();
+      }
+      if (!caller.signal.aborted) {
+        writeJson(response, answered.status, answered.body);
+      }
+    };
+
+    if (execution === undefined || arrivedAt === undefined) {
+      await operation(caller.signal);
+    } else {
+      await execution.runRequest(
+        { arrivedAt, signal: caller.signal },
+        operation,
+      );
+    }
+  } catch (cause: unknown) {
+    if (caller.signal.aborted || response.writableEnded || response.destroyed) {
+      return;
+    }
+    const code = toResolveContextErrorCode(cause);
+    writeJson(
+      response,
+      resolveContextErrorStatus(code),
+      JSON.stringify({ error: resolveContextError(code) }),
+    );
+  } finally {
+    request.removeListener("aborted", onCallerAbort);
+    response.removeListener("close", onResponseClose);
   }
 }
 
@@ -81,17 +129,55 @@ async function answer(
  * two chunks, and concatenating decoded strings would corrupt it. Bodies here
  * are one small JSON object, so buffering costs nothing.
  */
-function readBody(request: IncomingMessage): Promise<string> {
+function readBody(
+  request: IncomingMessage,
+  signal: AbortSignal,
+): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let size = 0;
 
-    request.on("data", (chunk: Buffer) => {
+    const cleanup = (): void => {
+      request.removeListener("data", onData);
+      request.removeListener("end", onEnd);
+      request.removeListener("error", onError);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const fail = (cause: unknown): void => {
+      cleanup();
+      reject(cause);
+    };
+    const onData = (chunk: Buffer): void => {
+      size += chunk.byteLength;
+      if (size > MAXIMUM_REQUEST_BODY_BYTES) {
+        fail(
+          new ResolveContextFailure(
+            "invalid_request",
+            "HTTP request body exceeds 64 KiB.",
+          ),
+        );
+        request.resume();
+        return;
+      }
       chunks.push(chunk);
-    });
-    request.on("end", () => {
+    };
+    const onEnd = (): void => {
+      cleanup();
       resolve(Buffer.concat(chunks).toString("utf8"));
-    });
-    request.on("error", reject);
+    };
+    const onError = (cause: Error): void => fail(cause);
+    const onAbort = (): void => {
+      // A socket reset may emit `error` after `aborted`. The promise is already
+      // settled, but EventEmitter still requires a listener for that late event.
+      request.once("error", () => undefined);
+      fail(signal.reason ?? new Error("HTTP request cancelled"));
+    };
+
+    request.on("data", onData);
+    request.once("end", onEnd);
+    request.once("error", onError);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
   });
 }
 

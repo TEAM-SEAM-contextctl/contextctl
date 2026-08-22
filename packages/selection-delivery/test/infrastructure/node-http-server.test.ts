@@ -88,4 +88,29 @@ describe("createDeliveryHttpServer", () => {
       await close(server);
     }
   });
+
+  it("refuses a request body over 64 KiB before resolution", async () => {
+    const server = createDeliveryHttpServer(async () => ({
+      status: 200,
+      body: "{}",
+    }));
+
+    try {
+      const port = await listenOnLoopback(server);
+      const response = await fetch(
+        `http://127.0.0.1:${String(port)}${RESOLVE_PATH}`,
+        {
+          method: "POST",
+          body: "x".repeat(64 * 1024 + 1),
+        },
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: { code: "invalid_request", retriable: false },
+      });
+    } finally {
+      await close(server);
+    }
+  });
 });

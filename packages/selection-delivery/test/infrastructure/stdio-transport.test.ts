@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { McpQueryServer } from "../../src/infrastructure/mcp/mcp-query-server.js";
 import { runStdioServer } from "../../src/infrastructure/mcp/stdio-transport.js";
+import type { DeliveryRequestExecution } from "../../src/infrastructure/transport/request-execution.js";
 
 interface RecordingServer {
   readonly server: McpQueryServer;
@@ -65,6 +66,14 @@ function startTransport(): Harness {
 function requestLine(id: number): string {
   return `${JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" })}\n`;
 }
+
+const CONTROLLED_EXECUTION: DeliveryRequestExecution = {
+  maximumInFlightRequests: 2,
+  now: () => 0,
+  runRequest: async (_input, operation) =>
+    await operation(new AbortController().signal),
+  assertResponseCanCommit: () => undefined,
+};
 
 describe("runStdioServer", () => {
   it("answers newline-delimited requests in the order they arrived", async () => {
@@ -137,5 +146,22 @@ describe("runStdioServer", () => {
     expect(lines.map((line) => (JSON.parse(line) as { id: number }).id)).toEqual([
       1, 2,
     ]);
+  });
+
+  it("finishes a controlled stream with only trailing whitespace", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const recording = createRecordingServer();
+
+    const finished = runStdioServer(
+      recording.server,
+      input,
+      output,
+      CONTROLLED_EXECUTION,
+    );
+    input.end("   ");
+
+    await expect(finished).resolves.toBeUndefined();
+    expect(recording.received).toEqual([]);
   });
 });
