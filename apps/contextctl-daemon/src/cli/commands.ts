@@ -234,12 +234,23 @@ export async function runIngest(
     }
     for (const version of claimed.cardVersions) {
       claimedVersions += 1;
-      const findings =
-        version.findings.length === 0
+      // The two severities are different sentences: fatal findings are why the
+      // version was rejected; review findings mark a promotable version an
+      // operator still has to judge. Calling a review a validation failure
+      // would tell the operator a model-authored version is broken when it is
+      // merely unjudged.
+      const fatal = version.findings.filter((finding) => finding.severity === "fatal");
+      const review = version.findings.filter((finding) => finding.severity === "review");
+      const suffix = [
+        fatal.length === 0
           ? ""
-          : ` — 근거 검증 실패: ${version.findings.map((finding) => finding.rule).join(", ")}`;
+          : ` — 근거 검증 실패: ${fatal.map((finding) => finding.rule).join(", ")}`,
+        review.length === 0
+          ? ""
+          : ` — 검토 필요: ${review.map((finding) => finding.rule).join(", ")}`,
+      ].join("");
       lines.push(
-        `  Card ${version.cardId} / 버전 ${version.versionId} [${version.validationState}]${findings}`,
+        `  Card ${version.cardId} / 버전 ${version.versionId} [${version.validationState}]${suffix}`,
       );
     }
   }
