@@ -50,8 +50,9 @@ export function writeCard(
   const insertVersion = database.prepare(
     `INSERT INTO card_versions (
        version_id, card_id, publication_id, observation_id,
-       knowledge_unit_id, scopes, validation_state, created_at, append_order
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       knowledge_unit_id, scopes, validation_state, created_at, append_order,
+       meaning, grounding, change_from_previous
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (version_id) DO NOTHING`,
   );
   let appendOrder = nextAppendOrder(database, "card_versions");
@@ -66,6 +67,11 @@ export function writeCard(
       version.validationState,
       version.createdAt,
       appendOrder,
+      version.meaning === undefined ? null : JSON.stringify(version.meaning),
+      version.grounding === undefined ? null : JSON.stringify(version.grounding),
+      version.changeFromPrevious === undefined
+        ? null
+        : JSON.stringify(version.changeFromPrevious),
     );
     appendOrder += 1;
   }

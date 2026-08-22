@@ -16,6 +16,7 @@ export function openRegistryDatabase(location: string): DatabaseSync {
 }
 
 function migrate(database: DatabaseSync): void {
+  ensureGroundingColumns(database);
   database.exec(`
     CREATE TABLE IF NOT EXISTS cards (
       card_id TEXT PRIMARY KEY,
@@ -37,7 +38,10 @@ function migrate(database: DatabaseSync): void {
       scopes TEXT NOT NULL,
       validation_state TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      append_order INTEGER NOT NULL
+      append_order INTEGER NOT NULL,
+      meaning TEXT,
+      grounding TEXT,
+      change_from_previous TEXT
     );
 
     CREATE INDEX IF NOT EXISTS card_versions_by_card
@@ -85,6 +89,34 @@ export function inTransaction<T>(database: DatabaseSync, work: () => T): T {
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;
+  }
+}
+
+/**
+ * Adds the grounding-v1 columns to a `card_versions` table written before
+ * they existed.
+ *
+ * `CREATE TABLE IF NOT EXISTS` only shapes a new database; a registry.db from
+ * an earlier release keeps its old column set and every write would fail. The
+ * columns are nullable on purpose — old versions genuinely have no recorded
+ * meaning or grounding, and NULL is that fact, not a default to invent.
+ */
+function ensureGroundingColumns(database: DatabaseSync): void {
+  const table = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'card_versions'")
+    .get();
+  if (table === undefined) {
+    return;
+  }
+  const columns = new Set(
+    (database.prepare("PRAGMA table_info(card_versions)").all() as { name: string }[]).map(
+      (row) => row.name,
+    ),
+  );
+  for (const column of ["meaning", "grounding", "change_from_previous"]) {
+    if (!columns.has(column)) {
+      database.exec(`ALTER TABLE card_versions ADD COLUMN ${column} TEXT`);
+    }
   }
 }
 
