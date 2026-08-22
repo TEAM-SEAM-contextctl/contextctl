@@ -415,7 +415,7 @@ function parseNumberRecord(input: unknown): Readonly<Record<string, number>> {
     !isRecord(input) ||
     Object.entries(input).some(
       ([key, value]) =>
-        !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(key) ||
+        !/^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/.test(key) ||
         !Number.isSafeInteger(value) ||
         (value as number) < 0,
     )

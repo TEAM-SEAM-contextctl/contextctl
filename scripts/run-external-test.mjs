@@ -25,6 +25,15 @@ const targets = Object.freeze({
     testFile:
       "packages/ingestion-indexing/test/document-retrieval-eval.test.ts",
   }),
+  "ingestion-indexing-benchmark": Object.freeze({
+    requiredEnvironment: Object.freeze([
+      "CONTEXTCTL_QDRANT_URL",
+      "CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH",
+      "CONTEXTCTL_INGESTION_BENCHMARK_RESULT_PATH",
+    ]),
+    testFile:
+      "packages/ingestion-indexing/test/ingestion-indexing-benchmark.test.ts",
+  }),
 });
 
 const targetName = process.argv[2];
