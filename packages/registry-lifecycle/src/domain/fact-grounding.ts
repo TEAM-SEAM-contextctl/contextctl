@@ -189,9 +189,21 @@ function meaningTexts(meaning: CardMeaning): readonly (readonly [string, string]
  * says "/payments/{id}".
  */
 function tokenize(text: string): readonly string[] {
-  return (text.match(/[\p{L}\p{N}_{}/.-]+/gu) ?? []).map((token) =>
-    token.replace(/[.,]+$/u, ""),
-  );
+  return (text.match(/[\p{L}\p{N}_{}/.-]+/gu) ?? []).map(stripTrailingPunctuation);
+}
+
+/**
+ * A loop rather than `/[.,]+$/`: that regex backtracks polynomially on a long
+ * run of separators, and this function runs over text a model wrote — length
+ * is bounded upstream, but the domain should not rely on it for its own
+ * worst case.
+ */
+function stripTrailingPunctuation(token: string): string {
+  let end = token.length;
+  while (end > 0 && (token[end - 1] === "." || token[end - 1] === ",")) {
+    end -= 1;
+  }
+  return token.slice(0, end);
 }
 
 /** Tokens that read as machine values rather than words. */
