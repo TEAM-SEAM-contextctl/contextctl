@@ -42,6 +42,7 @@ jobs:
             package.json \
             package-lock.json \
             scripts/run-external-test.mjs \
+            scripts/run-document-retrieval-resource-probe.mjs \
             apps/contextctl-daemon/package.json \
             apps/contextctl-daemon/bin/contextctl.mjs \
             apps/contextctl-daemon/scripts/install-embedding-assets.mjs \
@@ -61,8 +62,8 @@ jobs:
             *) echo "Unable to determine document retrieval changes" >&2; exit "${status}" ;;
           esac
 
-  hosted_evaluation:
-    name: document-retrieval-hosted-evaluation
+  release_evaluation:
+    name: document-retrieval-release-evaluation
     needs: change_detection
     if: ${{ needs.change_detection.outputs.relevant == 'true' }}
     runs-on: ubuntu-24.04
@@ -98,17 +99,17 @@ jobs:
           ')"
           test -n "${directory}"
           echo "directory=${directory}" >> "${GITHUB_OUTPUT}"
-      - name: Run hosted document retrieval evaluation
+      - name: Run document retrieval release evaluation
         env:
           CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
-          CONTEXTCTL_EVAL_RESOURCE_GATE_MODE: hosted_observation
+          CONTEXTCTL_EVAL_RESOURCE_GATE_MODE: release
           CONTEXTCTL_EVAL_RESULT_PATH: ${{ runner.temp }}/document-retrieval-eval.json
         run: npm run test:eval:document-retrieval
-      - name: Upload hosted document retrieval result
+      - name: Upload document retrieval release result
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: document-retrieval-hosted-eval-${{ github.sha }}
+          name: document-retrieval-release-eval-${{ github.sha }}
           path: ${{ runner.temp }}/document-retrieval-eval.json
           if-no-files-found: error
           retention-days: 30
@@ -117,7 +118,7 @@ jobs:
     name: document-retrieval-gate
     needs:
       - change_detection
-      - hosted_evaluation
+      - release_evaluation
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -126,7 +127,7 @@ jobs:
         env:
           CHANGE_DETECTION_RESULT: ${{ needs.change_detection.result }}
           EVALUATION_REQUIRED: ${{ needs.change_detection.outputs.relevant }}
-          EVALUATION_RESULT: ${{ needs.hosted_evaluation.result }}
+          EVALUATION_RESULT: ${{ needs.release_evaluation.result }}
         run: |
           if [[ "${CHANGE_DETECTION_RESULT}" != "success" ]]; then
             echo "Document retrieval change detection did not succeed." >&2
@@ -139,7 +140,7 @@ jobs:
           fi
 
           if [[ "${EVALUATION_REQUIRED}" == "false" && "${EVALUATION_RESULT}" != "skipped" ]]; then
-            echo "Hosted evaluation ran unexpectedly for an unrelated change." >&2
+            echo "Release evaluation ran unexpectedly for an unrelated change." >&2
             exit 1
           fi
 
