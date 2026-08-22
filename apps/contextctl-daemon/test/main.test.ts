@@ -25,8 +25,8 @@ import {
 } from "@contextctl/selection-delivery";
 
 import { LocalCardEmbeddingAdapter } from "../src/adapters/local-card-embedding-adapter.js";
+import { AdmissionControlledResolve } from "../src/runtime/runtime-control.js";
 import { RegistryApprovedCardCatalog } from "../src/adapters/registry-approved-card-catalog.js";
-import { DaemonContextApplication } from "../src/context-application.js";
 import {
   createDaemonRuntime,
   DEFAULT_CONNECTOR_ID,
@@ -392,7 +392,10 @@ describe("createDaemonRuntime", () => {
       const runtime = buildRuntime();
 
       expect(runtime.catalog).toBeInstanceOf(RegistryApprovedCardCatalog);
-      expect(runtime.contextApplication).toBeInstanceOf(DaemonContextApplication);
+      // The controlled surface, not the pipeline. Every transport is handed
+      // this one, which is what makes admission unavoidable rather than a thing
+      // each transport opts into.
+      expect(runtime.contextApplication).toBeInstanceOf(AdmissionControlledResolve);
     });
 
     it("hands the query surfaces the application and nothing else", () => {

@@ -81,6 +81,13 @@ import {
   type RequiredEmbeddingBindings,
 } from "./embedding/required-bindings.js";
 import { DaemonContextApplication } from "./context-application.js";
+import {
+  AdmissionControlledResolve,
+  DaemonRuntimeControl,
+} from "./runtime/runtime-control.js";
+import { LaneBoundCardCandidateIndexStore } from "./runtime/lane-bound-card-candidate-index.js";
+import type { RuntimeClock } from "./runtime/clock.js";
+import type { DaemonRuntimeProfile } from "./runtime/profile.js";
 import { IngestionPublicationRepository } from "./adapters/ingestion-publication-repository.js";
 import { LocalCardEmbeddingAdapter } from "./adapters/local-card-embedding-adapter.js";
 import { RegistryApprovedCardCatalog } from "./adapters/registry-approved-card-catalog.js";
@@ -288,6 +295,22 @@ export interface DaemonRuntimeOptions {
   readonly policy?: PolicyContext;
   /** Wall clock for Registry's audit trail. Overridden to pin timestamps. */
   readonly clock?: () => string;
+  /**
+   * The versioned operating limits this process runs under.
+   *
+   * Defaults to `daemon-runtime-profile-v1`. Supplied whole rather than as
+   * loose numbers so the version travels with the values: a measurement taken
+   * under adjusted limits has to be able to say which profile produced it.
+   */
+  readonly runtimeProfile?: DaemonRuntimeProfile;
+  /**
+   * The clock admission and deadlines are measured against.
+   *
+   * Separate from `clock` above, which stamps Registry's audit trail with wall
+   * time. This one measures elapsed milliseconds, and tests substitute it to
+   * make queue ordering and stage budgets deterministic.
+   */
+  readonly runtimeClock?: RuntimeClock;
 }
 
 /** The state namespace a local, single-deployment composition publishes under. */
@@ -354,6 +377,15 @@ export interface DaemonRuntime {
   readonly connectorId: string;
   readonly embeddingProfile: EmbeddingProfile;
   readonly stateNamespaceId: string;
+  /**
+   * The lanes, the profile and the lifecycle this process runs under.
+   *
+   * Exposed because operating entry points outside this file admit through it:
+   * the CLI runs ingest in the Ingestion lane, Registry intake claims in its
+   * own, and shutdown stops all four. A runtime that hid it would leave those
+   * callers to invent their own limits.
+   */
+  readonly control: DaemonRuntimeControl;
 }
 
 /**
@@ -471,10 +503,21 @@ export function createDaemonRuntime(
   const cardCandidateIndex = new InMemoryCardCandidateIndexStore();
 
   const catalog = new RegistryApprovedCardCatalog(cards);
-  const contextApplication = new DaemonContextApplication({
+  const control = new DaemonRuntimeControl({
+    ...(options.runtimeProfile === undefined
+      ? {}
+      : { profile: options.runtimeProfile }),
+    ...(options.runtimeClock === undefined
+      ? {}
+      : { clock: options.runtimeClock }),
+  });
+
+  const pipeline = new DaemonContextApplication({
     catalog,
     search,
     securityDomain,
+    deadlines: control.profile.deadlines,
+    clock: control.clock,
     // The policy every surface this application serves runs under. Stated
     // here even when it is the default, so a reader of this composition sees
     // that sensitive Cards are denied rather than having to know what
@@ -482,10 +525,20 @@ export function createDaemonRuntime(
     selection: { policy: options.policy ?? DEFAULT_POLICY_CONTEXT },
     semantic: {
       embedding: cardEmbeddingProvider,
-      index: cardCandidateIndex,
+      // Wrapped rather than passed through: the rebuild inside is background
+      // work with its own lane, and a Resolve that triggers it must not be the
+      // thing that decides how many run at once.
+      index: new LaneBoundCardCandidateIndexStore(
+        cardCandidateIndex,
+        control.selectionAssets,
+      ),
       profile: cardSelectionProfile,
     },
   });
+  // Every transport receives the controlled surface, never the pipeline. Handing
+  // one of them the pipeline directly would give that transport an unmetered
+  // path into the same resources the other two are queueing for.
+  const contextApplication = new AdmissionControlledResolve(control, pipeline);
 
   /**
    * The production half of the pipeline.
@@ -555,6 +608,7 @@ export function createDaemonRuntime(
     connectorId,
     embeddingProfile,
     stateNamespaceId,
+    control,
   };
 }
 
@@ -831,11 +885,53 @@ export async function runDaemon(
     }
     throw error;
   }
+  const { lifecycle } = runtime.control;
+  // Registered outermost first, because shutdown releases in reverse: the HTTP
+  // listener stops before the database it would otherwise still be handing
+  // requests to.
   const httpPort = readHttpPort(environment);
   if (httpPort !== undefined) {
-    createDeliveryHttpServer(runtime.httpHandler).listen(httpPort);
+    const server = createDeliveryHttpServer(runtime.httpHandler);
+    server.listen(httpPort);
+    lifecycle.registerCloseable(
+      "http_server",
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((cause) => (cause === undefined ? resolve() : reject(cause)));
+        }),
+    );
   }
-  await runStdioServer(runtime.mcpServer, process.stdin, process.stdout);
+  lifecycle.registerCloseable("registry_database", () => {
+    runtime.database.close();
+  });
+
+  const onSignal = (): void => {
+    // Refusal is immediate and separate from the wait. A daemon that started
+    // draining only once the shutdown promise was awaited would keep admitting
+    // for as long as it took the handler to get scheduled.
+    lifecycle.beginDraining();
+    void lifecycle.shutdown();
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+
+  try {
+    await runStdioServer(runtime.mcpServer, process.stdin, process.stdout);
+  } finally {
+    // stdin ending is an MCP client saying it is finished, which is the same
+    // event as a signal from the process's point of view: stop admitting, let
+    // admitted work finish, then release. Shared with the handlers above rather
+    // than duplicated, so a client that disconnects during a SIGTERM does not
+    // start a second shutdown that closes everything twice.
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
+    const failures = await lifecycle.shutdown();
+    for (const failure of failures) {
+      process.stderr.write(
+        `종료 중 ${failure.resource} 정리에 실패했습니다: ${failure.reason}\n`,
+      );
+    }
+  }
 }
 
 /** Whether this module was executed, as opposed to imported. */

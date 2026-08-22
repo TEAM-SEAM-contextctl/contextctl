@@ -54,6 +54,17 @@ export const EXIT_CODES = {
    * state of a system that is catching up.
    */
   laneNotReady: 6,
+  /**
+   * A query was refused before it ran, or ran out of time.
+   *
+   * `overloaded` and `deadline_exceeded` share one code because they share one
+   * meaning to a caller: nothing was answered and the same request is worth
+   * sending again. Distinct from `refused`, which reports a decision Registry
+   * made about a Card, and from `laneNotReady`, which reports that the process
+   * cannot work at all — this one says the process is working and could not take
+   * this request now.
+   */
+  resolveUnavailable: 7,
 } as const;
 
 export type ExitCode = (typeof EXIT_CODES)[keyof typeof EXIT_CODES];
