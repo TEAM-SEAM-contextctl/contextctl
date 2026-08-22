@@ -84,6 +84,7 @@ import {
 import { DaemonContextApplication } from "./context-application.js";
 import {
   AdmissionControlledResolve,
+  createDeliveryRequestExecution,
   DaemonRuntimeControl,
 } from "./runtime/runtime-control.js";
 import { LaneBoundCardCandidateIndexStore } from "./runtime/lane-bound-card-candidate-index.js";
@@ -894,6 +895,7 @@ export async function runDaemon(
     throw error;
   }
   const { lifecycle } = runtime.control;
+  const deliveryExecution = createDeliveryRequestExecution(runtime.control);
   // Registered from the inside out because shutdown releases in reverse: the
   // HTTP listener stops before the database it would otherwise still be
   // handing requests to.
@@ -904,7 +906,10 @@ export async function runDaemon(
   let stopHttpAccepting: (() => Promise<void>) | undefined;
   const httpPort = readHttpPort(environment);
   if (httpPort !== undefined) {
-    const server = createDeliveryHttpServer(runtime.httpHandler);
+    const server = createDeliveryHttpServer(
+      runtime.httpHandler,
+      deliveryExecution,
+    );
     server.listen(httpPort);
     let closeStarted: Promise<void> | undefined;
     stopHttpAccepting = () => {
@@ -953,7 +958,12 @@ export async function runDaemon(
   process.once("SIGTERM", onSignal);
 
   try {
-    await runStdioServer(runtime.mcpServer, mcpInput, process.stdout);
+    await runStdioServer(
+      runtime.mcpServer,
+      mcpInput,
+      process.stdout,
+      deliveryExecution,
+    );
   } finally {
     // stdin ending is an MCP client saying it is finished, which is the same
     // event as a signal from the process's point of view: stop admitting, let
