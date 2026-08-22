@@ -9,7 +9,9 @@ import type {
   CardId,
   CardValidationState,
   CardVersion,
+  MeaningChangeComparison,
 } from "../../domain/card-version.js";
+import type { GroundingReport } from "../../domain/fact-grounding.js";
 import type {
   CardMeaning,
   CardPolicy,
@@ -141,7 +143,32 @@ function toCardVersion(row: SqlRow): CardVersion {
     scopes: readJson<readonly RetrievalScope[]>(row, "scopes"),
     validationState: readValidationState(row),
     createdAt: readText(row, "created_at"),
+    // NULL means the version predates grounding-v1: nothing was recorded, and
+    // the read model says so instead of inventing a report.
+    ...optionalJson<CardMeaning>(row, "meaning", "meaning"),
+    ...optionalJson<GroundingReport>(row, "grounding", "grounding"),
+    ...optionalJson<MeaningChangeComparison>(
+      row,
+      "change_from_previous",
+      "changeFromPrevious",
+    ),
   };
+}
+
+/**
+ * A `{key: parsed}` object when the column holds JSON, `{}` when it is NULL —
+ * spreadable under `exactOptionalPropertyTypes`, where assigning an explicit
+ * `undefined` is not the same as leaving the key absent.
+ */
+function optionalJson<T>(
+  row: SqlRow,
+  column: string,
+  key: string,
+): Record<string, T> {
+  const value = row[column];
+  return value === null || value === undefined
+    ? {}
+    : { [key]: JSON.parse(String(value)) as T };
 }
 
 const validationStates: readonly CardValidationState[] = [
