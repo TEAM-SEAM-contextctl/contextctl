@@ -429,6 +429,76 @@ describe("renderCardListings", () => {
   });
 });
 
+describe("grounding evidence on the listing", () => {
+  // SEAM-106 §9.1: the verdict, the origin of the words, factCoverage and the
+  // change against the previous version are what the operator reads to decide.
+  const grounded: CardVersion = {
+    ...cardVersion("cv-9", "validated"),
+    grounding: {
+      verdict: "needs_review",
+      findings: [
+        {
+          rule: "meaning.modelAuthored",
+          message: "expression written by model gemma4-12b-qat awaits an operator's semantic review",
+          severity: "review",
+        },
+      ],
+      factCoverage: { covered: ["section.label"], uncovered: ["document.title"] },
+      origin: { generator: "model", model: "gemma4-12b-qat" },
+    },
+    changeFromPrevious: {
+      previousVersionId: "cv-8",
+      changedFields: ["description"],
+      coverageLost: ["document.title"],
+      coverageGained: [],
+    },
+  };
+
+  it("shows verdict, origin, coverage and the change against the predecessor", () => {
+    const rendered = renderCardListings([
+      {
+        card: card({ versions: [grounded], currentVersionId: undefined }),
+        pendingVersionIds: ["cv-9"],
+      },
+    ]);
+
+    expect(rendered).toContain("needs_review");
+    expect(rendered).toContain("gemma4-12b-qat");
+    expect(rendered).toContain("사실 반영 1/2");
+    expect(rendered).toContain("미반영 사실: document.title");
+    expect(rendered).toContain("이전 버전(cv-8) 대비 변경: description");
+    expect(rendered).toContain("반영이 사라진 사실: document.title");
+  });
+
+  it("says a model outage shaped the words when the origin degraded", () => {
+    const degraded: CardVersion = {
+      ...grounded,
+      grounding: {
+        verdict: "validated",
+        findings: [],
+        factCoverage: { covered: [], uncovered: [] },
+        origin: { generator: "deterministic", fallbackFromModel: "gemma4-12b-qat" },
+      },
+    };
+    const rendered = renderCardListings([
+      { card: card({ versions: [degraded] }), pendingVersionIds: [] },
+    ]);
+
+    expect(rendered).toContain("모델 gemma4-12b-qat 장애로 대체");
+  });
+
+  it("says so when a version predates grounding-v1", () => {
+    const rendered = renderCardListings([
+      {
+        card: card({ versions: [cardVersion("cv-1", "validated")] }),
+        pendingVersionIds: [],
+      },
+    ]);
+
+    expect(rendered).toContain("근거: 기록 없음");
+  });
+});
+
 describe("renderSourceListing", () => {
   it("guides an operator when no source is registered", () => {
     const rendered = renderSourceListing([]);
