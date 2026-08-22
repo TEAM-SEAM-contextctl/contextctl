@@ -20,6 +20,12 @@
  * so is worse than one that has to re-derive it.
  */
 
+import {
+  describeEmbeddingModes,
+  localAssetsAreRequired,
+  type EmbeddingObservation,
+} from "../embedding/readiness.js";
+
 export type LaneName = "resolve" | "registry" | "selection_assets" | "ingestion";
 
 /**
@@ -100,6 +106,15 @@ export type IngestionObservation =
 
 export interface StatusObservation {
   readonly assets: AssetObservation;
+  /**
+   * How the two embedding layers were bound.
+   *
+   * Present so the asset lanes can tell an absent artifact apart from a
+   * missing one. A deployment whose required bindings are all remote never
+   * opens the artifact directory, and reporting it unhealthy for being empty
+   * would be reporting on a file it was configured not to need.
+   */
+  readonly embedding: EmbeddingObservation;
   readonly registry: RegistryObservation;
   readonly ingestion: IngestionObservation;
   readonly vectorIndex: VectorIndexObservation;
@@ -117,7 +132,7 @@ export function judgeLanes(observation: StatusObservation): StatusReport {
   const verdicts: readonly LaneVerdict[] = [
     judgeResolve(observation),
     judgeRegistry(observation.registry),
-    judgeSelectionAssets(observation.assets),
+    judgeSelectionAssets(observation.assets, observation.embedding),
     judgeIngestion(observation.ingestion, observation.vectorIndex),
   ];
   // Ordered by the design's own list rather than by severity. An operator reads
@@ -161,7 +176,17 @@ function judgeResolve(observation: StatusObservation): LaneVerdict {
       `승인 Card 상태를 읽을 수 없어 무엇을 답해도 되는지 판단할 수 없습니다: ${registry.detail}`,
     );
   }
-  if (assets.status === "unavailable") {
+  if (observation.embedding.status === "unavailable") {
+    return lane(
+      "resolve",
+      "not_ready",
+      `임베딩 제공자를 조립할 수 없어 질문을 벡터로 만들 수 없습니다: ${observation.embedding.detail}`,
+    );
+  }
+  if (
+    assets.status === "unavailable" &&
+    localAssetsAreRequired(observation.embedding)
+  ) {
     return lane(
       "resolve",
       "not_ready",
@@ -246,8 +271,29 @@ function judgeRegistry(observation: RegistryObservation): LaneVerdict {
  * ask `resolveActiveAssetDirectory` so the two cannot disagree about which
  * directory is active.
  */
-function judgeSelectionAssets(observation: AssetObservation): LaneVerdict {
+function judgeSelectionAssets(
+  observation: AssetObservation,
+  embedding: EmbeddingObservation,
+): LaneVerdict {
+  if (embedding.status === "unavailable") {
+    return lane(
+      "selection_assets",
+      "not_ready",
+      `임베딩 제공자 바인딩을 조립할 수 없습니다: ${embedding.detail}`,
+    );
+  }
   if (observation.status === "unavailable") {
+    // Only a deployment that actually opens an artifact is stopped by its
+    // absence. Both layers remote, with no approved Card still reaching a
+    // locally published Scope, is a supported way to run: there is no file to
+    // install, so telling an operator to install one would be wrong advice.
+    if (!localAssetsAreRequired(embedding)) {
+      return lane(
+        "selection_assets",
+        "ready",
+        `${describeEmbeddingModes(embedding)}. 로컬 자산이 필요하지 않습니다.`,
+      );
+    }
     return lane(
       "selection_assets",
       "not_ready",
@@ -257,7 +303,7 @@ function judgeSelectionAssets(observation: AssetObservation): LaneVerdict {
   return lane(
     "selection_assets",
     "ready",
-    `임베딩 자산을 쓸 수 있습니다: ${observation.directory}`,
+    `임베딩 자산을 쓸 수 있습니다: ${observation.directory}. ${describeEmbeddingModes(embedding)}`,
   );
 }
 

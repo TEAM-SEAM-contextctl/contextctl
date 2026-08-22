@@ -1,5 +1,8 @@
 import { openIngestionDatabase } from "@contextctl/ingestion-indexing";
 import type { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -8,8 +11,29 @@ import {
 } from "../../src/main.js";
 import { resolveCardMeaningBackend } from "../../src/cli/meaning-generator.js";
 import { resolveContextctlPaths } from "../../src/cli/paths.js";
-import { cliRuntimeOptions } from "../../src/cli/runtime.js";
+import {
+  cliRuntimeOptions,
+  buildCliRuntime,
+  EmbeddingAssetsUnavailableError,
+  resolveCliEmbeddingRuntime,
+} from "../../src/cli/runtime.js";
 import { resolveVectorBackend } from "../../src/vector-backend.js";
+import {
+  CARD_EMBEDDING_API_KEY_VARIABLE,
+  CARD_EMBEDDING_ENDPOINT_VARIABLE,
+  CARD_EMBEDDING_MODE_VARIABLE,
+  CARD_EMBEDDING_PROFILE_VARIABLE,
+  DOCUMENT_EMBEDDING_API_KEY_VARIABLE,
+  DOCUMENT_EMBEDDING_ENDPOINT_VARIABLE,
+  DOCUMENT_EMBEDDING_MODE_VARIABLE,
+  DOCUMENT_EMBEDDING_PROFILE_VARIABLE,
+  readActiveEmbeddingProfiles,
+  readEmbeddingCompositionConfiguration,
+} from "../../src/embedding/configuration.js";
+import {
+  remoteCardProfile,
+  remoteDocumentProfile,
+} from "../embedding/fakes.js";
 
 /**
  * What the CLI composition decides, asserted without assembling it.
@@ -23,10 +47,15 @@ import { resolveVectorBackend } from "../../src/vector-backend.js";
  */
 
 const databases: DatabaseSync[] = [];
+const temporaryDirectories: string[] = [];
 
 afterEach(() => {
   while (databases.length > 0) {
     databases.pop()?.close();
+  }
+  while (temporaryDirectories.length > 0) {
+    const directory = temporaryDirectories.pop();
+    if (directory !== undefined) rmSync(directory, { recursive: true });
   }
 });
 
@@ -49,6 +78,14 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
     configuredEnvironment,
     "/tmp/contextctl-test-cwd",
   );
+  const configuration = readEmbeddingCompositionConfiguration(
+    configuredEnvironment,
+    DEFAULT_SECURITY_DOMAIN,
+  );
+  const profiles = readActiveEmbeddingProfiles(
+    configuredEnvironment,
+    configuration,
+  );
   return {
     paths,
     options: cliRuntimeOptions({
@@ -59,7 +96,17 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
       // The revision directory, as `buildCliRuntime` resolves it from the
       // pointer. Passing `paths.embeddingAssetDirectory` here would restate the
       // bug these options exist to prevent.
-      embeddingArtifactDirectory: "/tmp/contextctl-test-assets/revisions/abc",
+      embeddingRuntime: {
+        configuration,
+        profiles,
+        artifactDirectory: "/tmp/contextctl-test-assets/revisions/abc",
+        requiredBindings: {
+          documentProfiles: [profiles.document],
+          cardProfile: profiles.card,
+          requirements: [],
+          needsLocalAssets: true,
+        },
+      },
       vectorBackend: resolveVectorBackend(configuredEnvironment),
       meaningBackend: resolveCardMeaningBackend({
         environment: configuredEnvironment,
@@ -70,6 +117,63 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
 }
 
 describe("CLI runtime options", () => {
+  it("refuses missing active assets before creating state databases", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contextctl-local-preflight-"));
+    temporaryDirectories.push(home);
+    const environment = {
+      CONTEXTCTL_HOME: home,
+      CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
+    };
+    const paths = resolveContextctlPaths(environment, home);
+
+    await expect(
+      buildCliRuntime({
+        environment,
+        workingDirectory: home,
+        diagnostics: () => {},
+      }),
+    ).rejects.toBeInstanceOf(EmbeddingAssetsUnavailableError);
+    expect(existsSync(paths.registryDatabase)).toBe(false);
+    expect(existsSync(paths.ingestionDatabase)).toBe(false);
+  });
+
+  it("resolves remote/remote without reading a local asset pointer", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contextctl-remote-runtime-"));
+    temporaryDirectories.push(home);
+    const environment = {
+      CONTEXTCTL_HOME: home,
+      [DOCUMENT_EMBEDDING_MODE_VARIABLE]: "remote",
+      [DOCUMENT_EMBEDDING_ENDPOINT_VARIABLE]:
+        "https://documents.example/v1/embeddings",
+      [DOCUMENT_EMBEDDING_API_KEY_VARIABLE]: "document-secret",
+      [DOCUMENT_EMBEDDING_PROFILE_VARIABLE]: JSON.stringify(
+        remoteDocumentProfile(),
+      ),
+      [CARD_EMBEDDING_MODE_VARIABLE]: "remote",
+      [CARD_EMBEDDING_ENDPOINT_VARIABLE]:
+        "https://cards.example/v1/embeddings",
+      [CARD_EMBEDDING_API_KEY_VARIABLE]: "card-secret",
+      [CARD_EMBEDDING_PROFILE_VARIABLE]: JSON.stringify(remoteCardProfile()),
+    };
+    const paths = resolveContextctlPaths(environment, home);
+    const database = openIngestionDatabase({
+      location: paths.ingestionDatabase,
+      stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+      securityDomain: DEFAULT_SECURITY_DOMAIN,
+    });
+    databases.push(database);
+
+    const resolved = await resolveCliEmbeddingRuntime({
+      environment,
+      paths,
+      ingestionDatabase: database,
+    });
+
+    expect(resolved.configuration.document.mode).toBe("remote");
+    expect(resolved.configuration.card.mode).toBe("remote");
+    expect(resolved.artifactDirectory).toBeUndefined();
+  });
+
   it("points Registry at a file rather than at :memory:", () => {
     const { paths, options } = build({ CONTEXTCTL_HOME: "/tmp/contextctl-home" });
 
@@ -101,13 +205,15 @@ describe("CLI runtime options", () => {
     }
   });
 
-  it("selects the pinned production profile by omitting it", () => {
+  it("passes the pinned production profiles and resolved asset revision", () => {
     const { paths, options } = build({});
 
-    // Stating no profile is what selects granite, and granite is what makes
-    // `hybrid` selection real. A profile named here would be the CLI quietly
-    // choosing deterministic vectors.
-    expect(options.embeddingProfile).toBeUndefined();
+    expect(options.embeddingProfile?.id).toBe(
+      "document-granite-97m-multilingual-r2-fp32-v1",
+    );
+    expect(options.cardSelectionProfile?.id).toBe(
+      "card-granite-97m-multilingual-r2-fp32-v1",
+    );
     // The resolved revision directory, never the managed root. The adapter reads
     // its manifest directly out of whatever it is handed, so the root would send
     // it one level too high — which is exactly how a passing `doctor` and a

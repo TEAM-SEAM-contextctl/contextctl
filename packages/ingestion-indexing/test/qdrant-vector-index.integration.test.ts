@@ -230,10 +230,18 @@ integration("QdrantVectorIndexAdapter integration", () => {
         connectorId: "vector.qdrant.remote",
         securityDomain: remoteSecurityDomain,
       });
-      const scope = published.publication?.knowledgeUnits
-        .flatMap((unit) => unit.publishedScopes)
-        .find((candidate) => candidate.kind === "managed_document");
-      if (scope === undefined) throw new Error("managed Scope was not published");
+      const retryUnit = published.publication?.knowledgeUnits.find((unit) =>
+        unit.facts.some(
+          (fact) => fact.name === "section.label" && fact.value === "재시도",
+        ),
+      );
+      if (retryUnit === undefined) {
+        throw new Error("managed retry unit was not published");
+      }
+      const scope = retryUnit.publishedScopes[0];
+      if (scope === undefined || scope.kind !== "managed_document") {
+        throw new Error("managed retry Scope was not published");
+      }
 
       const hits = await runtime.search.search({
         queryText: "결제 실패 재시도",
@@ -246,6 +254,7 @@ integration("QdrantVectorIndexAdapter integration", () => {
       });
 
       expect(hits.length).toBeGreaterThan(0);
+      expect(hits.every((hit) => hit.semanticUnitId === retryUnit.id)).toBe(true);
       expect(hits.some((hit) => hit.text.includes("재시도"))).toBe(true);
       expect(requests.length).toBeGreaterThanOrEqual(2);
       expect(requests.every((request) => request.model === remoteProfile.model))
@@ -307,9 +316,9 @@ function fixedEmbeddingServer(
       response.end(
         JSON.stringify({
           model: payload.model,
-          data: payload.input.map((_text, index) => ({
+          data: payload.input.map((text, index) => ({
             index,
-            embedding: [1, 0, 0],
+            embedding: text.includes("재시도") ? [1, 0, 0] : [0, 1, 0],
           })),
         }),
       );

@@ -272,32 +272,50 @@ export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
     ) {
       throw new EmbeddingProviderFault("provider_unavailable", false);
     }
-    try {
-      await verifyLocalEmbeddingAssets(
-        this.#artifactDirectory,
-        this.#profile,
-      );
-    } catch (error) {
-      if (error instanceof EmbeddingProviderFault) throw error;
-      throw new EmbeddingProviderFault(
-        "embedding_artifact_unavailable",
-        false,
-      );
-    }
-    try {
-      const resource = await this.#runtimeFactory.load({
-        artifactDirectory: this.#artifactDirectory,
-        execution: this.#profile.execution as LocalDocumentEmbeddingExecution,
-      });
-      assertMatchingInferenceResource(
-        resource,
-        this.#profile.execution as LocalDocumentEmbeddingExecution,
-      );
-      return resource;
-    } catch (error) {
-      if (error instanceof EmbeddingProviderFault) throw error;
-      throw new EmbeddingProviderFault("provider_unavailable", false);
-    }
+    return loadLocalDocumentEmbeddingInferenceResource({
+      artifactDirectory: this.#artifactDirectory,
+      profile: this.#profile,
+      runtimeFactory: this.#runtimeFactory,
+    });
+  }
+}
+
+/**
+ * Loads one verified physical local inference resource for a composition root.
+ *
+ * The returned object is not an `EmbeddingPort`. A daemon may inject it into
+ * independently owned document and Card adapters when their execution records
+ * match, while each adapter still owns input transforms, profile checks, vector
+ * validation and domain fault meanings.
+ */
+export async function loadLocalDocumentEmbeddingInferenceResource(options: {
+  readonly artifactDirectory: string;
+  readonly profile: DocumentRetrievalEmbeddingProfile;
+  readonly runtimeFactory?: LocalFeatureExtractionRuntimeFactory;
+}): Promise<LocalDocumentEmbeddingInferenceResource> {
+  const { artifactDirectory, profile } = options;
+  assertValidEmbeddingProfile(profile);
+  if (profile.execution.kind !== "local" || !isAbsolute(artifactDirectory)) {
+    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
+  }
+  try {
+    await verifyLocalEmbeddingAssets(artifactDirectory, profile);
+  } catch (error) {
+    if (error instanceof EmbeddingProviderFault) throw error;
+    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
+  }
+  try {
+    const resource = await (
+      options.runtimeFactory ?? new TransformersJsRuntimeFactory()
+    ).load({
+      artifactDirectory,
+      execution: profile.execution,
+    });
+    assertMatchingInferenceResource(resource, profile.execution);
+    return resource;
+  } catch (error) {
+    if (error instanceof EmbeddingProviderFault) throw error;
+    throw new EmbeddingProviderFault("provider_unavailable", false);
   }
 }
 

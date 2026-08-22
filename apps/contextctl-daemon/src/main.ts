@@ -3,7 +3,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import {
-  assertProductionEmbeddingProvider,
   createLocalMarkdownPublicationRuntime,
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DeterministicEmbeddingAdapter,
@@ -16,13 +15,13 @@ import {
   StaticQueryEmbeddingProviderRegistry,
   StaticVectorIndexConnectorRegistry,
   TEXT_MEASURE_PROFILE_VERSION,
-  TransformersJsLocalEmbeddingAdapter,
   type EmbeddingPort,
   type EmbeddingProfile,
   type IndexPublicationStore,
   type IndexStagingAttemptStore,
   type IngestionPublicationStore,
   type LocalMarkdownPublicationRuntime,
+  type LocalDocumentEmbeddingInferenceResource,
   type MarkdownPublicationCheckpointStore,
   type SourceObservationStore,
   type VectorIndexConnectorResolver,
@@ -39,7 +38,6 @@ import {
   type IdGenerator,
 } from "@contextctl/registry-lifecycle";
 import {
-  assertCardEmbeddingProviderKind,
   createDeliveryHttpServer,
   createHttpQueryHandler,
   CARD_SELECTION_EMBEDDING_PROFILE,
@@ -60,6 +58,28 @@ import {
   type ResolveContextApplication,
 } from "@contextctl/selection-delivery";
 
+import {
+  readActiveEmbeddingProfiles,
+  readEmbeddingCompositionConfiguration,
+  type EmbeddingCompositionConfiguration,
+} from "./embedding/configuration.js";
+import {
+  composeCardEmbedding,
+  composeDocumentEmbedding,
+} from "./embedding/composition.js";
+import {
+  cardProfileExecutionKind,
+  documentProfileExecutionKind,
+  IngestionDocumentEmbeddingProviderFactory,
+  SelectionCardEmbeddingProviderFactory,
+  type CardEmbeddingProviderFactory,
+  type DocumentEmbeddingProviderFactory,
+} from "./embedding/provider-factory.js";
+import {
+  cardProfileNeedsLocalAssets,
+  documentProfileNeedsLocalAssets,
+  type RequiredEmbeddingBindings,
+} from "./embedding/required-bindings.js";
 import { DaemonContextApplication } from "./context-application.js";
 import { IngestionPublicationRepository } from "./adapters/ingestion-publication-repository.js";
 import { LocalCardEmbeddingAdapter } from "./adapters/local-card-embedding-adapter.js";
@@ -173,6 +193,37 @@ export interface DaemonRuntimeOptions {
    * does not match, so the deterministic adapter reaches the graph only here.
    */
   readonly cardEmbeddingProvider?: CardEmbeddingPort;
+  /**
+   * How each embedding layer reaches a provider.
+   *
+   * Two independent settings, never one. A deployment may send Card text to a
+   * hosted provider while document chunks never leave the machine, or the
+   * reverse, and all four combinations assemble through the same path. Defaults
+   * to local on both, which is what an unconfigured daemon did before this
+   * surface existed.
+   */
+  readonly embedding?: EmbeddingCompositionConfiguration;
+  /** Verified physical sessions the composition may inject into domain adapters. */
+  readonly localEmbeddingInferenceResources?: readonly LocalDocumentEmbeddingInferenceResource[];
+  /**
+   * Every provider binding this deployment is still on the hook for.
+   *
+   * Computed by the caller because it is a read of durable state — approved
+   * Cards, and the Scope catalog they point into — and this function is
+   * synchronous by contract. Absent means "nothing has been published yet",
+   * which is the truth for the in-memory composition the defaults build: there
+   * are no older profiles to restore because there are no older indexes.
+   */
+  readonly requiredEmbeddingBindings?: RequiredEmbeddingBindings;
+  /**
+   * Who builds the concrete adapters.
+   *
+   * A seam so the four combinations can be assembled and tested before either
+   * domain's remote adapter is final. Production compositions leave these at
+   * their defaults, which bind whatever the owning domain has shipped.
+   */
+  readonly documentEmbeddingFactory?: DocumentEmbeddingProviderFactory;
+  readonly cardEmbeddingFactory?: CardEmbeddingProviderFactory;
   /**
    * The Source configuration records the ingest path may resolve, keyed by the
    * `configReference` a publish command names.
@@ -323,13 +374,6 @@ export function createDaemonRuntime(
   const connectorId = options.connectorId ?? DEFAULT_CONNECTOR_ID;
   const embeddingProfile =
     options.embeddingProfile ?? DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
-  // Matches the naming `createLocalMarkdownPublicationRuntime` uses, so a
-  // publish path composed from that helper registers the same provider identity
-  // instead of a second one that only differs in its label.
-  const embeddingProviderId =
-    options.embeddingProviderId ??
-    `local.${securityDomain}.${embeddingProfile.id}`;
-
   const stateNamespaceId =
     options.stateNamespaceId ?? DEFAULT_STATE_NAMESPACE_ID;
   const now = options.clock ?? (() => new Date().toISOString());
@@ -341,7 +385,6 @@ export function createDaemonRuntime(
   );
   const cards = new SqliteCardStore(database);
 
-  const embeddingProvider = resolveEmbeddingProvider(options, embeddingProfile);
   const vectorIndex = options.vectorIndex;
   const vectorIndexes = new StaticVectorIndexConnectorRegistry([
     { connectorId, vectorIndex },
@@ -354,30 +397,74 @@ export function createDaemonRuntime(
   const publications = stores?.indexPublications ?? new InMemoryIndexPublicationStore();
   const stagingAttempts = stores?.stagingAttempts ?? new InMemoryIndexStagingAttemptStore();
   const ingestionPublications = stores?.publications ?? new InMemoryIngestionPublicationStore();
-  const search = new ManagedDocumentSearch({
-    embeddingProviders: new StaticQueryEmbeddingProviderRegistry([
-      {
-        securityDomain,
-        embeddingProfile,
-        providerId: embeddingProviderId,
-        provider: embeddingProvider,
-      },
-    ]),
-    vectorIndexes,
-    publications,
-  });
-
+  // Chosen before either provider, because both layers are resolved together and
+  // neither may be derived from the other's result. The fallback still reads the
+  // document profile, and only as a default for a caller that named no Card
+  // profile at all: a composition binding a profile with no execution semantics
+  // is a test composition, and handing it a profile that pins a 390MB artifact
+  // would refuse to assemble for a reason the caller never stated. The
+  // configured modes below are independent of it.
   const cardSelectionProfile =
     options.cardSelectionProfile ??
     (isDocumentRetrievalEmbeddingProfile(embeddingProfile)
       ? CARD_SELECTION_EMBEDDING_PROFILE
       : DETERMINISTIC_CARD_SELECTION_PROFILE);
-  const cardEmbeddingProvider = resolveCardEmbeddingProvider(
-    options,
-    cardSelectionProfile,
-    embeddingProvider,
-    embeddingProfile,
-  );
+
+  const embeddingConfiguration =
+    options.embedding ?? DEFAULT_EMBEDDING_COMPOSITION_CONFIGURATION;
+  const requiredBindings =
+    options.requiredEmbeddingBindings ??
+    currentProfilesOnly(embeddingProfile, cardSelectionProfile);
+
+  // Two calls, not one. Neither reads the other's configuration or result, which
+  // is what makes local/local, local/remote, remote/local and remote/remote the
+  // same code path rather than four.
+  const documentEmbedding = composeDocumentEmbedding({
+    configuration: embeddingConfiguration.document,
+    currentProfile: embeddingProfile,
+    reachableProfiles: requiredBindings.documentProfiles,
+    securityDomain,
+    artifactDirectory: options.embeddingArtifactDirectory,
+    factory:
+      options.documentEmbeddingFactory ??
+      new IngestionDocumentEmbeddingProviderFactory(
+        options.localEmbeddingInferenceResources,
+      ),
+    ...(embeddingConfiguration.retainedDocumentBindings === undefined
+      ? {}
+      : {
+          retainedBindings:
+            embeddingConfiguration.retainedDocumentBindings,
+        }),
+    providerOverride: documentProviderOverride(options, embeddingProfile),
+  });
+  const cardEmbedding = composeCardEmbedding({
+    configuration: embeddingConfiguration.card,
+    profile: cardSelectionProfile,
+    securityDomain,
+    artifactDirectory: options.embeddingArtifactDirectory,
+    factory:
+      options.cardEmbeddingFactory ??
+      transitionalCardEmbeddingFactory(
+        documentEmbedding.provider,
+        embeddingProfile,
+      ),
+    providerOverride: cardProviderOverride(options, cardSelectionProfile),
+  });
+  const embeddingProvider = documentEmbedding.provider;
+  const cardEmbeddingProvider = cardEmbedding.provider;
+
+  const search = new ManagedDocumentSearch({
+    // Every required profile, not just the current one. A query against an index
+    // published under an older profile resolves a provider only if that exact
+    // profile is registered, and an approved Card can still name a Scope inside
+    // such an index.
+    embeddingProviders: new StaticQueryEmbeddingProviderRegistry(
+      documentEmbedding.registrations,
+    ),
+    vectorIndexes,
+    publications,
+  });
   // One store per runtime, so the index survives between requests and is
   // rebuilt only when the catalog snapshot it was prepared for changes. A store
   // per request would re-embed the whole catalog on every query.
@@ -486,91 +573,143 @@ class RandomIdGenerator implements IdGenerator {
 }
 
 /**
- * Binds the one embedding provider the graph may use.
+ * The default both layers take when nothing is configured.
  *
- * A production profile declares how its vectors were made, so the provider has
- * to match that declaration: the deterministic adapter reports `test` and is
- * rejected outright. Nothing here falls back — an unusable production profile
- * ends the assembly rather than quietly producing vectors of another kind.
+ * Local on each side independently, which reproduces exactly what an
+ * unconfigured daemon did before the layers could be chosen apart. It is a
+ * default and not a fallback: a layer that asked for remote and could not be
+ * bound raises, because the two produce vectors that are not comparable and the
+ * operator asked for one of them specifically.
  */
-function resolveEmbeddingProvider(
-  options: DaemonRuntimeOptions,
-  profile: EmbeddingProfile,
-): EmbeddingPort {
-  if (!isDocumentRetrievalEmbeddingProfile(profile)) {
-    // A profile without production execution semantics describes no artifact
-    // to load, so the caller owns the binding.
-    if (options.embeddingProvider !== undefined) return options.embeddingProvider;
-    return new DeterministicEmbeddingAdapter();
-  }
-  if (options.embeddingProvider !== undefined) {
-    assertProductionEmbeddingProvider(profile, options.embeddingProvider);
-    return options.embeddingProvider;
-  }
-  if (profile.execution.kind !== "local") {
-    // Remote execution needs a secret-backed connector binding this
-    // composition does not own yet.
-    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
-  }
-  if (options.embeddingArtifactDirectory === undefined) {
-    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
-  }
-  const provider = new TransformersJsLocalEmbeddingAdapter({
-    artifactDirectory: options.embeddingArtifactDirectory,
-    profile,
+export const DEFAULT_EMBEDDING_COMPOSITION_CONFIGURATION: EmbeddingCompositionConfiguration =
+  Object.freeze({
+    document: Object.freeze({ mode: "local" as const }),
+    card: Object.freeze({ mode: "local" as const }),
   });
-  assertProductionEmbeddingProvider(profile, provider);
-  return provider;
+
+/**
+ * The binding set of a deployment that has published nothing.
+ *
+ * Used when the caller supplied none, which is the in-memory composition: with
+ * no committed index there is no older profile any approved Card could still
+ * reach, so the current two are the whole requirement. A durable composition
+ * computes the real set from its stores and passes it in.
+ */
+function currentProfilesOnly(
+  documentProfile: EmbeddingProfile,
+  cardProfile: CardSelectionProfile,
+): RequiredEmbeddingBindings {
+  const documentLocal = documentProfileNeedsLocalAssets(documentProfile);
+  const cardLocal = cardProfileNeedsLocalAssets(cardProfile);
+  return {
+    documentProfiles: [documentProfile],
+    cardProfile,
+    requirements: [
+      {
+        layer: "document",
+        reason: "current_document_profile",
+        profileId: documentProfile.id,
+        profileVersion: documentProfile.version,
+        needsLocalAssets: documentLocal,
+        scopes: [],
+      },
+      {
+        layer: "card",
+        reason: "card_candidate_index_profile",
+        profileId: cardProfile.id,
+        profileVersion: cardProfile.version,
+        needsLocalAssets: cardLocal,
+        scopes: [],
+      },
+    ],
+    needsLocalAssets: documentLocal || cardLocal,
+  };
 }
 
 /**
- * Binds the one Card embedding provider the graph may use.
+ * The provider a caller supplied, or the one a profile without execution
+ * semantics has to use.
  *
- * The shape mirrors `resolveEmbeddingProvider` above, and the mirror is the
- * point: a profile that pins an artifact requires a provider that loaded one,
- * and the deterministic adapter reports `test` and is refused. Nothing falls
- * back.
- *
- * The production branch hands the *document* provider to the wrapper rather than
- * constructing a second local adapter. The two profiles name one artifact
- * digest, one precision and one pooling, so a second adapter would load a second
- * copy of identical weights and answer identically — see
- * `LocalCardEmbeddingAdapter`, where the reasoning and its limits are stated.
+ * The deterministic adapter reaches the graph here and nowhere else. That is not
+ * a fallback for a failed production binding — a production profile never
+ * arrives at this branch, because it declares an execution kind and is bound by
+ * a factory. It is the only provider that matches a profile which pins no
+ * artifact and names no provider, and without it every test composition would
+ * have to supply one by hand.
  */
-function resolveCardEmbeddingProvider(
+function documentProviderOverride(
   options: DaemonRuntimeOptions,
-  cardProfile: CardSelectionProfile,
-  sessionProvider: EmbeddingPort,
-  sessionProfile: EmbeddingProfile,
-): CardEmbeddingPort {
-  if (!isCardSelectionEmbeddingProfile(cardProfile)) {
-    // A profile without production execution semantics describes no artifact to
-    // load, so the caller owns the binding.
-    if (options.cardEmbeddingProvider !== undefined) {
-      return options.cardEmbeddingProvider;
-    }
-    return new DeterministicCardEmbeddingAdapter();
+  profile: EmbeddingProfile,
+): EmbeddingPort | undefined {
+  if (options.embeddingProvider !== undefined) return options.embeddingProvider;
+  if (documentProfileExecutionKind(profile) === undefined) {
+    return new DeterministicEmbeddingAdapter();
   }
+  return undefined;
+}
+
+/**
+ * The Card provider a caller supplied, or the one a profile without execution
+ * semantics has to use.
+ *
+ * Mirrors the document side. The deterministic Card adapter reaches the graph
+ * here and nowhere else, and only for a profile that pins no artifact and names
+ * no provider — a production profile declares an execution kind and is built by
+ * a factory instead.
+ */
+function cardProviderOverride(
+  options: DaemonRuntimeOptions,
+  profile: CardSelectionProfile,
+): CardEmbeddingPort | undefined {
   if (options.cardEmbeddingProvider !== undefined) {
-    assertCardEmbeddingProviderKind(
-      cardProfile,
-      options.cardEmbeddingProvider,
-      cardProfile.execution.kind,
-    );
     return options.cardEmbeddingProvider;
   }
-  if (cardProfile.execution.kind !== "local") {
-    // Remote execution needs a secret-backed connector binding this composition
-    // does not own yet.
-    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
+  if (cardProfileExecutionKind(profile) === undefined) {
+    return new DeterministicCardEmbeddingAdapter();
   }
-  const provider = new LocalCardEmbeddingAdapter({
-    provider: sessionProvider,
-    session: sessionProfile,
-    card: cardProfile,
-  });
-  assertCardEmbeddingProviderKind(cardProfile, provider, "local");
-  return provider;
+  return undefined;
+}
+
+/**
+ * The Card factory this package still has to supply, and is scheduled to stop.
+ *
+ * Selection owns `CardEmbeddingPort` and will ship providers that implement it
+ * directly. Until then the only thing in the repository that can answer a
+ * production local Card profile is `LocalCardEmbeddingAdapter`, the translation
+ * adapter this package holds, and deleting it before the replacement exists
+ * would take local Card selection away rather than move it.
+ *
+ * Confined to one function on purpose. When Selection's adapters land, this
+ * function and the adapter it names are one deletion, and the default becomes
+ * `SelectionCardEmbeddingProviderFactory` — which is already the shape the
+ * replacement plugs into. Anything a caller injects wins over this, so a
+ * composition that has Selection's adapter never reaches it.
+ *
+ * The remote branch refuses and must not grow a wrapper of its own: reaching the
+ * Card family through whatever provider the document family chose is exactly the
+ * coupling two independent settings exist to prevent.
+ */
+function transitionalCardEmbeddingFactory(
+  documentProvider: EmbeddingPort,
+  documentProfile: EmbeddingProfile,
+): CardEmbeddingProviderFactory {
+  const selection = new SelectionCardEmbeddingProviderFactory();
+  return {
+    createLocal: (input) => {
+      if (
+        isCardSelectionEmbeddingProfile(input.profile) &&
+        documentProfileExecutionKind(documentProfile) === "local"
+      ) {
+        return new LocalCardEmbeddingAdapter({
+          provider: documentProvider,
+          session: documentProfile,
+          card: input.profile,
+        });
+      }
+      return selection.createLocal(input);
+    },
+    createRemote: (input) => selection.createRemote(input),
+  };
 }
 
 /** Reads the runtime's configuration out of the environment. */
@@ -587,6 +726,9 @@ export function readDaemonRuntimeOptions(
     connectorId?: string;
     stateNamespaceId?: string;
     embeddingArtifactDirectory?: string;
+    embedding?: EmbeddingCompositionConfiguration;
+    embeddingProfile?: EmbeddingProfile;
+    cardSelectionProfile?: CardSelectionProfile;
   } = {
     vectorIndex: resolveVectorBackend(environment).vectorIndex,
   };
@@ -610,7 +752,29 @@ export function readDaemonRuntimeOptions(
   if (artifactDirectory !== undefined) {
     options.embeddingArtifactDirectory = artifactDirectory;
   }
+  if (hasEmbeddingProviderConfiguration(environment)) {
+    const domain = securityDomain ?? DEFAULT_SECURITY_DOMAIN;
+    const embedding = readEmbeddingCompositionConfiguration(
+      environment,
+      domain,
+    );
+    const profiles = readActiveEmbeddingProfiles(environment, embedding);
+    options.embedding = embedding;
+    options.embeddingProfile = profiles.document;
+    options.cardSelectionProfile = profiles.card;
+  }
   return options;
+}
+
+function hasEmbeddingProviderConfiguration(
+  environment: Readonly<Partial<Record<string, string>>>,
+): boolean {
+  return Object.keys(environment).some(
+    (name) =>
+      name.startsWith("CONTEXTCTL_DOCUMENT_EMBEDDING_") ||
+      name.startsWith("CONTEXTCTL_CARD_EMBEDDING_") ||
+      name === "CONTEXTCTL_DOCUMENT_RETAINED_EMBEDDING_BINDINGS",
+  );
 }
 
 /**

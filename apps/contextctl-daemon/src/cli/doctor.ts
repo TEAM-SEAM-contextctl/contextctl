@@ -27,6 +27,10 @@ import {
 import { resolveContextctlPaths, readNonEmpty } from "./paths.js";
 import { readSourcesFile, SourcesFileError } from "./sources-file.js";
 import { resolveVectorBackend } from "../vector-backend.js";
+import {
+  readActiveEmbeddingProfiles,
+  readEmbeddingCompositionConfiguration,
+} from "../embedding/configuration.js";
 
 /**
  * What `contextctl doctor` reports, and why it is not the composition root.
@@ -110,7 +114,8 @@ export async function runDiagnosis(
     await checkSourcesFile(paths.sourcesFile),
     checkRegistryDatabase(paths.registryDatabase),
     checkIngestionDatabase(paths.ingestionDatabase),
-    await inspectEmbeddingAssets(
+    await inspectConfiguredEmbeddingAssets(
+      input.environment,
       paths.embeddingAssetDirectory,
       input.deep === true,
     ),
@@ -123,6 +128,40 @@ export async function runDiagnosis(
     steps,
     healthy: steps.every((step) => step.status !== "fail"),
   };
+}
+
+async function inspectConfiguredEmbeddingAssets(
+  environment: Readonly<Partial<Record<string, string>>>,
+  directory: string,
+  deep: boolean,
+): Promise<DiagnosisStep> {
+  try {
+    const securityDomain =
+      environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
+    const configuration = readEmbeddingCompositionConfiguration(
+      environment,
+      securityDomain,
+    );
+    readActiveEmbeddingProfiles(environment, configuration);
+    if (
+      configuration.document.mode === "remote" &&
+      configuration.card.mode === "remote"
+    ) {
+      return diagnosis(
+        "embedding-assets",
+        "ok",
+        "문서 검색과 Card 선택이 모두 원격 제공자를 사용하므로 활성 로컬 모델 자산이 필요하지 않습니다.",
+      );
+    }
+  } catch (error) {
+    return diagnosis(
+      "embedding-assets",
+      "fail",
+      `임베딩 제공자 설정을 사용할 수 없습니다: ${describeError(error)}`,
+      "문서 검색과 Card 선택의 모드·엔드포인트·비밀 값·프로필 설정을 확인하세요.",
+    );
+  }
+  return inspectEmbeddingAssets(directory, deep);
 }
 
 /**

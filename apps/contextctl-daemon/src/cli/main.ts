@@ -34,10 +34,11 @@ import {
   cliRuntimeOptions,
   EmbeddingAssetsUnavailableError,
   openRegistryOnlyRuntime,
+  preflightActiveEmbeddingConfiguration,
+  resolveCliEmbeddingRuntime,
   type CliRuntime,
   type RegistryOnlyRuntime,
 } from "./runtime.js";
-import { resolveActiveAssetDirectory } from "./asset-directory.js";
 import { resolveContextctlPaths } from "./paths.js";
 import { readSourcesFile, SourcesFileError, toSourceConfigurations } from "./sources-file.js";
 import { resolveCardMeaningBackend } from "./meaning-generator.js";
@@ -324,23 +325,21 @@ async function runServe(
   const vectorBackend = resolveVectorBackend(environment);
   const paths = resolveContextctlPaths(environment, workingDirectory);
   const sources = await readSourcesFile(paths.sourcesFile);
+  await preflightActiveEmbeddingConfiguration(environment, paths);
   const ingestionDatabase = openIngestionDatabase({
     location: paths.ingestionDatabase,
     stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
     securityDomain: DEFAULT_SECURITY_DOMAIN,
   });
-  // `serve` resolves the pointer exactly as `buildCliRuntime` does. It cannot
-  // reuse that function — a served process holds its databases open for life
-  // while `buildCliRuntime` returns something the caller closes — so the one
-  // thing it must not do is work the directory out for itself.
-  const assets = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
-  if (assets.status === "unavailable") {
-    throw new EmbeddingAssetsUnavailableError(assets.problem);
-  }
+  const embeddingRuntime = await resolveCliEmbeddingRuntime({
+    environment,
+    paths,
+    ingestionDatabase,
+  });
   const options = cliRuntimeOptions({
     environment,
     paths,
-    embeddingArtifactDirectory: assets.directory,
+    embeddingRuntime,
     sourceConfigurations: toSourceConfigurations(sources),
     ingestionDatabase,
     vectorBackend,
