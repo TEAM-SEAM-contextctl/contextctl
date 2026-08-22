@@ -39,6 +39,16 @@ describe("required external check workflows", () => {
       "EVALUATION_REQUIRED: ${{ needs.change_detection.outputs.relevant }}",
     );
     expect(workflow).toContain(
+      "EVALUATION_RESULT: ${{ needs.release_evaluation.result }}",
+    );
+    expect(workflow).toContain(
+      "CONTEXTCTL_EVAL_RESOURCE_GATE_MODE: release",
+    );
+    expect(workflow).not.toContain("hosted_observation");
+    expect(workflow).toContain(
+      "scripts/run-document-retrieval-resource-probe.mjs",
+    );
+    expect(workflow).toContain(
       'if [[ "${EVALUATION_REQUIRED}" == "true" && "${EVALUATION_RESULT}" != "success" ]]',
     );
   });
