@@ -28,6 +28,7 @@ describe("query CLI runtime control", () => {
       runtime: {
         control,
         contextApplication,
+        prepareStateReadiness: async () => undefined,
         prepareCardCandidates: async () => undefined,
       },
     } as unknown as CliRuntime;
@@ -61,6 +62,7 @@ describe("query CLI runtime control", () => {
             return { payloadSchemaVersion: 3 } as unknown as ContextResolution;
           },
         },
+        prepareStateReadiness: async () => undefined,
         prepareCardCandidates: async () => {
           preparations += 1;
         },
@@ -92,6 +94,7 @@ describe("query CLI runtime control", () => {
       runtime: {
         control,
         contextApplication,
+        prepareStateReadiness: async () => undefined,
         prepareCardCandidates: async () => undefined,
       },
     } as unknown as CliRuntime;

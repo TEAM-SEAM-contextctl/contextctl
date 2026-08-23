@@ -85,6 +85,11 @@ export type VectorIndexObservation =
   | { readonly status: "configured"; readonly endpoint: string }
   | { readonly status: "unavailable"; readonly detail: string };
 
+/** Cross-store identity and every approved physical document binding. */
+export type StateReadinessObservation =
+  | { readonly status: "ready" }
+  | { readonly status: "unavailable"; readonly detail: string };
+
 /**
  * Registry's own state, as the reachability report gives it.
  *
@@ -142,6 +147,7 @@ export interface StatusObservation {
   readonly registry: RegistryObservation;
   readonly ingestion: IngestionObservation;
   readonly vectorIndex: VectorIndexObservation;
+  readonly stateReadiness: StateReadinessObservation;
 }
 
 const LANE_ORDER: readonly LaneName[] = [
@@ -202,6 +208,13 @@ export function judgeLanes(
  */
 function judgeResolve(observation: StatusObservation): LaneVerdict {
   const { registry, assets, vectorIndex } = observation;
+  if (observation.stateReadiness.status === "unavailable") {
+    return lane(
+      "resolve",
+      "not_ready",
+      `공유 상태의 식별값 또는 문서 인덱스 바인딩을 검증할 수 없습니다: ${observation.stateReadiness.detail}`,
+    );
+  }
   if (registry.status === "unreadable") {
     return lane(
       "resolve",

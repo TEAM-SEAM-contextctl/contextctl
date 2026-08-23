@@ -112,6 +112,28 @@ import {
   IngestionMaintenanceWorker,
   type IngestionMaintenanceWorkerPolicy,
 } from "./runtime/ingestion-maintenance-worker.js";
+import {
+  assertDaemonStateIdentity,
+  DEFAULT_DAEMON_STATE_IDENTITY,
+  readDaemonStateIdentity,
+  type DaemonStateIdentity,
+} from "./runtime/state-identity.js";
+import {
+  assertDaemonStateReady,
+} from "./runtime/state-readiness.js";
+
+export {
+  DaemonStateIdentityConfigurationError,
+  DEFAULT_DAEMON_STATE_IDENTITY,
+  readDaemonStateIdentity,
+  SECURITY_DOMAIN_VARIABLE,
+  STATE_NAMESPACE_ID_VARIABLE,
+  type DaemonStateIdentity,
+} from "./runtime/state-identity.js";
+export {
+  DaemonStateReadinessError,
+  type DaemonStateReadinessErrorCode,
+} from "./runtime/state-readiness.js";
 
 export { VectorBackendConfigurationError } from "./vector-backend.js";
 
@@ -150,8 +172,9 @@ export const DEFAULT_EMBEDDING_PROFILE: EmbeddingProfile = {
 /** The connector name the published document index is expected to carry. */
 export const DEFAULT_CONNECTOR_ID = "vector.local";
 
-/** The isolation key searches are made under. See `DaemonContextApplication`. */
-export const DEFAULT_SECURITY_DOMAIN = "local";
+/** Compatibility projection of the default deployment identity. */
+export const DEFAULT_SECURITY_DOMAIN =
+  DEFAULT_DAEMON_STATE_IDENTITY.securityDomain;
 
 /**
  * Options, all of them optional and all of them explicit.
@@ -189,7 +212,8 @@ export interface DaemonRuntimeOptions {
    * pick a directory on the operator's behalf.
    */
   readonly registryDatabaseLocation?: string;
-  readonly securityDomain?: string;
+  /** One identity shared by Registry, Ingestion, Index Catalog and Qdrant. */
+  readonly stateIdentity?: DaemonStateIdentity;
   readonly connectorId?: string;
   readonly embeddingProfile?: EmbeddingProfile;
   readonly embeddingProviderId?: string;
@@ -297,12 +321,6 @@ export interface DaemonRuntimeOptions {
    */
   readonly meanings?: CardMeaningGenerator;
   /**
-   * The state namespace published index manifests are stamped with. Matched
-   * exactly like the three above; it names which logical deployment's state a
-   * physical index belongs to.
-   */
-  readonly stateNamespaceId?: string;
-  /**
    * What a query may reach, fixed for this process. Defaults to
    * `DEFAULT_POLICY_CONTEXT` — retrieval only, sensitive Cards denied.
    *
@@ -341,8 +359,9 @@ export interface DaemonRuntimeOptions {
   readonly ingestionMaintenanceWorkerPolicy?: IngestionMaintenanceWorkerPolicy;
 }
 
-/** The state namespace a local, single-deployment composition publishes under. */
-export const DEFAULT_STATE_NAMESPACE_ID = "state_local";
+/** Compatibility projection of the default deployment identity. */
+export const DEFAULT_STATE_NAMESPACE_ID =
+  DEFAULT_DAEMON_STATE_IDENTITY.stateNamespaceId;
 
 /** Shown when a production profile has no installed assets to read. */
 export const EMBEDDING_ASSETS_MISSING_GUIDANCE =
@@ -415,6 +434,10 @@ export interface DaemonRuntime {
   readonly sharesLocalEmbeddingSession: boolean;
   /** Loads daemon-owned local model workers before any ingress is opened. */
   prepareEmbeddingRuntime(): Promise<void>;
+  /** Validates every approved durable Scope binding without creating state. */
+  prepareStateReadiness(): Promise<void>;
+  /** The one deployment identity injected into every stateful dependency. */
+  readonly stateIdentity: DaemonStateIdentity;
   readonly securityDomain: string;
   readonly connectorId: string;
   readonly embeddingProfile: EmbeddingProfile;
@@ -447,12 +470,13 @@ export function createDaemonRuntime(
   if (options.vectorIndex === undefined) {
     throw new TypeError("an explicit vector index is required");
   }
-  const securityDomain = options.securityDomain ?? DEFAULT_SECURITY_DOMAIN;
+  const stateIdentity = assertDaemonStateIdentity(
+    options.stateIdentity ?? DEFAULT_DAEMON_STATE_IDENTITY,
+  );
+  const { securityDomain, stateNamespaceId } = stateIdentity;
   const connectorId = options.connectorId ?? DEFAULT_CONNECTOR_ID;
   const embeddingProfile =
     options.embeddingProfile ?? DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
-  const stateNamespaceId =
-    options.stateNamespaceId ?? DEFAULT_STATE_NAMESPACE_ID;
   const now = options.clock ?? (() => new Date().toISOString());
   const clock: Clock = { now };
   const ids: IdGenerator = new RandomIdGenerator();
@@ -610,6 +634,13 @@ export function createDaemonRuntime(
   const cardCandidateIndex = new InMemoryCardCandidateIndexStore();
 
   const registryCatalog = new RegistryApprovedCardCatalog(cards);
+  const prepareStateReadiness = async (): Promise<void> =>
+    await assertDaemonStateReady({
+      stateIdentity,
+      catalog: registryCatalog,
+      publications,
+      vectorIndexes,
+    });
   const laneBoundCardCandidateIndex = new LaneBoundCardCandidateIndexStore(
     cardCandidateIndex,
     control.selectionAssets,
@@ -742,6 +773,8 @@ export function createDaemonRuntime(
     embeddingScheduler: control.embeddingScheduler,
     sharesLocalEmbeddingSession,
     prepareEmbeddingRuntime,
+    prepareStateReadiness,
+    stateIdentity,
     securityDomain,
     connectorId,
     embeddingProfile,
@@ -918,38 +951,30 @@ export function readDaemonRuntimeOptions(
   const options: {
     vectorIndex: VectorIndexPort;
     registryDatabaseLocation?: string;
-    securityDomain?: string;
+    stateIdentity: DaemonStateIdentity;
     connectorId?: string;
-    stateNamespaceId?: string;
     embeddingArtifactDirectory?: string;
     embedding?: EmbeddingCompositionConfiguration;
     embeddingProfile?: EmbeddingProfile;
     cardSelectionProfile?: CardSelectionProfile;
   } = {
     vectorIndex: resolveVectorBackend(environment).vectorIndex,
+    stateIdentity: readDaemonStateIdentity(environment),
   };
   const location = environment.CONTEXTCTL_REGISTRY_DATABASE;
   if (location !== undefined) {
     options.registryDatabaseLocation = location;
   }
-  const securityDomain = environment.CONTEXTCTL_SECURITY_DOMAIN;
-  if (securityDomain !== undefined) {
-    options.securityDomain = securityDomain;
-  }
   const connectorId = environment.CONTEXTCTL_CONNECTOR_ID;
   if (connectorId !== undefined) {
     options.connectorId = connectorId;
-  }
-  const stateNamespaceId = environment.CONTEXTCTL_STATE_NAMESPACE_ID;
-  if (stateNamespaceId !== undefined) {
-    options.stateNamespaceId = stateNamespaceId;
   }
   const artifactDirectory = environment.CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY;
   if (artifactDirectory !== undefined) {
     options.embeddingArtifactDirectory = artifactDirectory;
   }
   if (hasEmbeddingProviderConfiguration(environment)) {
-    const domain = securityDomain ?? DEFAULT_SECURITY_DOMAIN;
+    const domain = options.stateIdentity.securityDomain;
     const embedding = readEmbeddingCompositionConfiguration(
       environment,
       domain,
@@ -1112,6 +1137,7 @@ export async function runDaemon(
     // for a cold Granite build spends that caller's whole 3-second budget.
     // Prepare the current immutable snapshot before either ingress opens. A
     // later catalog change is still rebuilt through the same coalescing store.
+    await runtime.prepareStateReadiness();
     await runtime.prepareEmbeddingRuntime();
     await runtime.prepareCardCandidates();
   } catch (error) {

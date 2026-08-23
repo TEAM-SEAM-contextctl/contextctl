@@ -10,7 +10,10 @@ import {
 } from "@contextctl/ingestion-indexing";
 import { openRegistryDatabase } from "@contextctl/registry-lifecycle";
 
-import { DEFAULT_SECURITY_DOMAIN, DEFAULT_STATE_NAMESPACE_ID } from "../main.js";
+import {
+  readDaemonStateIdentity,
+  type DaemonStateIdentity,
+} from "../main.js";
 import {
   describeAssetDirectoryProblem,
   resolveActiveAssetDirectory,
@@ -108,16 +111,18 @@ export async function runDiagnosis(
     input.environment,
     input.workingDirectory,
   );
+  const stateIdentity = readDaemonStateIdentity(input.environment);
   const steps: DiagnosisStep[] = [
     checkNodeVersion(),
     await checkHomeDirectory(paths.home),
     await checkSourcesFile(paths.sourcesFile),
     checkRegistryDatabase(paths.registryDatabase),
-    checkIngestionDatabase(paths.ingestionDatabase),
+    checkIngestionDatabase(paths.ingestionDatabase, stateIdentity),
     await inspectConfiguredEmbeddingAssets(
       input.environment,
       paths.embeddingAssetDirectory,
       input.deep === true,
+      stateIdentity,
     ),
     checkVectorBackend(input.environment),
     checkCardMeaning(input.environment),
@@ -134,13 +139,12 @@ async function inspectConfiguredEmbeddingAssets(
   environment: Readonly<Partial<Record<string, string>>>,
   directory: string,
   deep: boolean,
+  stateIdentity: DaemonStateIdentity,
 ): Promise<DiagnosisStep> {
   try {
-    const securityDomain =
-      environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
     const configuration = readEmbeddingCompositionConfiguration(
       environment,
-      securityDomain,
+      stateIdentity.securityDomain,
     );
     readActiveEmbeddingProfiles(environment, configuration);
     if (
@@ -307,13 +311,15 @@ function checkRegistryDatabase(location: string): DiagnosisStep {
  * real commands use would report a healthy database that `contextctl ingest`
  * then rejects — the exact class of false negative `doctor` exists to remove.
  */
-function checkIngestionDatabase(location: string): DiagnosisStep {
+function checkIngestionDatabase(
+  location: string,
+  stateIdentity: DaemonStateIdentity,
+): DiagnosisStep {
   let database: { close(): void } | undefined;
   try {
     database = openIngestionDatabase({
       location,
-      stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-      securityDomain: DEFAULT_SECURITY_DOMAIN,
+      ...stateIdentity,
     });
     return diagnosis(
       "ingestion-database",

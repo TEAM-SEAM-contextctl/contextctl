@@ -21,10 +21,10 @@ import {
 
 import {
   createDaemonRuntime,
-  DEFAULT_SECURITY_DOMAIN,
-  DEFAULT_STATE_NAMESPACE_ID,
+  readDaemonStateIdentity,
   type DaemonRuntime,
   type DaemonRuntimeOptions,
+  type DaemonStateIdentity,
 } from "../main.js";
 import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
 import {
@@ -88,6 +88,8 @@ export interface CliRuntime {
  * fail at whichever one first touched the half that was missing.
  */
 export interface RegistryOnlyRuntime {
+  /** Identity resolved once for every store this command may touch. */
+  readonly stateIdentity: DaemonStateIdentity;
   readonly database: DatabaseSync;
   readonly cards: SqliteCardStore;
   /**
@@ -118,6 +120,7 @@ export function openRegistryOnlyRuntime(input: {
   readonly workingDirectory?: string;
 }): RegistryOnlyRuntime {
   const paths = resolveContextctlPaths(input.environment, input.workingDirectory);
+  const stateIdentity = readDaemonStateIdentity(input.environment);
   // The directory is created rather than required. SQLite reports a missing
   // parent as `unable to open database file`, which reads as a corrupt database
   // rather than as a first run, and these commands are reachable before anything
@@ -150,14 +153,14 @@ export function openRegistryOnlyRuntime(input: {
       mkdirSync(dirname(paths.ingestionDatabase), { recursive: true });
       ingestionDatabase = openIngestionDatabase({
         location: paths.ingestionDatabase,
-        stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-        securityDomain: DEFAULT_SECURITY_DOMAIN,
+        ...stateIdentity,
       });
     }
     return ingestionDatabase;
   };
 
   return {
+    stateIdentity,
     database,
     cards: new SqliteCardStore(database),
     get publications(): SqliteIngestionPublicationStore {
@@ -206,6 +209,7 @@ export async function buildCliRuntime(
   input: BuildCliRuntimeInput,
 ): Promise<CliRuntime> {
   const paths = resolveContextctlPaths(input.environment, input.workingDirectory);
+  const stateIdentity = readDaemonStateIdentity(input.environment);
   const vectorBackend = resolveVectorBackend(input.environment);
   const meaningBackend = resolveCardMeaningBackend({
     environment: input.environment,
@@ -218,15 +222,18 @@ export async function buildCliRuntime(
   const sources = await readSourcesFile(paths.sourcesFile);
   const sourceConfigurations = toSourceConfigurations(sources);
 
-  await preflightActiveEmbeddingConfiguration(input.environment, paths);
+  await preflightActiveEmbeddingConfiguration(
+    input.environment,
+    paths,
+    stateIdentity,
+  );
 
   // Opened before `createDaemonRuntime` so that a schema failure — an ingestion
   // database written under a different security domain, say — is reported as
   // itself rather than as a runtime that would not assemble.
   const ingestionDatabase = openIngestionDatabase({
     location: paths.ingestionDatabase,
-    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-    securityDomain: DEFAULT_SECURITY_DOMAIN,
+    ...stateIdentity,
   });
 
   let embeddingRuntime: ResolvedCliEmbeddingRuntime;
@@ -235,6 +242,7 @@ export async function buildCliRuntime(
       environment: input.environment,
       paths,
       ingestionDatabase,
+      stateIdentity,
     });
   } catch (error) {
     ingestionDatabase.close();
@@ -252,6 +260,7 @@ export async function buildCliRuntime(
         vectorBackend,
         meaningBackend,
         embeddingRuntime,
+        stateIdentity,
       }),
     );
   } catch (error) {
@@ -316,10 +325,13 @@ export function cliRuntimeOptions(input: {
    * rather than derived from `paths` a second time here.
    */
   readonly embeddingRuntime: ResolvedCliEmbeddingRuntime;
+  /** Already resolved; this function must not read identity from the environment. */
+  readonly stateIdentity: DaemonStateIdentity;
 }): DaemonRuntimeOptions {
   const { ingestionDatabase } = input;
   return {
     registryDatabaseLocation: input.paths.registryDatabase,
+    stateIdentity: input.stateIdentity,
     embedding: input.embeddingRuntime.configuration,
     embeddingProfile: input.embeddingRuntime.profiles.document,
     cardSelectionProfile: input.embeddingRuntime.profiles.card,
@@ -355,12 +367,11 @@ export interface ResolvedCliEmbeddingRuntime {
 export async function preflightActiveEmbeddingConfiguration(
   environment: Readonly<Partial<Record<string, string>>>,
   paths: ContextctlPaths,
+  stateIdentity: DaemonStateIdentity,
 ): Promise<void> {
-  const securityDomain =
-    environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
   const configuration = readEmbeddingCompositionConfiguration(
     environment,
-    securityDomain,
+    stateIdentity.securityDomain,
   );
   readActiveEmbeddingProfiles(environment, configuration);
   if (
@@ -387,12 +398,11 @@ export async function resolveCliEmbeddingRuntime(input: {
   readonly environment: Readonly<Partial<Record<string, string>>>;
   readonly paths: ContextctlPaths;
   readonly ingestionDatabase: DatabaseSync;
+  readonly stateIdentity: DaemonStateIdentity;
 }): Promise<ResolvedCliEmbeddingRuntime> {
-  const securityDomain =
-    input.environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
   const configuration = readEmbeddingCompositionConfiguration(
     input.environment,
-    securityDomain,
+    input.stateIdentity.securityDomain,
   );
   const profiles = readActiveEmbeddingProfiles(
     input.environment,

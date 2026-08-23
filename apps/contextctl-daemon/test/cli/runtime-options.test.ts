@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_SECURITY_DOMAIN,
   DEFAULT_STATE_NAMESPACE_ID,
+  readDaemonStateIdentity,
 } from "../../src/main.js";
 import { resolveCardMeaningBackend } from "../../src/cli/meaning-generator.js";
 import { resolveContextctlPaths } from "../../src/cli/paths.js";
@@ -59,11 +60,13 @@ afterEach(() => {
   }
 });
 
-function ingestionDatabase(): DatabaseSync {
+function ingestionDatabase(stateIdentity = {
+  stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+  securityDomain: DEFAULT_SECURITY_DOMAIN,
+}): DatabaseSync {
   const database = openIngestionDatabase({
     location: ":memory:",
-    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-    securityDomain: DEFAULT_SECURITY_DOMAIN,
+    ...stateIdentity,
   });
   databases.push(database);
   return database;
@@ -86,13 +89,15 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
     configuredEnvironment,
     configuration,
   );
+  const stateIdentity = readDaemonStateIdentity(configuredEnvironment);
   return {
     paths,
     options: cliRuntimeOptions({
       environment: configuredEnvironment,
       paths,
+      stateIdentity,
       sourceConfigurations: { "source.payment": { path: "/tmp/payment.md" } },
-      ingestionDatabase: ingestionDatabase(),
+      ingestionDatabase: ingestionDatabase(stateIdentity),
       // The revision directory, as `buildCliRuntime` resolves it from the
       // pointer. Passing `paths.embeddingAssetDirectory` here would restate the
       // bug these options exist to prevent.
@@ -117,6 +122,18 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
 }
 
 describe("CLI runtime options", () => {
+  it("passes one configured identity to the durable stores and runtime graph", () => {
+    const { options } = build({
+      CONTEXTCTL_STATE_NAMESPACE_ID: "state_production",
+      CONTEXTCTL_SECURITY_DOMAIN: "tenant-production",
+    });
+
+    expect(options.stateIdentity).toEqual({
+      stateNamespaceId: "state_production",
+      securityDomain: "tenant-production",
+    });
+  });
+
   it("refuses missing active assets before creating state databases", async () => {
     const home = mkdtempSync(join(tmpdir(), "contextctl-local-preflight-"));
     temporaryDirectories.push(home);
@@ -167,6 +184,10 @@ describe("CLI runtime options", () => {
       environment,
       paths,
       ingestionDatabase: database,
+      stateIdentity: {
+        stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+        securityDomain: DEFAULT_SECURITY_DOMAIN,
+      },
     });
 
     expect(resolved.configuration.document.mode).toBe("remote");

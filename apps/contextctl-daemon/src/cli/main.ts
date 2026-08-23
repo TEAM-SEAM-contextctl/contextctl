@@ -7,9 +7,8 @@ import {
 } from "@contextctl/ingestion-indexing";
 
 import {
-  DEFAULT_SECURITY_DOMAIN,
-  DEFAULT_STATE_NAMESPACE_ID,
   EMBEDDING_ASSETS_MISSING_GUIDANCE,
+  readDaemonStateIdentity,
   runDaemon,
 } from "../main.js";
 import { parseCliArguments, usageText, type CliCommand } from "./arguments.js";
@@ -338,17 +337,22 @@ async function runServe(
   // ingest look complete while its vectors never existed.
   const vectorBackend = resolveVectorBackend(environment);
   const paths = resolveContextctlPaths(environment, workingDirectory);
+  const stateIdentity = readDaemonStateIdentity(environment);
   const sources = await readSourcesFile(paths.sourcesFile);
-  await preflightActiveEmbeddingConfiguration(environment, paths);
+  await preflightActiveEmbeddingConfiguration(
+    environment,
+    paths,
+    stateIdentity,
+  );
   const ingestionDatabase = openIngestionDatabase({
     location: paths.ingestionDatabase,
-    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-    securityDomain: DEFAULT_SECURITY_DOMAIN,
+    ...stateIdentity,
   });
   const embeddingRuntime = await resolveCliEmbeddingRuntime({
     environment,
     paths,
     ingestionDatabase,
+    stateIdentity,
   });
   const options = cliRuntimeOptions({
     environment,
@@ -357,6 +361,7 @@ async function runServe(
     sourceConfigurations: toSourceConfigurations(sources),
     ingestionDatabase,
     vectorBackend,
+    stateIdentity,
     meaningBackend: resolveCardMeaningBackend({
       environment,
       // stdout belongs to JSON-RPC from here on, so every notice goes to stderr.
