@@ -6,6 +6,10 @@ import type {
 } from "../../src/domain/card-catalog.js";
 import { buildCardSelectionEntry } from "../../src/domain/card-selection-text.js";
 import { buildRetrievalGuide } from "../../src/domain/retrieval-guide.js";
+import {
+  collectKeys,
+  unexpectedResponseKeys,
+} from "../fixtures/response-keys.fixture.js";
 
 /**
  * The approved Card read model carries no physical binding, at any depth.
@@ -28,6 +32,58 @@ import { buildRetrievalGuide } from "../../src/domain/retrieval-guide.js";
 
 /** Names that must never appear as a key anywhere in this read model. */
 const PHYSICAL_BINDING_KEYS = ["connectorId", "accessHandle"] as const;
+
+/**
+ * Every key the approved Card read model declares, at any depth.
+ *
+ * The read model is Registry's projection of an approved Card as Selection
+ * reads it; it is not itself public, but everything a consumer receives is
+ * derived from it, so a physical coordinate that got in here would have to be
+ * kept out again by every projection downstream. Holding the model to a
+ * whitelist means there is nothing to keep out: a key is either declared here,
+ * with the type, or it fails at the first read.
+ */
+const APPROVED_CARD_READ_MODEL_KEYS: ReadonlySet<string> = new Set([
+  // Card identity and meaning
+  "cardId",
+  "versionId",
+  "meaning",
+  "description",
+  "representativeQuestions",
+  "aliases",
+  "keywords",
+  // Access policy, applied before any Card is scored
+  "policy",
+  "sensitive",
+  "allowedUsage",
+  // Scopes, every kind
+  "scopes",
+  "kind",
+  "reference",
+  "scopeId",
+  "scopeVersion",
+  // Managed document: the four logical index coordinates, and the selection
+  "documentIndex",
+  "documentIndexId",
+  "sourceId",
+  "documentId",
+  "indexVersion",
+  "selection",
+  "semanticUnitIds",
+  // SQL: the consumer's own datasource
+  "connector",
+  "schema",
+  "table",
+  "columns",
+  // HTTP: the consumer's own endpoint
+  "method",
+  "path",
+  "operationId",
+  "parameters",
+  "location",
+  "name",
+  "required",
+]);
 
 /**
  * A representative approved Card, written out here rather than imported.
@@ -79,23 +135,6 @@ const approvedCard: ApprovedCard = {
   ],
 };
 
-/** Every key name reachable from `value`, objects and arrays alike. */
-function collectKeys(value: unknown, into: Set<string> = new Set()): Set<string> {
-  if (Array.isArray(value)) {
-    for (const element of value) {
-      collectKeys(element, into);
-    }
-    return into;
-  }
-  if (typeof value === "object" && value !== null) {
-    for (const [key, nested] of Object.entries(value)) {
-      into.add(key);
-      collectKeys(nested, into);
-    }
-  }
-  return into;
-}
-
 describe("approved Card read model physical binding", () => {
   it("declares exactly the four logical index coordinates", () => {
     const documentScope = approvedCard.scopes[0];
@@ -143,29 +182,42 @@ describe("approved Card read model physical binding", () => {
     expect(withConnector.documentIndexId).toBe(withHandle.documentIndexId);
   });
 
-  it.each(PHYSICAL_BINDING_KEYS)(
-    "carries no %s key anywhere in the model",
-    (forbidden) => {
-      // Walked rather than checked on `documentIndex` alone. A binding added to
-      // a SQL Scope, to the Card root, or to a nested selection would be just as
-      // much of a leak and would pass a check that only looked where the field
-      // used to live.
-      expect([...collectKeys(approvedCard)]).not.toContain(forbidden);
-    },
-  );
+  it("carries exactly the keys the read model declares, at every depth", () => {
+    // Walked rather than checked on `documentIndex` alone, and against a
+    // whitelist rather than the two names that used to live there. A binding
+    // added to a SQL Scope, to the Card root, or to a nested selection — under
+    // `connectorId`, `accessHandle` or any name this file never heard of — is
+    // just as much of a leak, and a field reaches the read model only by being
+    // added here with the rest.
+    const unexpected = [...collectKeys(approvedCard)]
+      .filter((key) => !APPROVED_CARD_READ_MODEL_KEYS.has(key))
+      .sort();
+
+    expect(unexpected).toEqual([]);
+    for (const forbidden of PHYSICAL_BINDING_KEYS) {
+      expect(APPROVED_CARD_READ_MODEL_KEYS.has(forbidden)).toBe(false);
+    }
+  });
+
+  it("derives guides that carry only keys a consumer may receive", () => {
+    // The guide is the one artifact of the read model that is handed to a
+    // consumer verbatim, so its keys are held to the response whitelist
+    // directly. A field added to the read model and transcribed by
+    // `buildRetrievalGuide` fails here before any surface test sees it.
+    const guides = approvedCard.scopes.map((scope) => buildRetrievalGuide(scope, 4));
+
+    expect(unexpectedResponseKeys(guides)).toEqual([]);
+  });
 
   it.each(PHYSICAL_BINDING_KEYS)(
-    "keeps %s out of everything derived from the model",
+    "keeps %s out of the text a Card is embedded from",
     (forbidden) => {
-      // The two artifacts a Card produces that outlive the request it was built
-      // for: the guide a consumer receives, and the text a Card is embedded
-      // from. A vector is the worse of the two — it is written to an index and
-      // survives every later redaction — which is why the payload is checked as
-      // bytes rather than by key.
-      const guides = approvedCard.scopes.map((scope) => buildRetrievalGuide(scope, 4));
+      // A vector is written to an index and survives every later redaction,
+      // which is why the payload is checked as bytes rather than by key: a
+      // binding that reached the selection text would be embedded under
+      // whatever wording carried it there.
       const entry = buildCardSelectionEntry(approvedCard);
 
-      expect([...collectKeys(guides)]).not.toContain(forbidden);
       expect(entry.payload).not.toContain(forbidden);
     },
   );

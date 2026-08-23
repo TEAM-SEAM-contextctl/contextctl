@@ -24,6 +24,7 @@ import {
 } from "./fixtures/approved-card.fixture.js";
 import { createFixtureContextApplication } from "./fixtures/context-application.fixture.js";
 import { createRefundPolicyChunkMap } from "./fixtures/document-chunk.fixture.js";
+import { unexpectedResponseKeys } from "./fixtures/response-keys.fixture.js";
 
 /**
  * The demo path, driven only through what `src/index.ts` publishes.
@@ -53,14 +54,6 @@ const FORBIDDEN_VALUES = {
   connectorId: "vector.local",
   accessHandle: "documents/policies/indexes/refund",
 } as const;
-
-/** Field names that must never reach a consumer, whatever they hold. */
-const FORBIDDEN_FIELDS = [
-  "connectorId",
-  "accessHandle",
-  "collection",
-  "credential",
-] as const;
 
 interface JsonRpcEnvelope {
   readonly jsonrpc: string;
@@ -289,24 +282,27 @@ function expectDemoResolution(resolution: ContextResolution): void {
  * at runtime and not only in the type. Exclusion downstream is then a property
  * of the input rather than a projection rule each layer has to keep applying.
  *
- * Both the field names and the value shapes are still checked on the response,
- * because a regression that renamed a field and shipped the coordinate anyway
- * would satisfy the first list and still leak.
+ * Keys are checked against the whitelist of what the public types declare
+ * rather than against a list of forbidden names: the latter passed for a
+ * binding under any name it did not know. The value shapes are still checked
+ * on top, because a regression that shipped the coordinate under a whitelisted
+ * key — in a chunk's `text`, say — would satisfy the key check and still leak.
  */
 function expectNoRetrievalCoordinates(resolution: ContextResolution): void {
   const scope = createDemoCardSet()[0]?.scopes[0];
   if (scope?.kind !== "managed_document") {
     throw new Error("expected the refund policy Card to hold a document scope");
   }
-  for (const field of FORBIDDEN_FIELDS) {
-    expect(Object.keys(scope.documentIndex)).not.toContain(field);
-  }
+  expect(Object.keys(scope.documentIndex).sort()).toEqual([
+    "documentId",
+    "documentIndexId",
+    "indexVersion",
+    "sourceId",
+  ]);
 
   const serialized = JSON.stringify(resolution);
 
-  for (const field of FORBIDDEN_FIELDS) {
-    expect(serialized).not.toContain(field);
-  }
+  expect(unexpectedResponseKeys(JSON.parse(serialized))).toEqual([]);
   expect(serialized).not.toContain(FORBIDDEN_VALUES.connectorId);
   expect(serialized).not.toContain(FORBIDDEN_VALUES.accessHandle);
 }

@@ -13,6 +13,7 @@ import {
 } from "../fixtures/approved-card.fixture.js";
 import { createFixtureContextApplication } from "../fixtures/context-application.fixture.js";
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
+import { unexpectedResponseKeys } from "../fixtures/response-keys.fixture.js";
 
 /**
  * Physical retrieval coordinates in the shape our own infrastructure would use
@@ -125,12 +126,14 @@ describe("ContextResolution serialization", () => {
     ).toBe("failed");
   });
 
-  it.each(["connectorId", "accessHandle", "collection", "credential"])(
-    "omits the %s field",
-    (field) => {
-      expect(wire).not.toContain(field);
-    },
-  );
+  it("carries no key the public types do not declare", () => {
+    // A whitelist walk over the parsed wire rather than a scan for four
+    // forbidden names. The four — `connectorId`, `accessHandle`, `collection`,
+    // `credential` — are still refused, but so is any fifth name a physical
+    // binding might travel under: a key reaches a consumer only if it is in
+    // `PUBLIC_RESPONSE_KEYS`, with a reason written beside it.
+    expect(unexpectedResponseKeys(JSON.parse(wire))).toEqual([]);
+  });
 
   it("omits the binding values, not just the field names", () => {
     // A leak that renamed the field would pass a name-only check while still
