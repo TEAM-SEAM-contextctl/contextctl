@@ -240,6 +240,38 @@ describe("status", () => {
   });
 });
 
+describe("backup", () => {
+  it("parses a new backup destination", () => {
+    expect(commandOf(["backup", "create", "./backup-2026-08-24"])).toEqual({
+      kind: "backup_create",
+      destination: "./backup-2026-08-24",
+    });
+  });
+
+  it("requires an explicit new home for restore", () => {
+    expect(
+      commandOf([
+        "backup",
+        "restore",
+        "./backup-2026-08-24",
+        "--target-home",
+        "./restored-home",
+      ]),
+    ).toEqual({
+      kind: "backup_restore",
+      source: "./backup-2026-08-24",
+      targetHome: "./restored-home",
+    });
+    expect(statusOf(["backup", "restore", "./backup-2026-08-24"]))
+      .toBe("usage_error");
+  });
+
+  it("rejects missing and unknown backup operations", () => {
+    expect(statusOf(["backup"])).toBe("usage_error");
+    expect(statusOf(["backup", "replace", "./backup"])).toBe("usage_error");
+  });
+});
+
 describe("query", () => {
   it("rejects a query with no question", () => {
     expect(statusOf(["query"])).toBe("usage_error");
@@ -326,6 +358,8 @@ describe("usageText", () => {
     "contextctl source add <path> [--name <ref>] [--display-name <text>]",
     "contextctl source list",
     "contextctl source remove <ref>",
+    "contextctl backup create <directory>",
+    "contextctl backup restore <directory> --target-home <new-directory>",
     "contextctl ingest [<ref>]",
     "contextctl cards list [--json]",
     "contextctl cards approve <cardId> [<versionId>] [--by <who>] [--note <text>]",

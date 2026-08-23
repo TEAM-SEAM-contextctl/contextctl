@@ -72,6 +72,11 @@ describe("commands that require a durable vector index", () => {
     ["ingest", ["ingest"]],
     ["query", ["query", "휴가 규정"]],
     ["serve", ["serve"]],
+    ["backup create", ["backup", "create", "backup"]],
+    [
+      "backup restore",
+      ["backup", "restore", "backup", "--target-home", "restored"],
+    ],
   ] as const)("refuses %s before creating durable state", async (_name, args) => {
     const home = await freshHome();
 

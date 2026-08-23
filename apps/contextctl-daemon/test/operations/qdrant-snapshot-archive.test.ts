@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   QdrantSnapshotArchive,
-  QdrantSnapshotArchiveError,
 } from "../../src/operations/qdrant-snapshot-archive.js";
 
 const collectionName = `contextctl_${"a".repeat(32)}`;
@@ -139,10 +138,78 @@ describe("Qdrant snapshot archive", () => {
           },
         ],
       }),
-    ).rejects.toMatchObject<Partial<QdrantSnapshotArchiveError>>({
+    ).rejects.toMatchObject({
       code: "collection_already_exists",
     });
     expect(methods).toEqual(["GET"]);
+  });
+
+  it("removes a collection when verification fails after a successful upload", async () => {
+    const directory = await temporaryDirectory();
+    await writeFile(join(directory, `${collectionName}.snapshot`), "snapshot");
+    const methods: string[] = [];
+    let existsChecks = 0;
+    const archive = new QdrantSnapshotArchive({
+      url: "http://127.0.0.1:6333",
+      fetch: async (_request, init) => {
+        methods.push(init?.method ?? "GET");
+        if (init?.method === "GET") {
+          existsChecks += 1;
+          return existsChecks === 1
+            ? json({ status: "ok", result: { exists: false } })
+            : json({ status: "ok", result: {} });
+        }
+        return json({ status: "ok", result: true });
+      },
+    });
+
+    await expect(
+      archive.restore({
+        directory,
+        artifacts: [{
+          collectionName,
+          path: `qdrant/${collectionName}.snapshot`,
+          sizeBytes: 8,
+          sha256: "0".repeat(64),
+        }],
+      }),
+    ).rejects.toMatchObject({ code: "qdrant_snapshot_response_invalid" });
+    expect(methods).toEqual(["GET", "POST", "GET", "DELETE"]);
+  });
+
+  it("probes and removes a collection after an ambiguous upload failure", async () => {
+    const directory = await temporaryDirectory();
+    await writeFile(join(directory, `${collectionName}.snapshot`), "snapshot");
+    const methods: string[] = [];
+    let existsChecks = 0;
+    const archive = new QdrantSnapshotArchive({
+      url: "http://127.0.0.1:6333",
+      fetch: async (_request, init) => {
+        methods.push(init?.method ?? "GET");
+        if (init?.method === "POST") throw new Error("connection lost");
+        if (init?.method === "GET") {
+          existsChecks += 1;
+          return json({
+            status: "ok",
+            result: { exists: existsChecks > 1 },
+          });
+        }
+        return json({ status: "ok", result: true });
+      },
+    });
+
+    await expect(
+      archive.restore({
+        directory,
+        artifacts: [{
+          collectionName,
+          path: `qdrant/${collectionName}.snapshot`,
+          sizeBytes: 8,
+          sha256: "0".repeat(64),
+        }],
+      }),
+    ).rejects.toMatchObject({ code: "qdrant_snapshot_restore_failed" });
+    expect(methods).toEqual(["GET", "POST", "GET", "DELETE"]);
   });
 
   it("rejects an unsafe endpoint before making requests", () => {
@@ -152,6 +219,46 @@ describe("Qdrant snapshot archive", () => {
           url: "http://qdrant.example.test:6333",
         }),
     ).toThrow(TypeError);
+  });
+
+  it("bounds Qdrant metadata responses before parsing them", async () => {
+    const archive = new QdrantSnapshotArchive({
+      url: "http://127.0.0.1:6333",
+      fetch: async () => new Response("x".repeat(64 * 1024 + 1)),
+    });
+
+    await expect(
+      archive.restore({ directory: "/unused", artifacts: [{
+        collectionName,
+        path: `qdrant/${collectionName}.snapshot`,
+        sizeBytes: 1,
+        sha256: "0".repeat(64),
+      }] }),
+    ).rejects.toMatchObject({ code: "qdrant_snapshot_response_invalid" });
+  });
+
+  it("preserves a reverse-proxy path prefix", async () => {
+    const directory = await temporaryDirectory();
+    const urls: string[] = [];
+    const archive = new QdrantSnapshotArchive({
+      url: "http://127.0.0.1:6333/qdrant",
+      fetch: async (request, init) => {
+        urls.push(String(request));
+        if (init?.method === "POST") {
+          return json({ status: "ok", result: { name: "snapshot.snapshot" } });
+        }
+        if (init?.method === "GET") {
+          return new Response(Uint8Array.from([1]));
+        }
+        return json({ status: "ok", result: true });
+      },
+    });
+
+    await archive.create({ targets: [{ collectionName }], directory });
+
+    expect(urls).toHaveLength(3);
+    expect(urls.every((url) => new URL(url).pathname.startsWith("/qdrant/collections/")))
+      .toBe(true);
   });
 });
 

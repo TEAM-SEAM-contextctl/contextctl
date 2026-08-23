@@ -234,6 +234,8 @@ contextctl cards disable <cardId> [--by <who>] [--note <text>]
 contextctl cards rollback <cardId> <versionId> [--by <who>] [--note <text>]
 contextctl reachability [--state <state>]
 contextctl status [--json]
+contextctl backup create <directory>
+contextctl backup restore <directory> --target-home <new-directory>
 contextctl query "<질문>" [--json] [--max-context <n>]
 contextctl serve
 contextctl help [<command>]
@@ -350,6 +352,42 @@ contextctl status --json > status.json || echo "막힌 영역이 있습니다"
 
 `doctor` 와는 묻는 것이 다릅니다. `doctor` 는 "설치가 제대로 됐는가", `status` 는 "지금 어느 영역이 일을 못 하는가" 입니다.
 
+### 백업과 복원
+
+SQLite 파일만 복사하면 Qdrant 색인과 시점이 어긋나고, Qdrant만 스냅샷으로 남기면 승인 Card와
+Publication 계보를 잃습니다. `backup create`는 Ingestion과 Registry 쓰기를 같은 순서로 잠근 뒤
+두 SQLite 저장소와 현재 Publication 계보가 참조하는 Qdrant 컬렉션을 하나의 복구 묶음으로
+저장합니다. 임베딩 모델 자산은 다시 설치할 수 있으므로 포함하지 않습니다.
+
+```bash
+CONTEXTCTL_QDRANT_URL=http://127.0.0.1:6333 \
+  contextctl backup create ./contextctl-backup-2026-08-24
+```
+
+백업에는 원본 문서에서 만든 검색 청크와 승인 이력이 들어 있으므로 운영 상태와 같은 보안 등급으로
+보관하십시오. Qdrant API 키는 묶음이나 manifest에 기록되지 않습니다. 목적지 디렉터리가 이미
+있으면 명령은 덮어쓰지 않고 실패합니다.
+
+복원은 기존 상태를 제자리에서 교체하지 않습니다. 새 상태 디렉터리와, 같은 이름의 ContextCtl
+컬렉션이 하나도 없는 대상 Qdrant를 준비한 뒤 실행합니다. 복원 중에는 그 대상 홈을 사용하는
+daemon을 시작하지 마십시오.
+
+```bash
+CONTEXTCTL_QDRANT_URL=http://127.0.0.1:7333 \
+  contextctl backup restore ./contextctl-backup-2026-08-24 \
+  --target-home ./contextctl-restored
+
+CONTEXTCTL_HOME=./contextctl-restored \
+CONTEXTCTL_QDRANT_URL=http://127.0.0.1:7333 \
+  contextctl status
+```
+
+`CONTEXTCTL_STATE_NAMESPACE_ID`와 `CONTEXTCTL_SECURITY_DOMAIN`은 백업을 만든 배포와 같아야 합니다.
+다르면 SQLite나 Qdrant를 쓰기 전에 거부합니다. `CONTEXTCTL_INGESTION_DATABASE` 또는
+`CONTEXTCTL_REGISTRY_DATABASE`를 별도로 설정했다면 전환할 때도 새 홈의 파일을 가리키도록 함께
+바꾸십시오. `status`와 대표 질의를 확인한 뒤에만 트래픽을 새 홈으로 전환합니다. 실패하면 기존
+홈과 기존 Qdrant가 그대로 남아 있으므로 그쪽으로 되돌릴 수 있습니다.
+
 ---
 
 ## MCP 등록
@@ -437,7 +475,8 @@ rm ~/.contextctl/ingestion.db     # 관측·게시 이력 — 같은 문서를 �
 rm ~/.contextctl/sources.json     # 등록한 문서 목록
 ```
 
-되돌릴 수 없습니다. 실행 중인 daemon 을 먼저 중지하고, 필요하다면 세 파일을 백업한 뒤
+되돌릴 수 없습니다. 실행 중인 daemon 을 먼저 중지하고, 필요하다면 `contextctl backup create`로
+전체 상태를 백업한 뒤
 Registry 와 Ingestion 상태를 함께 초기화하십시오. 둘 중 하나만 지우면 Publication 연쇄,
 소비 위치, 승인 이력이 서로 다른 시점을 가리킬 수 있습니다. 색인 복구 목적으로 이 파일들을
 지우지 마십시오.

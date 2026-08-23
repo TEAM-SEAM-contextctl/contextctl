@@ -11,6 +11,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rename,
   rm,
@@ -21,9 +22,15 @@ import { dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync, backup as backupSqlite } from "node:sqlite";
 
 import {
+  INGESTION_DATABASE_APPLICATION_ID,
+  INGESTION_DATABASE_SCHEMA_VERSION,
   listPublishedQdrantBackupTargets,
   type PublishedQdrantBackupTarget,
 } from "@contextctl/ingestion-indexing";
+import {
+  REGISTRY_DATABASE_APPLICATION_ID,
+  REGISTRY_DATABASE_SCHEMA_VERSION,
+} from "@contextctl/registry-lifecycle";
 
 export const STATE_BACKUP_FORMAT_VERSION = 1;
 export const STATE_BACKUP_MANIFEST_FILE = "manifest.json";
@@ -32,6 +39,8 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const COLLECTION_PATTERN = /^contextctl_[a-f0-9]{32}$/;
+const BACKUP_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export interface StateBackupIdentity {
   readonly stateNamespaceId: string;
@@ -108,7 +117,11 @@ export class StateBackupError extends Error {
     readonly code: StateBackupErrorCode,
     options?: ErrorOptions,
   ) {
-    super(`Contextctl state backup failed: ${code}`, options);
+    const causeCode = safeCauseCode(options?.cause);
+    super(
+      `Contextctl state backup failed: ${code}${causeCode === undefined ? "" : ` (${causeCode})`}`,
+      options,
+    );
     this.name = "StateBackupError";
   }
 }
@@ -135,10 +148,11 @@ export async function createStateBackup(input: {
   );
   await chmod(staging, 0o700);
 
-  const ingestionLock = openLockConnection(input.paths.ingestionDatabase);
+  let ingestionLock: DatabaseSync | undefined;
   let registryLock: DatabaseSync | undefined;
   let committed = false;
   try {
+    ingestionLock = openLockConnection(input.paths.ingestionDatabase);
     assertSqliteHealthy(ingestionLock);
     assertStoredIdentity(ingestionLock, "ingestion_metadata", identity);
     beginWriteFreeze(ingestionLock);
@@ -155,21 +169,25 @@ export async function createStateBackup(input: {
       targets,
       directory: qdrantDirectory,
     });
+    await assertVectorArtifacts(staging, targets, qdrant);
 
     const sqliteDirectory = join(staging, "sqlite");
     await mkdir(sqliteDirectory, { recursive: true, mode: 0o700 });
-    const sqlite = await Promise.all([
-      createSqliteArtifact({
+    // Sequential on purpose. Promise.all would reject as soon as one backup
+    // failed, release both write locks in `finally`, and remove the staging
+    // directory while the other SQLite backup was still writing into it.
+    const sqlite: readonly StateBackupSqliteArtifact[] = [
+      await createSqliteArtifact({
         role: "ingestion",
         source: input.paths.ingestionDatabase,
         destination: join(sqliteDirectory, "ingestion.db"),
       }),
-      createSqliteArtifact({
+      await createSqliteArtifact({
         role: "registry",
         source: input.paths.registryDatabase,
         destination: join(sqliteDirectory, "registry.db"),
       }),
-    ]);
+    ];
 
     const sources =
       input.paths.sourcesFile === undefined
@@ -211,7 +229,7 @@ export async function createStateBackup(input: {
     rollbackWriteFreeze(registryLock);
     registryLock?.close();
     rollbackWriteFreeze(ingestionLock);
-    ingestionLock.close();
+    ingestionLock?.close();
     if (!committed) {
       await rm(staging, { recursive: true, force: true });
     }
@@ -263,9 +281,11 @@ export async function restoreStateBackup(input: {
         fsConstants.COPYFILE_EXCL,
       );
       await chmod(destinationFile, 0o600);
+      await syncFile(destinationFile);
       const restored = new DatabaseSync(destinationFile, { readOnly: true });
       try {
         assertSqliteHealthy(restored);
+        assertSqliteHeader(restored, artifact.role, artifact);
         assertStoredIdentity(
           restored,
           artifact.role === "ingestion"
@@ -285,6 +305,7 @@ export async function restoreStateBackup(input: {
         fsConstants.COPYFILE_EXCL,
       );
       await chmod(destinationFile, 0o600);
+      await syncFile(destinationFile);
     }
 
     vectorLease = await input.vectors.restore({
@@ -295,13 +316,18 @@ export async function restoreStateBackup(input: {
     committed = true;
     return manifest;
   } catch (error) {
+    let rollbackFailure: unknown;
     if (vectorLease !== undefined) {
       try {
         await vectorLease.rollback();
-      } catch {
-        // Preserve the first failure. The vector adapter reports rollback
-        // failures through its own diagnostics when it performs the rollback.
+      } catch (rollbackError) {
+        rollbackFailure = rollbackError;
       }
+    }
+    if (rollbackFailure !== undefined) {
+      throw new StateBackupError("restore_write_failed", {
+        cause: new AggregateError([error, rollbackFailure]),
+      });
     }
     if (error instanceof StateBackupError) throw error;
     throw new StateBackupError("restore_write_failed", { cause: error });
@@ -348,11 +374,16 @@ async function createSqliteArtifact(input: {
     source.close();
   }
   await chmod(input.destination, 0o600);
+  await syncFile(input.destination);
   const snapshot = new DatabaseSync(input.destination, { readOnly: true });
   try {
     assertSqliteHealthy(snapshot);
     const applicationId = pragmaInteger(snapshot, "application_id");
     const schemaVersion = pragmaInteger(snapshot, "user_version");
+    assertSqliteHeader(snapshot, input.role, {
+      applicationId,
+      schemaVersion,
+    });
     const details = await stat(input.destination);
     return {
       role: input.role,
@@ -367,6 +398,38 @@ async function createSqliteArtifact(input: {
   }
 }
 
+async function assertVectorArtifacts(
+  root: string,
+  targets: readonly PublishedQdrantBackupTarget[],
+  artifacts: readonly StateBackupQdrantArtifact[],
+): Promise<void> {
+  const expected = targets.map((target) => target.collectionName).sort();
+  const actual = artifacts.map((artifact) => artifact.collectionName).sort();
+  if (
+    expected.length !== actual.length ||
+    expected.some((collection, index) => collection !== actual[index])
+  ) {
+    throw new StateBackupError("backup_write_failed");
+  }
+  for (const candidate of artifacts) {
+    const artifact = assertQdrantArtifact(candidate);
+    const path = safeArtifactPath(root, artifact.path);
+    try {
+      const details = await stat(path);
+      if (
+        !details.isFile() ||
+        details.size !== artifact.sizeBytes ||
+        (await sha256File(path)) !== artifact.sha256
+      ) {
+        throw new StateBackupError("backup_write_failed");
+      }
+    } catch (error) {
+      if (error instanceof StateBackupError) throw error;
+      throw new StateBackupError("backup_write_failed", { cause: error });
+    }
+  }
+}
+
 async function createFileArtifact(
   source: string,
   destination: string,
@@ -374,6 +437,7 @@ async function createFileArtifact(
 ): Promise<StateBackupFileArtifact> {
   await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
   await chmod(destination, 0o600);
+  await syncFile(destination);
   const details = await stat(destination);
   return {
     path: relativePath,
@@ -484,6 +548,31 @@ function pragmaInteger(database: DatabaseSync, name: string): number {
   return value as number;
 }
 
+function assertSqliteHeader(
+  database: DatabaseSync,
+  role: "ingestion" | "registry",
+  recorded: { readonly applicationId: number; readonly schemaVersion: number },
+): void {
+  const applicationId = pragmaInteger(database, "application_id");
+  const schemaVersion = pragmaInteger(database, "user_version");
+  const expectedApplicationId =
+    role === "ingestion"
+      ? INGESTION_DATABASE_APPLICATION_ID
+      : REGISTRY_DATABASE_APPLICATION_ID;
+  const latestSchemaVersion =
+    role === "ingestion"
+      ? INGESTION_DATABASE_SCHEMA_VERSION
+      : REGISTRY_DATABASE_SCHEMA_VERSION;
+  if (
+    applicationId !== expectedApplicationId ||
+    applicationId !== recorded.applicationId ||
+    schemaVersion !== recorded.schemaVersion ||
+    schemaVersion > latestSchemaVersion
+  ) {
+    throw new StateBackupError("backup_state_corrupt");
+  }
+}
+
 function assertIdentity(input: StateBackupIdentity): StateBackupIdentity {
   if (
     typeof input.stateNamespaceId !== "string" ||
@@ -517,9 +606,9 @@ function assertManifest(input: unknown): StateBackupManifest {
   if (
     input.formatVersion !== STATE_BACKUP_FORMAT_VERSION ||
     typeof input.backupId !== "string" ||
-    !/^[0-9a-f-]{36}$/.test(input.backupId) ||
+    !BACKUP_ID_PATTERN.test(input.backupId) ||
     typeof input.createdAt !== "string" ||
-    Number.isNaN(Date.parse(input.createdAt)) ||
+    !isCanonicalTimestamp(input.createdAt) ||
     input.consistencyProtocol !== "sqlite-write-freeze-qdrant-snapshot-v1" ||
     typeof input.stateNamespaceId !== "string" ||
     typeof input.securityDomain !== "string" ||
@@ -665,6 +754,15 @@ async function sha256File(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
+async function syncFile(path: string): Promise<void> {
+  const handle = await open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function assertRegularFile(path: string): Promise<Stats> {
   try {
     const details = await lstat(path);
@@ -697,6 +795,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isCanonicalTimestamp(value: string): boolean {
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+
 function hasExactKeys(
   value: Record<string, unknown>,
   required: readonly string[],
@@ -726,4 +832,17 @@ function isSqliteBusy(error: unknown): boolean {
     "code" in error &&
     (error.code === "ERR_SQLITE_BUSY" || error.code === "SQLITE_BUSY")
   );
+}
+
+function safeCauseCode(cause: unknown): string | undefined {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    typeof cause.code === "string" &&
+    /^[a-z][a-z0-9_]{0,63}$/.test(cause.code)
+  ) {
+    return cause.code;
+  }
+  return undefined;
 }

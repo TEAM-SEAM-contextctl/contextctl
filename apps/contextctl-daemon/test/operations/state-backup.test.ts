@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openIngestionDatabase } from "@contextctl/ingestion-indexing";
+import { openRegistryDatabase } from "@contextctl/registry-lifecycle";
 
 import {
   createStateBackup,
@@ -121,7 +122,7 @@ describe("state backup coordinator", () => {
         },
         vectors,
       }),
-    ).rejects.toMatchObject<Partial<StateBackupError>>({
+    ).rejects.toMatchObject({
       code: "restore_identity_mismatch",
     });
     expect(vectors.restoreCalls).toBe(0);
@@ -149,7 +150,7 @@ describe("state backup coordinator", () => {
         expectedIdentity: identity,
         vectors,
       }),
-    ).rejects.toMatchObject<Partial<StateBackupError>>({
+    ).rejects.toMatchObject({
       code: "restore_integrity_failed",
     });
     expect(vectors.restoreCalls).toBe(0);
@@ -166,7 +167,7 @@ describe("state backup coordinator", () => {
         paths: fixture.paths,
         vectors,
       }),
-    ).rejects.toMatchObject<Partial<StateBackupError>>({
+    ).rejects.toMatchObject({
       code: "backup_destination_exists",
     });
 
@@ -185,7 +186,7 @@ describe("state backup coordinator", () => {
         expectedIdentity: identity,
         vectors,
       }),
-    ).rejects.toMatchObject<Partial<StateBackupError>>({
+    ).rejects.toMatchObject({
       code: "restore_destination_exists",
     });
   });
@@ -203,9 +204,89 @@ describe("state backup coordinator", () => {
         paths: fixture.paths,
         vectors: new RecordingVectorArchive(),
       }),
-    ).rejects.toMatchObject<Partial<StateBackupError>>({
+    ).rejects.toMatchObject({
       code: "backup_state_corrupt",
     });
+  });
+
+  it("rejects a vector archive that does not exactly cover the catalog inventory", async () => {
+    const fixture = await stateFixture();
+    const unexpected = `contextctl_${"f".repeat(32)}`;
+
+    await expect(
+      createStateBackup({
+        destination: fixture.backup,
+        identity,
+        paths: fixture.paths,
+        vectors: {
+          create: async () => [
+            {
+              collectionName: unexpected,
+              path: `qdrant/${unexpected}.snapshot`,
+              sizeBytes: 1,
+              sha256: "0".repeat(64),
+            },
+          ],
+          restore: async () => ({ rollback: async () => undefined }),
+        },
+      }),
+    ).rejects.toMatchObject({ code: "backup_write_failed" });
+  });
+
+  it("rejects a database header that does not name the owning domain", async () => {
+    const fixture = await stateFixture();
+    const registry = new DatabaseSync(fixture.paths.registryDatabase);
+    registry.exec("PRAGMA application_id = 1");
+    registry.close();
+
+    await expect(
+      createStateBackup({
+        destination: fixture.backup,
+        identity,
+        paths: fixture.paths,
+        vectors: new RecordingVectorArchive(),
+      }),
+    ).rejects.toMatchObject({ code: "backup_state_corrupt" });
+  });
+
+  it("reports a rollback failure instead of hiding leftover vector state", async () => {
+    const fixture = await stateFixture();
+    const vectors = new RecordingVectorArchive();
+    await createStateBackup({
+      destination: fixture.backup,
+      identity,
+      paths: fixture.paths,
+      vectors,
+    });
+    const rollbackFailure = Object.assign(new Error("rollback failed"), {
+      code: "qdrant_snapshot_cleanup_failed",
+    });
+
+    await expect(
+      restoreStateBackup({
+        source: fixture.backup,
+        destinationHome: fixture.restore,
+        expectedIdentity: identity,
+        vectors: {
+          create: async () => [],
+          restore: async () => {
+            // Win the race after the absence check so the final rename fails
+            // only after vector restore returned a rollback lease.
+            await writeFile(fixture.restore, "occupied", "utf8");
+            return {
+              rollback: async () => {
+                throw rollbackFailure;
+              },
+            };
+          },
+        },
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof StateBackupError &&
+        error.code === "restore_write_failed" &&
+        error.cause instanceof AggregateError,
+    );
   });
 });
 
@@ -244,17 +325,11 @@ async function stateFixture(): Promise<{
   const sourcesFile = join(directory, "sources.json");
   openIngestionDatabase({ location: ingestionDatabase, ...identity }).close();
 
-  const registry = new DatabaseSync(registryDatabase);
+  const registry = openRegistryDatabase({
+    location: registryDatabase,
+    ...identity,
+  });
   registry.exec(`
-    PRAGMA user_version = 1;
-    CREATE TABLE registry_metadata (
-      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-      state_namespace_id TEXT NOT NULL,
-      security_domain TEXT NOT NULL
-    );
-    INSERT INTO registry_metadata (
-      singleton, state_namespace_id, security_domain
-    ) VALUES (1, '${identity.stateNamespaceId}', '${identity.securityDomain}');
     CREATE TABLE backup_probe (label TEXT NOT NULL);
     INSERT INTO backup_probe (label) VALUES ('approved-state');
   `);

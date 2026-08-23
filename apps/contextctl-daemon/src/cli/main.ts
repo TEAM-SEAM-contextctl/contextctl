@@ -43,6 +43,7 @@ import { resolveContextctlPaths } from "./paths.js";
 import { readSourcesFile, SourcesFileError, toSourceConfigurations } from "./sources-file.js";
 import { resolveCardMeaningBackend } from "./meaning-generator.js";
 import { resolveVectorBackend } from "../vector-backend.js";
+import { runStateBackupCommand } from "./state-backup-command.js";
 
 /**
  * The command line entry point.
@@ -160,6 +161,19 @@ export async function runCli(input: {
   }
 
   try {
+    if (
+      command.kind === "backup_create" ||
+      command.kind === "backup_restore"
+    ) {
+      return emit(
+        input,
+        await runStateBackupCommand({
+          command,
+          environment: input.environment,
+          workingDirectory,
+        }),
+      );
+    }
     if (
       command.kind === "cards_decision" ||
       command.kind === "cards_list" ||
