@@ -335,4 +335,62 @@ describe("registry database ownership", () => {
       }),
     ).toThrowError(TypeError);
   });
+
+  it("refuses a metadata table of the right name and the wrong shape", async () => {
+    // Read before checked, this surfaced as a raw SQLite `no such column`:
+    // nothing a caller could branch on, and no statement that the file is
+    // unusable.
+    const location = await databaseFile("registry.db");
+    const wrong = new DatabaseSync(location);
+    wrong.exec(
+      "CREATE TABLE registry_metadata (singleton INTEGER PRIMARY KEY, other TEXT)",
+    );
+    wrong.exec(
+      `PRAGMA application_id = ${String(REGISTRY_DATABASE_APPLICATION_ID)}`,
+    );
+    wrong.exec(
+      `PRAGMA user_version = ${String(REGISTRY_DATABASE_SCHEMA_VERSION)}`,
+    );
+    wrong.close();
+
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "RegistryDatabaseIdentityError",
+        code: "schema_invalid",
+      }),
+    );
+  });
+
+  it("reports a newer shape as newer, not as a mismatched deployment", async () => {
+    // Both are true of this file, and only one is actionable: a build that
+    // cannot read the shape cannot claim to know whose the identity inside it
+    // is. Reporting the mismatch would send an operator after the wrong thing.
+    const location = await databaseFile("registry.db");
+    openRegistryDatabase({
+      location,
+      stateNamespaceId: "state_prod",
+      securityDomain: "prod",
+    }).close();
+    const ahead = new DatabaseSync(location);
+    ahead.exec(
+      `PRAGMA user_version = ${String(REGISTRY_DATABASE_SCHEMA_VERSION + 5)}`,
+    );
+    ahead.close();
+
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "schema_newer" }),
+    );
+  });
 });
