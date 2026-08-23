@@ -172,7 +172,12 @@ export {
   type CardMeaningFailureKind,
   type OpenAiCompatibleGeneratorConfig,
 } from "./infrastructure/llm/openai-compatible-card-meaning-generator.js";
-export { openRegistryDatabase } from "./infrastructure/sqlite/registry-database.js";
+export {
+  openRegistryDatabase,
+  RegistryDatabaseIdentityError,
+  REGISTRY_DATABASE_APPLICATION_ID,
+  type RegistryDatabaseIdentityErrorCode,
+} from "./infrastructure/sqlite/registry-database.js";
 export { SqliteCardStore } from "./infrastructure/sqlite/sqlite-card-store.js";
 export { SqliteConsumerCheckpointStore } from "./infrastructure/sqlite/sqlite-consumer-checkpoint-store.js";
 export { SqliteIntakeStore } from "./infrastructure/sqlite/sqlite-intake-store.js";
