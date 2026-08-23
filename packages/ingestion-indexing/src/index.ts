@@ -29,6 +29,14 @@ export {
   type SourceObservationRetentionReport,
 } from "./application/retain-source-observations.js";
 export {
+  IngestionMaintenance,
+  type IngestionMaintenanceDependencies,
+  type IngestionMaintenanceReport,
+  type IngestionMaintenanceStep,
+  type IngestionMaintenanceStepResult,
+  type RunIngestionMaintenanceOptions,
+} from "./application/run-ingestion-maintenance.js";
+export {
   createSourceObservation,
   assertValidSourceObservation,
   SourceObservationValidationError,

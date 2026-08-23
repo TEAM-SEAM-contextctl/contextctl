@@ -8,6 +8,7 @@ import { ManagedDocumentSearch } from "../application/managed-document-search.js
 import { MarkdownCapture } from "../application/markdown-capture.js";
 import { MarkdownPublicationWorkflow } from "../application/markdown-publication-workflow.js";
 import { PublicationReadyReconciler } from "../application/reconcile-publication-ready.js";
+import { IngestionMaintenance } from "../application/run-ingestion-maintenance.js";
 import { DocumentIndexPublisher } from "../application/publish-document-index.js";
 import { IncrementalDocumentReindexer } from "../application/reindex-document-incrementally.js";
 import { SourceManagement } from "../application/source-management.js";
@@ -107,6 +108,8 @@ export interface LocalMarkdownPublicationRuntime {
   readonly indexPublications: IndexPublicationStore;
   readonly stagingAttempts: IndexStagingAttemptStore;
   readonly stagingCleanup: FailedIndexStagingCleanup;
+  /** One bounded cycle; scheduling and repetition remain daemon concerns. */
+  readonly maintenance: IngestionMaintenance;
   readonly vectorIndex: VectorIndexPort;
 }
 
@@ -250,6 +253,33 @@ export function createLocalMarkdownPublicationRuntime(
           observationRetentionLeaseMs: options.observationRetentionLeaseMs,
         }),
   });
+  const observationRetention = new SourceObservationRetention({
+    observations,
+    ...(options.observationRetentionPolicy === undefined
+      ? {}
+      : { policy: options.observationRetentionPolicy }),
+    clock,
+  });
+  const readyReconciler = new PublicationReadyReconciler({
+    publications,
+    notifier: readyNotifier,
+    clock,
+  });
+  const stagingCleanup = new FailedIndexStagingCleanup({
+    attempts: stagingAttempts,
+    publications: indexPublications,
+    vectorIndexes,
+    ...(options.stagingCleanupPolicy === undefined
+      ? {}
+      : { policy: options.stagingCleanupPolicy }),
+    clock,
+  });
+  const maintenance = new IngestionMaintenance({
+    readyReconciler,
+    stagingCleanup,
+    observationRetention,
+    clock,
+  });
   return {
     workflow,
     search: new ManagedDocumentSearch({
@@ -260,32 +290,15 @@ export function createLocalMarkdownPublicationRuntime(
     checkpoints,
     publications,
     observations,
-    observationRetention: new SourceObservationRetention({
-      observations,
-      ...(options.observationRetentionPolicy === undefined
-        ? {}
-        : { policy: options.observationRetentionPolicy }),
-      clock,
-    }),
+    observationRetention,
     readyNotifier,
     readyNotifications,
-    readyReconciler: new PublicationReadyReconciler({
-      publications,
-      notifier: readyNotifier,
-      clock,
-    }),
+    readyReconciler,
     events,
     indexPublications,
     stagingAttempts,
-    stagingCleanup: new FailedIndexStagingCleanup({
-      attempts: stagingAttempts,
-      publications: indexPublications,
-      vectorIndexes,
-      ...(options.stagingCleanupPolicy === undefined
-        ? {}
-        : { policy: options.stagingCleanupPolicy }),
-      clock,
-    }),
+    stagingCleanup,
+    maintenance,
     vectorIndex,
   };
 }

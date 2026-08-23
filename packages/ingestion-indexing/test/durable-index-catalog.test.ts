@@ -23,7 +23,6 @@ import {
   IngestionDatabaseSchemaError,
   MAX_MANAGED_SEARCH_BATCH_TARGETS,
   ManagedDocumentSearch,
-  PublicationReadyReconciler,
   SqliteIndexPublicationStore,
   SqliteIndexStagingAttemptStore,
   SqliteIngestionPublicationStore,
@@ -54,6 +53,7 @@ const STRUCTURE_FIXTURE = fileURLToPath(
   new URL("./fixtures/markdown/structure.md", import.meta.url),
 );
 const NOW = "2026-08-14T00:00:00.000Z";
+const AFTER_READY_RETRY = "2026-08-14T00:00:02.000Z";
 const STATE_NAMESPACE_ID = "state_test";
 const profile = {
   id: "durable-index-test",
@@ -1203,20 +1203,34 @@ describe("durable Index control plane", () => {
     const secondDatabase = openTestDatabase(fixture.databasePath);
     const publications = new SqliteIngestionPublicationStore(secondDatabase);
     const notifier = new InMemoryPublicationReadyNotifier();
-    const reconciled = await new PublicationReadyReconciler({
-      publications,
+    const second = createDurableRuntime(
+      fixture.markdownPath,
+      secondDatabase,
+      vectorIndex,
+      new DeterministicEmbeddingAdapter(),
       notifier,
-    }).reconcile();
+      publications,
+      undefined,
+      () => AFTER_READY_RETRY,
+    );
+    const reconciled = await second.maintenance.runOnce();
 
-    expect(reconciled).toEqual([
-      { publicationId, status: "delivered" },
-    ]);
+    expect(reconciled.status).toBe("completed");
+    expect(reconciled.steps[0]).toEqual({
+      step: "publication_ready_reconciliation",
+      status: "completed",
+      report: [{ publicationId, status: "delivered" }],
+    });
     expect(notifier.notifications).toEqual([
       { schemaVersion: 1, publicationId },
     ]);
-    await expect(
-      new PublicationReadyReconciler({ publications, notifier }).reconcile(),
-    ).resolves.toEqual([]);
+    const repeated = await second.maintenance.runOnce();
+    expect(repeated.status).toBe("completed");
+    expect(repeated.steps[0]).toEqual({
+      step: "publication_ready_reconciliation",
+      status: "completed",
+      report: [],
+    });
     expect(await publications.find(publicationId)).toBeDefined();
     secondDatabase.close();
   });
@@ -1307,6 +1321,7 @@ function createDurableRuntime(
   readyNotifier?: PublicationReadyNotifier,
   publications?: IngestionPublicationStore,
   structuralIds?: StructuralIdGenerator,
+  clock: () => string = () => NOW,
 ) {
   return createLocalMarkdownPublicationRuntime({
     configurations: { "source.fixture": { path: markdownPath } },
@@ -1325,7 +1340,7 @@ function createDurableRuntime(
     ids: new UuidV7RootIdGenerator(),
     ...(structuralIds === undefined ? {} : { structuralIds }),
     ...(readyNotifier === undefined ? {} : { readyNotifier }),
-    clock: () => NOW,
+    clock,
   });
 }
 
