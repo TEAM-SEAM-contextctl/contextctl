@@ -16,6 +16,7 @@ import {
   cliRuntimeOptions,
   buildCliRuntime,
   EmbeddingAssetsUnavailableError,
+  openRegistryOnlyRuntime,
   resolveCliEmbeddingRuntime,
 } from "../../src/cli/runtime.js";
 import { resolveVectorBackend } from "../../src/vector-backend.js";
@@ -132,6 +133,41 @@ describe("CLI runtime options", () => {
       stateNamespaceId: "state_production",
       securityDomain: "tenant-production",
     });
+  });
+
+  it("reopens both durable databases only under the identity first injected", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contextctl-state-identity-"));
+    temporaryDirectories.push(home);
+    const environment = {
+      CONTEXTCTL_HOME: home,
+      CONTEXTCTL_STATE_NAMESPACE_ID: "state_production",
+      CONTEXTCTL_SECURITY_DOMAIN: "tenant-production",
+    };
+
+    const first = openRegistryOnlyRuntime({ environment });
+    await first.publications.latestForSource(
+      "src_01890f5c-7b1a-7100-8000-000000000001",
+    );
+    first.close();
+
+    const reopened = openRegistryOnlyRuntime({ environment });
+    await expect(
+      reopened.publications.latestForSource(
+        "src_01890f5c-7b1a-7100-8000-000000000001",
+      ),
+    ).resolves.toBeUndefined();
+    reopened.close();
+
+    expect(() =>
+      openRegistryOnlyRuntime({ environment: { CONTEXTCTL_HOME: home } }),
+    ).toThrowError(expect.objectContaining({ code: "identity_mismatch" }));
+    expect(() =>
+      openIngestionDatabase({
+        location: join(home, "ingestion.db"),
+        stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+        securityDomain: DEFAULT_SECURITY_DOMAIN,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "identity_mismatch" }));
   });
 
   it("refuses missing active assets before creating state databases", async () => {

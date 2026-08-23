@@ -116,7 +116,7 @@ export async function runDiagnosis(
     checkNodeVersion(),
     await checkHomeDirectory(paths.home),
     await checkSourcesFile(paths.sourcesFile),
-    checkRegistryDatabase(paths.registryDatabase),
+    checkRegistryDatabase(paths.registryDatabase, stateIdentity),
     checkIngestionDatabase(paths.ingestionDatabase, stateIdentity),
     await inspectConfiguredEmbeddingAssets(
       input.environment,
@@ -277,13 +277,15 @@ async function checkSourcesFile(sourcesFile: string): Promise<DiagnosisStep> {
  * check — or the next `doctor` run — fail for a reason that has nothing to do
  * with the operator's install.
  */
-function checkRegistryDatabase(location: string): DiagnosisStep {
+function checkRegistryDatabase(
+  location: string,
+  stateIdentity: DaemonStateIdentity,
+): DiagnosisStep {
   let database: { close(): void } | undefined;
   try {
     database = openRegistryDatabase({
       location,
-      stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-      securityDomain: DEFAULT_SECURITY_DOMAIN,
+      ...stateIdentity,
     });
     return diagnosis(
       "registry-database",
