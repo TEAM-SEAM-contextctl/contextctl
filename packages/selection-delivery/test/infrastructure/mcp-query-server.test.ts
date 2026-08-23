@@ -17,6 +17,7 @@ import {
 } from "../fixtures/approved-card.fixture.js";
 import { createFixtureContextApplication } from "../fixtures/context-application.fixture.js";
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
+import { unexpectedResponseKeys } from "../fixtures/response-keys.fixture.js";
 
 /** The tool name prefixes ADR 0003 forbids from ever reaching `tools/list`. */
 const CONTROL_PLANE_WORDS = ["approve", "reject", "rollback", "sync", "edit"];
@@ -285,9 +286,13 @@ describe("createMcpQueryServer", () => {
 
     const wire = JSON.stringify(envelope);
 
-    for (const field of ["connectorId", "accessHandle", "collection", "credential"]) {
-      expect(wire).not.toContain(field);
-    }
+    // Every key in the resolution must be one the public types declare, with a
+    // reason recorded beside it in `PUBLIC_RESPONSE_KEYS`. A scan for four
+    // forbidden names passed for a binding under any fifth name; a whitelist
+    // does not. Checked on the tool payload, not the JSON-RPC envelope: the
+    // envelope's own keys (`jsonrpc`, `id`, `result`, `content`) are the
+    // transport's and are pinned by the protocol tests.
+    expect(unexpectedResponseKeys(readToolPayload(envelope))).toEqual([]);
     // The values as well as the names: a leak that renamed the field would pass
     // a name-only check while still handing the consumer the handle.
     expect(wire).not.toContain(INDEX_CONNECTOR_ID);

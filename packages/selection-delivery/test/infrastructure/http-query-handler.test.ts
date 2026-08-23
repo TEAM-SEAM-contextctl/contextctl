@@ -17,6 +17,7 @@ import {
 } from "../fixtures/approved-card.fixture.js";
 import { createFixtureContextApplication } from "../fixtures/context-application.fixture.js";
 import { createRefundPolicyChunkMap } from "../fixtures/document-chunk.fixture.js";
+import { unexpectedResponseKeys } from "../fixtures/response-keys.fixture.js";
 
 /**
  * A physical binding in the shape our infrastructure would use for the refund
@@ -215,14 +216,11 @@ describe("createHttpQueryHandler", () => {
 
     const { body } = await post(handler, JSON.stringify({ query: DEMO_QUERY }));
 
-    for (const field of [
-      "connectorId",
-      "accessHandle",
-      "collection",
-      "credential",
-    ]) {
-      expect(body).not.toContain(field);
-    }
+    // Every key on the wire must be one the public types declare, with a
+    // reason recorded beside it in `PUBLIC_RESPONSE_KEYS`. A scan for four
+    // forbidden names passed for a binding under any fifth name; a whitelist
+    // does not.
+    expect(unexpectedResponseKeys(JSON.parse(body))).toEqual([]);
     // The values too, so a rename cannot smuggle the same binding out under a
     // field name this test does not know about.
     expect(body).not.toContain(DOCUMENT_CONNECTOR_ID);
