@@ -17,6 +17,7 @@ const artifactDirectory = process.env.CONTEXTCTL_GRANITE_ASSET_DIRECTORY;
 const resultPath = process.env.CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH;
 
 const QUERY_REPETITIONS = 100;
+const WARMUP_REPETITIONS = 100;
 const P95_DEGRADATION_GATE = 0.2;
 const EVENT_LOOP_LAG_GATE_MS = 100;
 const RSS_GATE_MIB = 1_536;
@@ -59,7 +60,7 @@ const directories: string[] = [];
 
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) {
-    runtime.embeddingScheduler.stopAccepting();
+    await runtime.control.lifecycle.shutdown();
     runtime.database.close();
   }
   await Promise.all(
@@ -107,6 +108,16 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         await runtime.prepareCardCandidates();
         const warm = await resolveContext(runtime, query);
         expectHealthyResult(warm);
+        // One call loads the model, but it does not stabilize worker IPC,
+        // tokenizer allocation and ONNX execution. Without a fixed warm-up
+        // population the concurrent side receives every first-run tail while
+        // the baseline, measured second, is fully hot.
+        const warmup = await measureResolves(
+          runtime,
+          query,
+          WARMUP_REPETITIONS,
+          true,
+        );
         runtime.embeddingScheduler.startMonitoring();
 
         // Approval changes the catalog snapshot, but no Resolve is issued yet.
@@ -130,10 +141,21 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         };
         process.on("unhandledRejection", onUnhandledRejection);
         try {
-          const [, concurrent, backgroundPublication] = await Promise.all([
-            runtime.prepareCardCandidates(),
-            measureResolves(runtime, query, QUERY_REPETITIONS, false),
-            publishSource(runtime, BACKGROUND_SOURCE),
+          const schedulerBeforeConcurrent = runtime.embeddingScheduler.snapshot;
+          const candidatePreparation = runtime.prepareCardCandidates();
+          const concurrentMeasurement = measureResolves(
+            runtime,
+            query,
+            QUERY_REPETITIONS,
+            false,
+          );
+          const backgroundIngestion = publishSource(runtime, BACKGROUND_SOURCE);
+          const concurrent = await concurrentMeasurement;
+          const schedulerAfterResolvePopulation =
+            runtime.embeddingScheduler.snapshot;
+          const [, backgroundPublication] = await Promise.all([
+            candidatePreparation,
+            backgroundIngestion,
           ]);
           expect(backgroundPublication.status).toBe("published");
 
@@ -147,16 +169,19 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
           );
           const concurrentSchedulerSnapshot =
             runtime.embeddingScheduler.snapshot;
-          clearInterval(sampler);
 
           // The baseline uses the same final catalog and hot model. The only
-          // intended difference is the concurrent background work.
+          // intended difference is the concurrent background work. Resource
+          // sampling remains active in both populations; otherwise the 10ms
+          // `process.memoryUsage()` observation cost is charged only to the
+          // concurrent side and the comparator measures its own instrumentation.
           const baseline = await measureResolves(
             runtime,
             query,
             QUERY_REPETITIONS,
             true,
           );
+          clearInterval(sampler);
           const baselineP95Ms = percentile(baseline.latencies, 0.95);
           const concurrentP95Ms = percentile(concurrent.latencies, 0.95);
           const p95Degradation =
@@ -192,6 +217,8 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
             platform: `${process.platform}-${process.arch}`,
             cpuModel: cpus()[0]?.model ?? "unknown",
             queryRepetitions: QUERY_REPETITIONS,
+            warmupRepetitions: WARMUP_REPETITIONS,
+            warmupP95Ms: percentile(warmup.latencies, 0.95),
             baselineLatenciesMs: baseline.latencies,
             concurrentLatenciesMs: concurrent.latencies,
             baselineP95Ms,
@@ -202,6 +229,8 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
             outOfRangeResults: concurrent.outOfRangeResults,
             unhandledRejections: unhandledRejections.length,
             checkpointLosses: 0,
+            schedulerBeforeConcurrent,
+            schedulerAfterResolvePopulation,
             concurrentSchedulerSnapshot,
             finalSchedulerSnapshot: runtime.embeddingScheduler.snapshot,
             gates: {
@@ -231,7 +260,7 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         } finally {
           process.removeListener("unhandledRejection", onUnhandledRejection);
           clearInterval(sampler);
-          runtime.embeddingScheduler.stopAccepting();
+          await runtime.control.lifecycle.shutdown();
         }
       },
       600_000,

@@ -456,6 +456,23 @@ describe("createDaemonRuntime", () => {
       );
     });
 
+    it("does not start a local model worker after daemon shutdown", async () => {
+      const runtime = createDaemonRuntime({
+        vectorIndex: new InMemoryVectorIndexAdapter(),
+        embeddingArtifactDirectory: "/nonexistent/assets",
+      });
+      runtimes.push(runtime);
+
+      await runtime.control.lifecycle.shutdown();
+
+      await expect(runtime.prepareEmbeddingRuntime()).rejects.toEqual(
+        expect.objectContaining({
+          code: "provider_unavailable",
+          retriable: true,
+        }),
+      );
+    });
+
     it("binds a Card vector family separate from the document one", () => {
       const runtime = createDaemonRuntime({
         vectorIndex: new InMemoryVectorIndexAdapter(),

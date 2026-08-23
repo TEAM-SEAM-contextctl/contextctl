@@ -51,9 +51,10 @@ export const EMBEDDING_RUNTIME_SCHEDULER_V1: EmbeddingRuntimeSchedulerProfile =
     // Protect a short burst of sequential transport requests. A 1ms timer was
     // too short on Linux: it promoted a 90-130ms native call between requests
     // even though the next request was already arriving on the following I/O
-    // turn. Ten milliseconds is still below one ordinary Resolve p95 while
-    // providing a stable idle boundary for low-priority work.
-    resolveQuietPeriodMs: 10,
+    // turn. Ten milliseconds still admitted background work between worker-RPC
+    // requests. Fifty milliseconds delays only low-priority work, remains tiny
+    // beside the polling interval, and gives a transport burst a stable lease.
+    resolveQuietPeriodMs: 50,
     // Once the user-facing burst is over, yield one event-loop turn between
     // background native calls without imposing the Resolve quiet period on
     // the whole indexing job.
@@ -145,6 +146,8 @@ export interface EmbeddingRuntimeSnapshot {
   readonly profileVersion: string;
   readonly accepting: boolean;
   readonly active: number;
+  readonly resolveStarts: number;
+  readonly backgroundStarts: number;
   readonly resolveReservations: number;
   readonly resolveQueued: number;
   readonly backgroundQueued: number;
@@ -187,6 +190,8 @@ export class EmbeddingRuntimeScheduler {
   readonly #resolveQueue: ScheduledEntry<unknown>[] = [];
   readonly #backgroundQueue: ScheduledEntry<unknown>[] = [];
   #active = 0;
+  #resolveStarts = 0;
+  #backgroundStarts = 0;
   #resolveReservations = 0;
   #accepting = true;
   #eventLoopLagMs = 0;
@@ -217,6 +222,8 @@ export class EmbeddingRuntimeScheduler {
       profileVersion: this.profile.version,
       accepting: this.#accepting,
       active: this.#active,
+      resolveStarts: this.#resolveStarts,
+      backgroundStarts: this.#backgroundStarts,
       resolveReservations: this.#resolveReservations,
       resolveQueued: this.#resolveQueue.length,
       backgroundQueued: this.#backgroundQueue.length,
@@ -349,6 +356,8 @@ export class EmbeddingRuntimeScheduler {
     priority: EmbeddingRuntimePriority,
     operation: () => Promise<T>,
   ): Promise<T> {
+    if (priority === "resolve") this.#resolveStarts += 1;
+    else this.#backgroundStarts += 1;
     this.#active += 1;
     try {
       return await operation();

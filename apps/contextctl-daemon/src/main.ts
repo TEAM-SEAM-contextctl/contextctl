@@ -412,6 +412,8 @@ export interface DaemonRuntime {
   readonly embeddingScheduler: EmbeddingRuntimeScheduler;
   /** Whether the two domain ports in this graph actually use that one session. */
   readonly sharesLocalEmbeddingSession: boolean;
+  /** Loads daemon-owned local model workers before any ingress is opened. */
+  prepareEmbeddingRuntime(): Promise<void>;
   readonly securityDomain: string;
   readonly connectorId: string;
   readonly embeddingProfile: EmbeddingProfile;
@@ -493,6 +495,12 @@ export function createDaemonRuntime(
   // Two calls, not one. Neither reads the other's configuration or result, which
   // is what makes local/local, local/remote, remote/local and remote/remote the
   // same code path rather than four.
+  const ownedDocumentEmbeddingFactory =
+    options.documentEmbeddingFactory === undefined
+      ? new IngestionDocumentEmbeddingProviderFactory(
+          options.localEmbeddingInferenceResources,
+        )
+      : undefined;
   const documentEmbedding = composeDocumentEmbedding({
     configuration: embeddingConfiguration.document,
     currentProfile: embeddingProfile,
@@ -500,10 +508,7 @@ export function createDaemonRuntime(
     securityDomain,
     artifactDirectory: options.embeddingArtifactDirectory,
     factory:
-      options.documentEmbeddingFactory ??
-      new IngestionDocumentEmbeddingProviderFactory(
-        options.localEmbeddingInferenceResources,
-      ),
+      options.documentEmbeddingFactory ?? ownedDocumentEmbeddingFactory!,
     ...(embeddingConfiguration.retainedDocumentBindings === undefined
       ? {}
       : {
@@ -539,6 +544,14 @@ export function createDaemonRuntime(
       ? {}
       : { embeddingSchedulerProfile: options.embeddingSchedulerProfile }),
   });
+  if (ownedDocumentEmbeddingFactory !== undefined) {
+    control.lifecycle.registerCloseable("local_embedding_workers", async () => {
+      await ownedDocumentEmbeddingFactory.close();
+    });
+  }
+  const prepareEmbeddingRuntime = async (): Promise<void> => {
+    await ownedDocumentEmbeddingFactory?.ready();
+  };
   const sharesLocalEmbeddingSession =
     embeddingConfiguration.document.mode === "local" &&
     embeddingConfiguration.card.mode === "local" &&
@@ -725,6 +738,7 @@ export function createDaemonRuntime(
     prepareCardCandidates,
     embeddingScheduler: control.embeddingScheduler,
     sharesLocalEmbeddingSession,
+    prepareEmbeddingRuntime,
     securityDomain,
     connectorId,
     embeddingProfile,
@@ -1014,9 +1028,10 @@ export async function runDaemon(
     // for a cold Granite build spends that caller's whole 3-second budget.
     // Prepare the current immutable snapshot before either ingress opens. A
     // later catalog change is still rebuilt through the same coalescing store.
+    await runtime.prepareEmbeddingRuntime();
     await runtime.prepareCardCandidates();
   } catch (error) {
-    runtime.embeddingScheduler.stopAccepting();
+    await runtime.control.lifecycle.shutdown();
     runtime.database.close();
     throw error;
   }

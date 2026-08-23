@@ -5,7 +5,6 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   isDocumentRetrievalEmbeddingProfile,
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
-  loadLocalDocumentEmbeddingInferenceResource,
   openIngestionDatabase,
   SqliteIndexPublicationStore,
   SqliteIndexStagingAttemptStore,
@@ -13,7 +12,6 @@ import {
   SqliteMarkdownPublicationCheckpointStore,
   SqliteSourceObservationStore,
   verifyLocalEmbeddingAssets,
-  type LocalDocumentEmbeddingInferenceResource,
 } from "@contextctl/ingestion-indexing";
 
 import {
@@ -71,8 +69,8 @@ export interface CliRuntime {
   readonly meaningBackend: CardMeaningBackend;
   /** Registered Source references, in the order the file declares them. */
   readonly sourceReferences: readonly string[];
-  /** Closes both databases. Every command path must call it. */
-  close(): void;
+  /** Closes execution workers and both databases. Every command path must call it. */
+  close(): Promise<void>;
 }
 
 /**
@@ -259,12 +257,22 @@ export async function buildCliRuntime(
     throw error;
   }
 
+  try {
+    await runtime.prepareEmbeddingRuntime();
+  } catch (error) {
+    await runtime.control.lifecycle.shutdown();
+    runtime.database.close();
+    ingestionDatabase.close();
+    throw error;
+  }
+
   return {
     runtime,
     paths,
     meaningBackend,
     sourceReferences: Object.keys(sources.sources),
-    close(): void {
+    async close(): Promise<void> {
+      await runtime.control.lifecycle.shutdown();
       runtime.database.close();
       ingestionDatabase.close();
     },
@@ -310,13 +318,6 @@ export function cliRuntimeOptions(input: {
     embeddingProfile: input.embeddingRuntime.profiles.document,
     cardSelectionProfile: input.embeddingRuntime.profiles.card,
     requiredEmbeddingBindings: input.embeddingRuntime.requiredBindings,
-    ...(input.embeddingRuntime.localInferenceResource === undefined
-      ? {}
-      : {
-          localEmbeddingInferenceResources: [
-            input.embeddingRuntime.localInferenceResource,
-          ],
-        }),
     ...(input.embeddingRuntime.artifactDirectory === undefined
       ? {}
       : {
@@ -342,7 +343,6 @@ export interface ResolvedCliEmbeddingRuntime {
   readonly profiles: ActiveEmbeddingProfiles;
   readonly requiredBindings: RequiredEmbeddingBindings;
   readonly artifactDirectory?: string;
-  readonly localInferenceResource?: LocalDocumentEmbeddingInferenceResource;
 }
 
 /** Refuses active configuration errors before either state database is opened. */
@@ -428,17 +428,12 @@ export async function resolveCliEmbeddingRuntime(input: {
     configuration.document.mode === "local"
       ? profiles.document
       : DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
-  const localInferenceResource =
-    await loadLocalDocumentEmbeddingInferenceResource({
-      artifactDirectory: assets.directory,
-      profile: resourceProfile,
-    });
+  await verifyLocalEmbeddingAssets(assets.directory, resourceProfile);
   return {
     configuration,
     profiles,
     requiredBindings,
     artifactDirectory: assets.directory,
-    localInferenceResource,
   };
 }
 
