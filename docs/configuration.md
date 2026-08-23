@@ -79,7 +79,8 @@ Qdrant 를 여러 실험에 써도 벡터가 섞이지 않습니다.
 
 ```
 [warn] policy-context
-       CONTEXTCTL_SENSITIVE_ACCESS=allow — 민감(sensitive: true)으로 승인된 Card가 질의에 노출된다.
+       CONTEXTCTL_SENSITIVE_ACCESS=allow — 민감(sensitive: true)으로 승인된 Card가 질의에 노출된다. 이 프로세스가 답하는 모든 표면(MCP, HTTP, query CLI)에서 그 Card의 내용이 검색 결과에 실린다.
+       → 의도한 설정이 아니면 CONTEXTCTL_SENSITIVE_ACCESS 를 비워 기본값 deny 로 되돌리라.
 ```
 
 ---
@@ -93,8 +94,8 @@ Card 선택용(`CONTEXTCTL_CARD_EMBEDDING_*`)은 벡터·색인·재생성 주�
 |---|---|---|
 | `…_EMBEDDING_MODE` | `local` | `local` 또는 `remote`. 그 외 값은 시작 거부 |
 | `…_EMBEDDING_ENDPOINT` | — | `remote` 일 때 필수. OpenAI 호환 임베딩 엔드포인트 |
-| `…_EMBEDDING_API_KEY` | — | 원격 자격 증명 |
-| `…_EMBEDDING_PROVIDER_ID` | — | 원격 제공자 식별자 |
+| `…_EMBEDDING_API_KEY` | — | `remote` 일 때 필수 (`credential_missing` 으로 거부) |
+| `…_EMBEDDING_PROVIDER_ID` | — | `remote` 일 때 필수. 제공자 식별자 |
 | `…_EMBEDDING_PROFILE` | 로컬 기본 프로필 | `remote` 일 때 **전체 프로필을 JSON 으로 명시해야** 합니다 — 엔드포인트가 어떤 모델·차원을 낼지 URL 로는 알 수 없기 때문입니다 |
 | `CONTEXTCTL_DOCUMENT_RETAINED_EMBEDDING_BINDINGS` | — | 프로필을 바꾼 뒤에도 옛 벡터 계열을 서비스해야 할 때, 그 계열의 바인딩을 유지합니다 |
 
@@ -103,8 +104,7 @@ Card 선택용(`CONTEXTCTL_CARD_EMBEDDING_*`)은 벡터·색인·재생성 주�
 시작을 거부합니다.
 
 ```
-resolve  not_ready  임베딩 제공자를 조립할 수 없어 질문을 벡터로 만들 수 없습니다:
-                    document embedding remote binding is invalid: endpoint_missing
+resolve           not_ready  임베딩 제공자를 조립할 수 없어 질문을 벡터로 만들 수 없습니다: document embedding remote binding is invalid: endpoint_missing
 ```
 
 두 계층이 모두 원격이면 아래 로컬 모델(396.1 MiB)은 필요하지 않고, `status` 가

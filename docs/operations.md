@@ -33,18 +33,18 @@ contextctl status --json   # 감시 도구가 읽는 형태
 
 각 영역은 `ready` · `degraded` · `not_ready` 중 하나입니다.
 
-새 게시물이 아직 소비되지 않았고 직전 게시가 끝나지 않은 기계의 실제 출력입니다.
+수집은 끝났는데 아직 아무것도 승인하지 않은 기계의 실제 출력입니다.
 
 ```
-resolve           ready      승인 Card 4개로 답할 수 있습니다. Registry 지연은 이 판정에 영향을 주지 않습니다(설계안 120절).
-registry          degraded   소비하지 않은 Publication 이 있는 Source 1개: src_01a02445-0d89-7c22-… (가장 오래된 지연 6분)
-selection_assets  ready      임베딩 자산을 쓸 수 있습니다: ~/.contextctl/embedding-assets/revisions/eb09231254…. 문서 검색 local, Card 선택 local
-ingestion         degraded   게시가 끝나지 않은 Source 1개: src_01a02445-0d89-7c22-… — contextctl ingest 를 다시 실행하면 이어서 마칩니다.
+resolve           degraded   승인된 Card 가 없어 답할 수 있는 것이 없습니다. contextctl cards approve <id> 로 승인하세요.
+registry          ready      게시된 Publication 을 모두 소비했습니다.
+selection_assets  ready      임베딩 자산을 쓸 수 있습니다: ~/.contextctl/embedding-assets/revisions/eb0923125496…. 문서 검색 local, Card 선택 local
+ingestion         ready      끝나지 않은 게시가 없습니다. 점검 대상은 한 번이라도 소비된 Source 1개입니다. 게시만 되고 소비된 적 없는 Source 는 여기서 알 수 없습니다.
 
 서비스할 수 없는 lane 은 없습니다.
 ```
 
-**두 영역이 저하인데 종료 코드는 `0` 입니다.** 이 구분이 이 명령의 요점입니다.
+**한 영역이 저하인데 종료 코드는 `0` 입니다.** 이 구분이 이 명령의 요점입니다.
 
 - **`degraded` 는 지연입니다.** 이미 승인된 Card 는 계속 정확하게 서비스됩니다. 낡은 Card 로
   답하는 것은 고장이 아니라 소스보다 오래된 것이고, 운영자가 할 일은 프로세스를 재시작하는 게
