@@ -7,23 +7,27 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const targets = Object.freeze({
   qdrant: Object.freeze({
     requiredEnvironment: Object.freeze(["CONTEXTCTL_QDRANT_URL"]),
-    testFile:
+    testFiles: Object.freeze([
       "packages/ingestion-indexing/test/qdrant-vector-index.integration.test.ts",
+      "apps/contextctl-daemon/test/ingestion-maintenance-worker.integration.test.ts",
+    ]),
   }),
   granite: Object.freeze({
     requiredEnvironment: Object.freeze([
       "CONTEXTCTL_GRANITE_ASSET_DIRECTORY",
     ]),
-    testFile:
+    testFiles: Object.freeze([
       "packages/ingestion-indexing/test/local-embedding-adapter.integration.test.ts",
+    ]),
   }),
   "document-retrieval": Object.freeze({
     requiredEnvironment: Object.freeze([
       "CONTEXTCTL_GRANITE_ASSET_DIRECTORY",
       "CONTEXTCTL_EVAL_RESULT_PATH",
     ]),
-    testFile:
+    testFiles: Object.freeze([
       "packages/ingestion-indexing/test/document-retrieval-eval.test.ts",
+    ]),
   }),
   "ingestion-indexing-benchmark": Object.freeze({
     requiredEnvironment: Object.freeze([
@@ -31,8 +35,9 @@ const targets = Object.freeze({
       "CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH",
       "CONTEXTCTL_INGESTION_BENCHMARK_RESULT_PATH",
     ]),
-    testFile:
+    testFiles: Object.freeze([
       "packages/ingestion-indexing/test/ingestion-indexing-benchmark.test.ts",
+    ]),
   }),
 });
 
@@ -63,7 +68,7 @@ const child = spawn(
   [
     vitest,
     "run",
-    target.testFile,
+    ...target.testFiles,
     "--pool=forks",
     "--maxWorkers=1",
     "--no-file-parallelism",
