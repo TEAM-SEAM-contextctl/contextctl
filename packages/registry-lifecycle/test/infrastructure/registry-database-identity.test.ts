@@ -393,4 +393,40 @@ describe("registry database ownership", () => {
       expect.objectContaining({ code: "schema_newer" }),
     );
   });
+
+  it("leaves the file as it was when the open fails part way", async () => {
+    // Atomicity, stated as the thing it protects: a half-finished first open
+    // would leave tables without the mark, which the check above now refuses
+    // for good — an operator would be told to delete a file they never got to
+    // use. Provoked here through the shape check, which is the one failure
+    // that happens after migrate has already created tables.
+    const location = await databaseFile("registry.db");
+    const owned = new DatabaseSync(location);
+    owned.exec("CREATE TABLE cards (card_id TEXT PRIMARY KEY)");
+    owned.exec(
+      "CREATE TABLE registry_metadata (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), state_namespace_id TEXT NOT NULL, security_domain TEXT NOT NULL)",
+    );
+    owned.exec(
+      "INSERT INTO registry_metadata VALUES (1, 'state_local', 'local')",
+    );
+    owned.exec(
+      `PRAGMA application_id = ${String(REGISTRY_DATABASE_APPLICATION_ID)}`,
+    );
+    owned.exec(
+      `PRAGMA user_version = ${String(REGISTRY_DATABASE_SCHEMA_VERSION)}`,
+    );
+    owned.close();
+    const before = objectNamesOf(location);
+
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "schema_invalid" }));
+
+    // The tables migrate would have added on the way to finding out are gone.
+    expect(objectNamesOf(location)).toEqual(before);
+  });
 });

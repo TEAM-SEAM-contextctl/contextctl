@@ -97,13 +97,21 @@ export function openRegistryDatabase(
     if (location !== ":memory:") {
       configureDurability(database);
     }
-    migrate(database);
-    if (state === "empty") {
-      recordIdentity(database, stateNamespaceId, securityDomain);
-    }
-    claimSchemaVersion(database);
-    claimDatabaseApplicationId(database);
-    assertExpectedSchema(database);
+    // One transaction, so a first open either finishes or leaves the file as
+    // it was. Half of it — tables without the mark — would now be refused for
+    // good as unidentified, and the operator's only recourse would be to
+    // delete a file they never got to use. The shape check is inside for the
+    // same reason: a file that fails it must not keep the columns this open
+    // added on the way to finding out.
+    inTransaction(database, () => {
+      migrate(database);
+      if (state === "empty") {
+        recordIdentity(database, stateNamespaceId, securityDomain);
+      }
+      claimSchemaVersion(database);
+      claimDatabaseApplicationId(database);
+      assertExpectedSchema(database);
+    });
     assertHealthy(database);
     return database;
   } catch (error) {
