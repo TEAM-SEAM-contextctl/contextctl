@@ -497,6 +497,56 @@ describe("createMcpQueryServer", () => {
     expect(envelope.error?.code).toBe(-32601);
   });
 
+  /**
+   * The MCP methods a server *could* serve and this one does not, named one by
+   * one rather than left to the generic unknown-method case above. That case
+   * proves an invented name is refused; it says nothing about a real method a
+   * future edit might wire up by accident — a resource listing that exposed
+   * the catalog would be exactly the control plane ADR 0003 removed, under a
+   * method name nobody grepped for. Each is refused with `-32601` and echoes
+   * the id, so a client learns the method is absent rather than timing out.
+   */
+  it.each([
+    "resources/list",
+    "resources/read",
+    "resources/templates/list",
+    "resources/subscribe",
+    "prompts/list",
+    "prompts/get",
+    "completion/complete",
+    "logging/setLevel",
+  ])("refuses %s as method_not_found", async (method) => {
+    const envelope = await send(createDemoServer(), {
+      jsonrpc: "2.0",
+      id: `absent-${method}`,
+      method,
+      params: {},
+    });
+
+    expect(envelope.id).toBe(`absent-${method}`);
+    expect(envelope.result).toBeUndefined();
+    expect(envelope.error?.code).toBe(-32601);
+  });
+
+  it("advertises the tools capability and nothing else", async () => {
+    // Exhaustive on the capability keys: `tools` being defined is asserted
+    // above, but a server that also declared `resources` or `prompts` while
+    // refusing their methods would be advertising a surface it does not have,
+    // and one that grew them for real would be widening the surface past the
+    // one tool.
+    const envelope = await send(createDemoServer(), {
+      jsonrpc: "2.0",
+      id: "init-2",
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    const result = envelope.result as {
+      readonly capabilities: Readonly<Record<string, unknown>>;
+    };
+
+    expect(Object.keys(result.capabilities)).toEqual(["tools"]);
+  });
+
   it("stays silent on notifications", async () => {
     const server = createDemoServer();
 
