@@ -17,7 +17,11 @@ const artifactDirectory = process.env.CONTEXTCTL_GRANITE_ASSET_DIRECTORY;
 const resultPath = process.env.CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH;
 
 const QUERY_REPETITIONS = 100;
-const WARMUP_REPETITIONS = 100;
+// Node 24 on the hosted Linux runner needs more than 200 repeated query pairs
+// before worker IPC, tokenization and ONNX execution settle. Keep this fixed,
+// rather than adapting it to the observed result, so two runs measure the same
+// population and cannot silently warm until a desired number appears.
+const WARMUP_REPETITIONS = 300;
 const P95_DEGRADATION_GATE = 0.2;
 const EVENT_LOOP_LAG_GATE_MS = 100;
 const RSS_GATE_MIB = 1_536;
