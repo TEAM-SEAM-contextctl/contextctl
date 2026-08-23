@@ -21,6 +21,7 @@ const targets = Object.freeze({
       "packages/ingestion-indexing/test/local-embedding-adapter.integration.test.ts",
       "apps/contextctl-daemon/test/embedding-runtime-load.integration.test.ts",
     ]),
+    isolateTestFiles: true,
   }),
   "document-retrieval": Object.freeze({
     requiredEnvironment: Object.freeze([
@@ -65,40 +66,57 @@ if (missing.length > 0) {
 }
 
 const vitest = resolve(repositoryRoot, "node_modules", "vitest", "vitest.mjs");
-const child = spawn(
-  process.execPath,
-  [
-    vitest,
-    "run",
-    ...target.testFiles,
-    "--pool=forks",
-    "--maxWorkers=1",
-    "--no-file-parallelism",
-  ],
-  {
-    cwd: repositoryRoot,
-    env: process.env,
-    stdio: "inherit",
-  },
-);
+const testGroups = target.isolateTestFiles === true
+  ? target.testFiles.map((file) => [file])
+  : [target.testFiles];
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.once(signal, () => child.kill(signal));
+for (const files of testGroups) {
+  const code = await runVitest(files);
+  if (code !== 0) {
+    process.exitCode = code;
+    break;
+  }
 }
 
-child.once("error", (error) => {
-  console.error(`unable to start ${targetName} external test: ${error.message}`);
-  process.exitCode = 1;
-});
-
-child.once("exit", (code, signal) => {
-  if (signal !== null) {
-    console.error(`external test ${targetName} terminated by ${signal}`);
-    process.exitCode = 1;
-    return;
-  }
-  process.exitCode = code ?? 1;
-});
+function runVitest(files) {
+  return new Promise((resolveExit) => {
+    const child = spawn(
+      process.execPath,
+      [
+        vitest,
+        "run",
+        ...files,
+        "--pool=forks",
+        "--maxWorkers=1",
+        "--no-file-parallelism",
+      ],
+      {
+        cwd: repositoryRoot,
+        env: process.env,
+        stdio: "inherit",
+      },
+    );
+    const forward = (signal) => child.kill(signal);
+    for (const signal of ["SIGINT", "SIGTERM"]) {
+      process.once(signal, forward);
+    }
+    child.once("error", (error) => {
+      console.error(`unable to start ${targetName} external test: ${error.message}`);
+      resolveExit(1);
+    });
+    child.once("exit", (code, signal) => {
+      for (const forwarded of ["SIGINT", "SIGTERM"]) {
+        process.removeListener(forwarded, forward);
+      }
+      if (signal !== null) {
+        console.error(`external test ${targetName} terminated by ${signal}`);
+        resolveExit(1);
+        return;
+      }
+      resolveExit(code ?? 1);
+    });
+  });
+}
 
 function fail(message) {
   console.error(message);

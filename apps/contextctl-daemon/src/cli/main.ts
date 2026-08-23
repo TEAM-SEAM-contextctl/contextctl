@@ -190,7 +190,7 @@ export async function runCli(input: {
     try {
       return emit(input, await runWithRuntime(cli, command));
     } finally {
-      cli.close();
+      await cli.close();
     }
   } catch (error: unknown) {
     input.stderr(describeFailure(error));

@@ -351,6 +351,8 @@ describe("renderStatusReport", () => {
         profileVersion: "embedding-runtime-scheduler-v1",
         accepting: true,
         active: 1,
+        resolveStarts: 8,
+        backgroundStarts: 3,
         resolveReservations: 2,
         resolveQueued: 2,
         backgroundQueued: 4,

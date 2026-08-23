@@ -16,6 +16,7 @@ import {
 
 import type { EmbeddingLayer, EmbeddingExecutionMode } from "./configuration.js";
 import type { RemoteEmbeddingBinding } from "./remote-binding.js";
+import { WorkerThreadLocalEmbeddingAdapter } from "../runtime/worker-thread-local-embedding-adapter.js";
 
 /**
  * How the composition asks for a document embedding provider.
@@ -87,6 +88,7 @@ export class IngestionDocumentEmbeddingProviderFactory
   implements DocumentEmbeddingProviderFactory
 {
   readonly #localResources: readonly LocalDocumentEmbeddingInferenceResource[];
+  readonly #workers: WorkerThreadLocalEmbeddingAdapter[] = [];
 
   constructor(
     localResources: readonly LocalDocumentEmbeddingInferenceResource[] = [],
@@ -109,14 +111,18 @@ export class IngestionDocumentEmbeddingProviderFactory
     const resource = this.#localResources.find((candidate) =>
       isDeepStrictEqual(candidate.execution, profile.execution),
     );
-    return new TransformersJsLocalEmbeddingAdapter(
-      resource === undefined
-        ? {
-            artifactDirectory: input.artifactDirectory,
-            profile,
-          }
-        : { inferenceResource: resource, profile },
-    );
+    if (resource !== undefined) {
+      return new TransformersJsLocalEmbeddingAdapter({
+        inferenceResource: resource,
+        profile,
+      });
+    }
+    const worker = new WorkerThreadLocalEmbeddingAdapter({
+      artifactDirectory: input.artifactDirectory,
+      profile,
+    });
+    this.#workers.push(worker);
+    return worker;
   }
 
   createRemote(input: {
@@ -137,6 +143,16 @@ export class IngestionDocumentEmbeddingProviderFactory
         authorization: `Bearer ${input.binding.credential.reveal()}`,
       },
     });
+  }
+
+  /** Loads every local session before ingress opens. */
+  async ready(): Promise<void> {
+    await Promise.all(this.#workers.map(async (worker) => await worker.ready()));
+  }
+
+  /** Terminates the persistent execution workers during daemon shutdown. */
+  async close(): Promise<void> {
+    await Promise.all(this.#workers.map(async (worker) => await worker.close()));
   }
 }
 
