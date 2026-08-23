@@ -51,7 +51,7 @@ Keeping the responsibility narrow is the design, not a missing feature.
 |---|---|
 | **Node.js** | **24 or newer** — the stores are built on `node:sqlite`, first shipped in Node 24 |
 | **Qdrant** | Required. `ingest`, `query` and `serve` refuse to start without `CONTEXTCTL_QDRANT_URL` |
-| **Disk** | **396.1 MiB** for the embedding model |
+| **Disk** | **396.1 MiB** for the embedding model — with the default local execution. Running both embedding layers remotely needs none of it |
 
 > ★ **Using `fnm`, `nvm` or `asdf`?** They install into the **active Node
 > version's `bin` only**. Switching versions makes `contextctl` look like it
