@@ -1,6 +1,5 @@
 import {
   QdrantVectorIndexAdapter,
-  type QdrantVectorIndexAdapterOptions,
   type VectorIndexPort,
 } from "@contextctl/ingestion-indexing";
 
@@ -12,6 +11,13 @@ export interface VectorBackend {
   readonly vectorIndex: VectorIndexPort;
   /** Safe diagnostic form: never includes credentials, query or fragment. */
   readonly endpoint: string;
+}
+
+/** Connection values shared by the live index and its snapshot archive. */
+export interface QdrantConnectionOptions {
+  readonly url: string;
+  readonly apiKey?: string;
+  readonly timeoutMs?: number;
 }
 
 const QDRANT_URL_VARIABLE = "CONTEXTCTL_QDRANT_URL";
@@ -40,6 +46,26 @@ export class VectorBackendConfigurationError extends Error {
 export function resolveVectorBackend(
   environment: Readonly<Partial<Record<string, string>>>,
 ): VectorBackend {
+  const options = readQdrantConnectionOptions(environment);
+  const vectorIndex = new QdrantVectorIndexAdapter(options);
+  return {
+    kind: "qdrant",
+    vectorIndex,
+    endpoint: diagnosticEndpoint(options.url),
+  };
+}
+
+/**
+ * Reads Qdrant wiring once for every daemon-owned adapter.
+ *
+ * Snapshot backup must address the same service as the vector index. Keeping
+ * a second environment parser beside it would eventually let one adapter use
+ * a different timeout, credential, or endpoint while both claimed to be the
+ * configured Qdrant backend.
+ */
+export function readQdrantConnectionOptions(
+  environment: Readonly<Partial<Record<string, string>>>,
+): QdrantConnectionOptions {
   const url = readNonEmpty(environment, QDRANT_URL_VARIABLE);
   if (url === undefined) {
     throw new VectorBackendConfigurationError();
@@ -47,17 +73,13 @@ export function resolveVectorBackend(
 
   const apiKey = readNonEmpty(environment, QDRANT_API_KEY_VARIABLE);
   const timeoutMs = readTimeoutMs(environment);
-  const options: QdrantVectorIndexAdapterOptions = {
+  const options: QdrantConnectionOptions = {
     url,
     ...(apiKey === undefined ? {} : { apiKey }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   };
 
-  // Construction validates transport safety before the URL can be reported as
-  // accepted. It does not dial Qdrant; operation and CI integration tests own
-  // reachability.
-  const vectorIndex = new QdrantVectorIndexAdapter(options);
-  return { kind: "qdrant", vectorIndex, endpoint: diagnosticEndpoint(url) };
+  return options;
 }
 
 function diagnosticEndpoint(value: string): string {

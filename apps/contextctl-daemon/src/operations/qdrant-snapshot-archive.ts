@@ -13,6 +13,7 @@ import type {
 } from "./state-backup.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_METADATA_RESPONSE_BYTES = 64 * 1024;
 const COLLECTION_PATTERN = /^contextctl_[a-f0-9]{32}$/;
 
 export type QdrantSnapshotArchiveErrorCode =
@@ -131,13 +132,32 @@ export class QdrantSnapshotArchive implements VectorSnapshotArchive {
     try {
       for (const artifact of input.artifacts) {
         const path = join(input.directory, basename(artifact.path));
-        await this.#uploadSnapshot(artifact, path);
+        try {
+          await this.#uploadSnapshot(artifact, path);
+          created.push(artifact.collectionName);
+        } catch (error) {
+          // A timed-out upload may have completed on Qdrant. The preflight
+          // proved the name was absent, and restore requires an exclusive
+          // target, so a collection that appeared belongs to this attempt and
+          // must join the rollback set. If even this probe fails, cleanup is
+          // ambiguous and the combined failure is reported rather than hidden.
+          try {
+            if (await this.#collectionExists(artifact.collectionName)) {
+              created.push(artifact.collectionName);
+            }
+          } catch (probeError) {
+            throw new QdrantSnapshotArchiveError(
+              "qdrant_snapshot_cleanup_failed",
+              { cause: new AggregateError([error, probeError]) },
+            );
+          }
+          throw error;
+        }
         if (!(await this.#collectionExists(artifact.collectionName))) {
           throw new QdrantSnapshotArchiveError(
             "qdrant_snapshot_response_invalid",
           );
         }
-        created.push(artifact.collectionName);
       }
     } catch (error) {
       const rollbackErrors = await this.#deleteCollections(created);
@@ -157,7 +177,6 @@ export class QdrantSnapshotArchive implements VectorSnapshotArchive {
     return {
       rollback: async (): Promise<void> => {
         if (!active) return;
-        active = false;
         const errors = await this.#deleteCollections(created);
         if (errors.length > 0) {
           throw new QdrantSnapshotArchiveError(
@@ -165,6 +184,7 @@ export class QdrantSnapshotArchive implements VectorSnapshotArchive {
             { cause: new AggregateError(errors) },
           );
         }
+        active = false;
       },
     };
   }
@@ -220,7 +240,7 @@ export class QdrantSnapshotArchive implements VectorSnapshotArchive {
       }
       await pipeline(
         Readable.fromWeb(response.body),
-        createWriteStream(partial, { flags: "wx", mode: 0o600 }),
+        createWriteStream(partial, { flags: "wx", mode: 0o600, flush: true }),
       );
       await chmod(partial, 0o600);
       await rename(partial, destination);
@@ -331,7 +351,10 @@ export class QdrantSnapshotArchive implements VectorSnapshotArchive {
     path: string,
     body?: RequestInit["body"],
   ): Promise<Response> {
-    const url = new URL(path, this.#endpoint);
+    // `CONTEXTCTL_QDRANT_URL` may include a reverse-proxy prefix. Resolving an
+    // absolute path would silently discard it (`/qdrant` -> `/collections`),
+    // so snapshot calls deliberately resolve relative to the configured base.
+    const url = new URL(path.replace(/^\//, ""), this.#endpoint);
     const signal = AbortSignal.timeout(this.#timeoutMs);
     const response = await this.#fetch(url, {
       method,
@@ -352,7 +375,9 @@ export class QdrantSnapshotArchive implements VectorSnapshotArchive {
 async function readQdrantResult(response: Response): Promise<unknown> {
   let body: unknown;
   try {
-    body = await response.json();
+    body = JSON.parse(
+      Buffer.concat(await readLimitedResponse(response)).toString("utf8"),
+    ) as unknown;
   } catch (error) {
     throw new QdrantSnapshotArchiveError("qdrant_snapshot_response_invalid", {
       cause: error,
@@ -362,6 +387,38 @@ async function readQdrantResult(response: Response): Promise<unknown> {
     throw new QdrantSnapshotArchiveError("qdrant_snapshot_response_invalid");
   }
   return body.result;
+}
+
+async function readLimitedResponse(response: Response): Promise<Buffer[]> {
+  const declared = response.headers.get("content-length");
+  if (
+    declared !== null &&
+    (/^[0-9]+$/.test(declared) === false ||
+      Number(declared) > MAX_METADATA_RESPONSE_BYTES)
+  ) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("Qdrant metadata response is over the byte limit");
+  }
+  if (response.body === null) {
+    throw new Error("Qdrant metadata response has no body");
+  }
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) return chunks;
+      bytes += next.value.byteLength;
+      if (bytes > MAX_METADATA_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("Qdrant metadata response is over the byte limit");
+      }
+      chunks.push(Buffer.from(next.value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function assertSafeEndpoint(value: string): URL {

@@ -10,6 +10,7 @@ const targets = Object.freeze({
     testFiles: Object.freeze([
       "packages/ingestion-indexing/test/qdrant-vector-index.integration.test.ts",
       "apps/contextctl-daemon/test/ingestion-maintenance-worker.integration.test.ts",
+      "apps/contextctl-daemon/test/state-backup-recovery.integration.test.ts",
     ]),
   }),
   granite: Object.freeze({

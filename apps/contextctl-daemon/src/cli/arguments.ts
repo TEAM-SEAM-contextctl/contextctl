@@ -54,6 +54,12 @@ export type CliCommand =
    * consumer is a monitor rather than a person.
    */
   | { readonly kind: "status"; readonly json: boolean }
+  | { readonly kind: "backup_create"; readonly destination: string }
+  | {
+      readonly kind: "backup_restore";
+      readonly source: string;
+      readonly targetHome: string;
+    }
   | {
       readonly kind: "query";
       readonly text: string;
@@ -184,6 +190,16 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
       "실행 영역별로 지금 일을 할 수 있는지 보여준다(resolve, registry, selection_assets, ingestion). 못 하는 영역이 있으면 0이 아닌 코드로 끝난다.",
   },
   {
+    topic: "backup create",
+    line: "contextctl backup create <directory>",
+    summary: "Registry·Ingestion SQLite와 참조 중인 Qdrant 컬렉션을 한 복구 묶음으로 저장한다.",
+  },
+  {
+    topic: "backup restore",
+    line: "contextctl backup restore <directory> --target-home <new-directory>",
+    summary: "백업을 기존 상태와 겹치지 않는 새 상태 디렉터리와 빈 Qdrant에 복원한다.",
+  },
+  {
     topic: "query",
     line: 'contextctl query "<질문>" [--json] [--max-context <n>]',
     summary: "승인된 카드에서 컨텍스트를 선택해 답한다. --max-context 는 문자 수 상한이다.",
@@ -252,6 +268,8 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
       return parseSourceCommand(argv.slice(1));
     case "cards":
       return parseCardsCommand(argv.slice(1));
+    case "backup":
+      return parseBackupCommand(argv.slice(1));
     case "ingest":
       return parseIngestCommand(argv.slice(1));
     case "query":
@@ -273,6 +291,51 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
     default:
       return usageError(`알 수 없는 명령입니다: ${first}`);
   }
+}
+
+function parseBackupCommand(rest: readonly string[]): ParsedArguments {
+  const subcommand = rest[0];
+  if (subcommand === "create") {
+    const outcome = tokenize(rest.slice(1), {}, "backup create");
+    if (outcome.status === "usage_error") return outcome;
+    const destination = outcome.positionals[0];
+    if (destination === undefined) {
+      return usageError("백업을 저장할 새 디렉터리가 필요합니다.", "backup create");
+    }
+    if (outcome.positionals.length !== 1) {
+      return usageError("backup create 는 디렉터리 하나만 받습니다.", "backup create");
+    }
+    return ok({ kind: "backup_create", destination });
+  }
+  if (subcommand === "restore") {
+    const outcome = tokenize(
+      rest.slice(1),
+      { "target-home": { type: "string" } },
+      "backup restore",
+    );
+    if (outcome.status === "usage_error") return outcome;
+    const source = outcome.positionals[0];
+    if (source === undefined) {
+      return usageError("복원할 백업 디렉터리가 필요합니다.", "backup restore");
+    }
+    if (outcome.positionals.length !== 1) {
+      return usageError("backup restore 는 백업 디렉터리 하나만 받습니다.", "backup restore");
+    }
+    const targetHome = stringOf(outcome.values["target-home"]);
+    if (targetHome === undefined) {
+      return usageError(
+        "--target-home 으로 비어 있는 새 상태 디렉터리를 지정해야 합니다.",
+        "backup restore",
+      );
+    }
+    return ok({ kind: "backup_restore", source, targetHome });
+  }
+  return usageError(
+    subcommand === undefined
+      ? "backup 에는 하위 명령이 필요합니다: create, restore"
+      : `알 수 없는 하위 명령입니다: backup ${subcommand}`,
+    "backup",
+  );
 }
 
 /** The full usage text, or one command's, when `topic` names a known command. */
