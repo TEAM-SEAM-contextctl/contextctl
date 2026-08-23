@@ -71,7 +71,7 @@ describe("createDaemonRuntime with independent embedding layers", () => {
     const documentFactory = new FakeDocumentEmbeddingProviderFactory();
     const cardFactory = new FakeCardEmbeddingProviderFactory();
 
-    build({
+    const runtime = build({
       embedding: { document: documentLayer("local"), card: cardLayer("local") },
       documentFactory,
       cardFactory,
@@ -84,6 +84,9 @@ describe("createDaemonRuntime with independent embedding layers", () => {
     expect(cardFactory.calls).toEqual([
       { mode: "local", artifactDirectory: "/assets/rev_a" },
     ]);
+    // Two independently constructed local providers do not claim to share a
+    // native session merely because their modes happen to match.
+    expect(runtime.sharesLocalEmbeddingSession).toBe(false);
   });
 
   it("assembles local documents and hosted Cards", () => {
@@ -104,6 +107,7 @@ describe("createDaemonRuntime with independent embedding layers", () => {
     });
     expect(runtime.cardEmbeddingProvider.providerKind).toBe("remote");
     expect(runtime.embeddingProvider.providerKind).toBe("local");
+    expect(runtime.sharesLocalEmbeddingSession).toBe(false);
   });
 
   it("assembles hosted documents and local Cards", () => {
@@ -124,13 +128,14 @@ describe("createDaemonRuntime with independent embedding layers", () => {
     expect(cardFactory.calls[0]?.mode).toBe("local");
     expect(runtime.embeddingProvider.providerKind).toBe("remote");
     expect(runtime.cardEmbeddingProvider.providerKind).toBe("local");
+    expect(runtime.sharesLocalEmbeddingSession).toBe(false);
   });
 
   it("assembles hosted documents and hosted Cards", () => {
     const documentFactory = new FakeDocumentEmbeddingProviderFactory();
     const cardFactory = new FakeCardEmbeddingProviderFactory();
 
-    build({
+    const runtime = build({
       embedding: { document: documentLayer("remote"), card: cardLayer("remote") },
       documentFactory,
       cardFactory,
@@ -147,6 +152,7 @@ describe("createDaemonRuntime with independent embedding layers", () => {
       mode: "remote",
       endpoint: "https://cards.example/v1/embeddings",
     });
+    expect(runtime.sharesLocalEmbeddingSession).toBe(false);
   });
 
   describe("starting with no model installed", () => {

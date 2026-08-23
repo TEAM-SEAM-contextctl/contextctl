@@ -72,6 +72,18 @@ export class LocalCardEmbeddingAdapter implements CardEmbeddingPort {
     this.profile = options.card;
   }
 
+  /**
+   * Identity proof used only by the Composition Root.
+   *
+   * Matching modes or artifact names is insufficient to claim one physical
+   * session: two adapters can load the same file twice. The daemon schedules
+   * both domain ports together only when this adapter delegates to the exact
+   * provider instance the document path uses.
+   */
+  usesProvider(provider: EmbeddingPort): boolean {
+    return this.#provider === provider;
+  }
+
   async embed(
     request: CardEmbeddingRequest,
   ): Promise<readonly CardEmbeddingOutput[]> {

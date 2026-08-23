@@ -99,4 +99,13 @@ jobs:
       - name: Run Granite adapter integration
         env:
           CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
+          CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH: ${{ runner.temp }}/embedding-runtime-load.json
         run: npm run test:integration:granite
+      - name: Upload embedding runtime load result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: embedding-runtime-load-${{ github.sha }}
+          path: ${{ runner.temp }}/embedding-runtime-load.json
+          if-no-files-found: error
+          retention-days: 30

@@ -27,6 +27,7 @@ import {
 } from "../embedding/readiness.js";
 import type { LaneDepth } from "../runtime/admission.js";
 import type { DaemonLifecycleState } from "../runtime/lifecycle.js";
+import type { EmbeddingRuntimeSnapshot } from "../runtime/embedding-runtime-scheduler.js";
 
 export type LaneName = "resolve" | "registry" | "selection_assets" | "ingestion";
 
@@ -64,6 +65,7 @@ export interface RuntimeActivity {
   readonly lifecycle: DaemonLifecycleState;
   readonly profileVersion: string;
   readonly depths: readonly LaneDepth[];
+  readonly embedding: EmbeddingRuntimeSnapshot;
 }
 
 export interface StatusReport {
@@ -402,11 +404,26 @@ export function formatDuration(milliseconds: number): string {
 /** The report as an operator reads it. `--json` prints the object instead. */
 export function renderStatusReport(report: StatusReport): string {
   const width = Math.max(...report.lanes.map((verdict) => verdict.lane.length));
+  const activity = report.activity;
+  const activityLines =
+    activity === undefined
+      ? []
+      : [
+          "",
+          `runtime  ${activity.lifecycle} · ${activity.profileVersion}`,
+          ...activity.depths.map(
+            (depth) =>
+              `  ${depth.lane}: active ${String(depth.active)}/${String(depth.concurrency)}, queued ${String(depth.queued)}/${String(depth.queueDepth)}`,
+          ),
+          `  embedding: active ${String(activity.embedding.active)}, resolve reserved ${String(activity.embedding.resolveReservations)}, resolve queued ${String(activity.embedding.resolveQueued)}, background queued ${String(activity.embedding.backgroundQueued)}`,
+          `  event loop: ${activity.embedding.eventLoopState} (${String(activity.embedding.eventLoopLagMs)}ms), RSS ${String(Math.ceil(activity.embedding.rssBytes / 1024 / 1024))}/${String(Math.ceil(activity.embedding.rssLimitBytes / 1024 / 1024))}MiB`,
+        ];
   return [
     ...report.lanes.map(
       (verdict) =>
         `${verdict.lane.padEnd(width)}  ${verdict.status.padEnd(9)}  ${verdict.detail}`,
     ),
+    ...activityLines,
     "",
     report.serviceable
       ? "서비스할 수 없는 lane 은 없습니다."

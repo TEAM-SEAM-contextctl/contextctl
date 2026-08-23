@@ -25,7 +25,11 @@ describe("query CLI runtime control", () => {
       resolveWithin: async () => resolution,
     });
     const cli = {
-      runtime: { control, contextApplication },
+      runtime: {
+        control,
+        contextApplication,
+        prepareCardCandidates: async () => undefined,
+      },
     } as unknown as CliRuntime;
 
     const outcome = await runQuery(cli, {

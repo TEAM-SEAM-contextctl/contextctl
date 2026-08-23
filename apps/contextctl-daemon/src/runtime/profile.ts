@@ -105,9 +105,10 @@ export const DAEMON_RUNTIME_PROFILE_V1: DaemonRuntimeProfile = Object.freeze({
     // below, because the two limits bound different units of work.
     ingestion: Object.freeze({ concurrency: 1, queueDepth: 4 }),
     // A provider call is already one bounded batch. There is deliberately no
-    // second in-memory wait queue here: the Ingestion pipeline owns its batch
-    // sequence and retries a retriable refusal, while the shared priority
-    // scheduler and its background queue belong to the next runtime issue.
+    // second Ingestion-owned wait queue here: the pipeline owns its batch
+    // sequence and retries a retriable refusal. When the physical local session
+    // is shared, the separate `embedding-runtime-scheduler-v1` owns the bounded
+    // cross-domain priority queue after this admission boundary.
     ingestionEmbedding: Object.freeze({
       concurrency: INGESTION_EMBEDDING_BATCH_LIMIT,
       queueDepth: 0,
@@ -125,8 +126,8 @@ export const DAEMON_RUNTIME_PROFILE_V1: DaemonRuntimeProfile = Object.freeze({
  * The background embedding batch ceiling the design names separately.
  *
  * Stated here so the value has one home. The daemon applies it to Ingestion's
- * provider boundary; it is not the shared-session priority scheduler, which is
- * a separate operating concern and a later issue.
+ * provider boundary; the shared-session priority scheduler is a separate
+ * operating concern with its own versioned profile.
  */
 export type DaemonRuntimeProfileProblem =
   | "version_missing"

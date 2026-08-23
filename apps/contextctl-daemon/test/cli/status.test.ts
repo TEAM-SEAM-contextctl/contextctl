@@ -333,4 +333,41 @@ describe("renderStatusReport", () => {
 
     expect(renderStatusReport(report)).toContain("서비스할 수 없습니다");
   });
+
+  it("renders the safe in-process embedding activity snapshot", () => {
+    const report = judgeLanes(healthy(), {
+      lifecycle: "accepting",
+      profileVersion: "daemon-runtime-profile-v1",
+      depths: [
+        {
+          lane: "resolve",
+          active: 2,
+          concurrency: 8,
+          queued: 3,
+          queueDepth: 32,
+        },
+      ],
+      embedding: {
+        profileVersion: "embedding-runtime-scheduler-v1",
+        accepting: true,
+        active: 1,
+        resolveReservations: 2,
+        resolveQueued: 2,
+        backgroundQueued: 4,
+        eventLoopLagMs: 12,
+        eventLoopState: "normal",
+        rssBytes: 512 * 1024 * 1024,
+        rssLimitBytes: 1_536 * 1024 * 1024,
+        memoryState: "normal",
+        backgroundStartsSuppressed: false,
+      },
+    });
+
+    const output = renderStatusReport(report);
+    expect(output).toContain("resolve: active 2/8, queued 3/32");
+    expect(output).toContain(
+      "embedding: active 1, resolve reserved 2, resolve queued 2, background queued 4",
+    );
+    expect(output).toContain("event loop: normal (12ms), RSS 512/1536MiB");
+  });
 });

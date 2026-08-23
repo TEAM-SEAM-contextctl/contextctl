@@ -15,9 +15,11 @@ const targets = Object.freeze({
   granite: Object.freeze({
     requiredEnvironment: Object.freeze([
       "CONTEXTCTL_GRANITE_ASSET_DIRECTORY",
+      "CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH",
     ]),
     testFiles: Object.freeze([
       "packages/ingestion-indexing/test/local-embedding-adapter.integration.test.ts",
+      "apps/contextctl-daemon/test/embedding-runtime-load.integration.test.ts",
     ]),
   }),
   "document-retrieval": Object.freeze({

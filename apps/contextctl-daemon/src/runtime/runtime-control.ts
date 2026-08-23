@@ -21,6 +21,10 @@ import {
   StageDeadlineExceededError,
 } from "./deadline.js";
 import { DaemonLifecycle } from "./lifecycle.js";
+import {
+  EmbeddingRuntimeScheduler,
+  type EmbeddingRuntimeSchedulerProfile,
+} from "./embedding-runtime-scheduler.js";
 import { RequestExecutionContext } from "./request-execution-context.js";
 import {
   assertDaemonRuntimeProfile,
@@ -44,6 +48,7 @@ export class DaemonRuntimeControl {
   readonly selectionAssets: AdmissionLane;
   readonly ingestion: AdmissionLane;
   readonly ingestionEmbedding: AdmissionLane;
+  readonly embeddingScheduler: EmbeddingRuntimeScheduler;
   readonly lifecycle: DaemonLifecycle;
   readonly #requests = new RequestExecutionContext();
 
@@ -51,6 +56,7 @@ export class DaemonRuntimeControl {
     options: {
       readonly profile?: DaemonRuntimeProfile;
       readonly clock?: RuntimeClock;
+      readonly embeddingSchedulerProfile?: EmbeddingRuntimeSchedulerProfile;
     } = {},
   ) {
     this.profile = options.profile ?? DAEMON_RUNTIME_PROFILE_V1;
@@ -74,6 +80,12 @@ export class DaemonRuntimeControl {
       "ingestion_embedding",
       this.profile.lanes.ingestionEmbedding,
     );
+    this.embeddingScheduler = new EmbeddingRuntimeScheduler({
+      clock: this.clock,
+      ...(options.embeddingSchedulerProfile === undefined
+        ? {}
+        : { profile: options.embeddingSchedulerProfile }),
+    });
 
     this.lifecycle = new DaemonLifecycle({
       clock: this.clock,
@@ -89,6 +101,9 @@ export class DaemonRuntimeControl {
       ],
       drainTimeoutMs: this.profile.deadlines.totalMs,
     });
+    this.lifecycle.registerCloseable("embedding_scheduler", () => {
+      this.embeddingScheduler.stopAccepting();
+    });
   }
 
   /** Every top-level operating area's activity, in a fixed order. */
@@ -99,6 +114,16 @@ export class DaemonRuntimeControl {
       this.selectionAssets.depth,
       this.ingestion.depth,
     ];
+  }
+
+  /** Safe, text-free activity snapshot for an in-process status surface. */
+  activity() {
+    return {
+      lifecycle: this.lifecycle.state,
+      profileVersion: this.profile.version,
+      depths: this.depths(),
+      embedding: this.embeddingScheduler.snapshot,
+    } as const;
   }
 
   /** Opens a request budget at transport arrival. Called before admission. */
@@ -213,9 +238,9 @@ export class AdmissionControlledResolve implements ResolveContextApplication {
           // has nothing left to spend, and starting a selection for it would be
           // work done on behalf of a caller who is no longer there.
           budget.assertCanAssemble();
-          const resolution = await this.#application.resolveWithin(
-            request,
-            budget,
+          const resolution = await this.#control.embeddingScheduler.runResolveScope(
+            async () =>
+              await this.#application.resolveWithin(request, budget),
           );
           // The concrete daemon application checks after assembly too, but the
           // admission boundary must hold for every implementation of this
