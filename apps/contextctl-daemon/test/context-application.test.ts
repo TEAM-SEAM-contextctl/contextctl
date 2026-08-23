@@ -7,6 +7,7 @@ import {
 import {
   DEFAULT_CONTEXT_BUDGET,
   InvalidContextBudgetError,
+  SelectionPlanLimitExceededError,
   type ApprovedCard,
   type ApprovedCardCatalog,
   type ContextResolution,
@@ -501,6 +502,21 @@ describe("DaemonContextApplication", () => {
     });
 
     expect(resolution.policy.budget.maxTotalCharacters).toBe(200);
+  });
+
+  it("refuses a response that cannot fit before executing managed search", async () => {
+    const search = new RecordingSearch(() => []);
+    const application = new DaemonContextApplication({
+      catalog: catalogOf([documentCard()]),
+      search,
+      securityDomain: SECURITY_DOMAIN,
+      budget: { maxTotalCharacters: 2 * 1024 * 1024, maxChunks: 12 },
+    });
+
+    await expect(
+      application.resolveContext({ query: QUERY }),
+    ).rejects.toBeInstanceOf(SelectionPlanLimitExceededError);
+    expect(search.commands).toEqual([]);
   });
 
   it("refuses a ceiling above the configured one instead of clamping it", async () => {

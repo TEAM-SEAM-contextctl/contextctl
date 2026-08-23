@@ -4,6 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import type { ContextResolution } from "../../src/domain/context-resolution.js";
 import {
+  CONTEXT_RESOLUTION_MAXIMUM_BYTES,
+  RESOLVE_REQUEST_MAXIMUM_BYTES,
+  utf8ByteLength,
+} from "../../src/domain/transport-policy.js";
+import {
   createHttpQueryHandler,
   RESOLVE_PATH,
 } from "../../src/infrastructure/http/http-query-handler.js";
@@ -48,6 +53,15 @@ function close(server: Server): Promise<void> {
   });
 }
 
+function jsonStringWithBytes(key: string, bytes: number): string {
+  const empty = JSON.stringify({ [key]: "" });
+  const value = "가".repeat(Math.floor((bytes - utf8ByteLength(empty)) / 3));
+  const remainder = "x".repeat(
+    bytes - utf8ByteLength(empty) - utf8ByteLength(value),
+  );
+  return JSON.stringify({ [key]: value + remainder });
+}
+
 describe("createDeliveryHttpServer", () => {
   it("answers a real resolution request over a socket", async () => {
     const server = createDeliveryHttpServer(
@@ -90,10 +104,14 @@ describe("createDeliveryHttpServer", () => {
   });
 
   it("refuses a request body over 64 KiB before resolution", async () => {
-    const server = createDeliveryHttpServer(async () => ({
-      status: 200,
-      body: "{}",
-    }));
+    let calls = 0;
+    const server = createDeliveryHttpServer(async () => {
+      calls += 1;
+      return {
+        status: 200,
+        body: "{}",
+      };
+    });
 
     try {
       const port = await listenOnLoopback(server);
@@ -108,6 +126,62 @@ describe("createDeliveryHttpServer", () => {
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({
         error: { code: "invalid_request", retriable: false },
+      });
+      expect(calls).toBe(0);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("accepts a multibyte request exactly at 64 KiB", async () => {
+    let received = "";
+    const server = createDeliveryHttpServer(async (request) => {
+      received = request.body;
+      return { status: 200, body: "{}" };
+    });
+
+    try {
+      const port = await listenOnLoopback(server);
+      const body = jsonStringWithBytes("query", RESOLVE_REQUEST_MAXIMUM_BYTES);
+      const response = await fetch(
+        `http://127.0.0.1:${String(port)}${RESOLVE_PATH}`,
+        { method: "POST", body },
+      );
+
+      expect(response.status).toBe(200);
+      expect(received).toBe(body);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("commits a 2 MiB response whole and replaces an oversized one", async () => {
+    const boundary = jsonStringWithBytes(
+      "value",
+      CONTEXT_RESOLUTION_MAXIMUM_BYTES,
+    );
+    let body = boundary;
+    const server = createDeliveryHttpServer(async () => ({ status: 200, body }));
+
+    try {
+      const port = await listenOnLoopback(server);
+      const accepted = await fetch(
+        `http://127.0.0.1:${String(port)}${RESOLVE_PATH}`,
+        { method: "POST", body: "{}" },
+      );
+      expect(accepted.status).toBe(200);
+      expect(utf8ByteLength(await accepted.text())).toBe(
+        CONTEXT_RESOLUTION_MAXIMUM_BYTES,
+      );
+
+      body = `${boundary}x`;
+      const refused = await fetch(
+        `http://127.0.0.1:${String(port)}${RESOLVE_PATH}`,
+        { method: "POST", body: "{}" },
+      );
+      expect(refused.status).toBe(500);
+      await expect(refused.json()).resolves.toEqual({
+        error: { code: "unexpected_failure", retriable: false },
       });
     } finally {
       await close(server);

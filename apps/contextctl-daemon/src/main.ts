@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Server } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
@@ -991,6 +992,83 @@ export function readHttpPort(
   return port;
 }
 
+export interface DaemonHttpBinding {
+  readonly host: string;
+  readonly port: number;
+}
+
+/**
+ * Reads the optional unauthenticated HTTP listener configuration.
+ *
+ * v1 has no HTTP authentication layer, so the only safe binding is a numeric
+ * loopback address. Hostnames are intentionally refused: even `localhost` is a
+ * name whose resolution is outside this process and therefore not proof of a
+ * local trust boundary.
+ */
+export function readHttpBinding(
+  environment: Readonly<Partial<Record<string, string>>>,
+): DaemonHttpBinding | undefined {
+  const port = readHttpPort(environment);
+  const configuredHost = environment.CONTEXTCTL_HTTP_HOST?.trim();
+  if (port === undefined) {
+    if (configuredHost !== undefined && configuredHost !== "") {
+      throw new TypeError(
+        "CONTEXTCTL_HTTP_HOST requires CONTEXTCTL_HTTP_PORT",
+      );
+    }
+    return undefined;
+  }
+
+  const host = configuredHost === undefined || configuredHost === ""
+    ? "127.0.0.1"
+    : configuredHost;
+  if (!isLoopbackAddress(host)) {
+    throw new TypeError(
+      "CONTEXTCTL_HTTP_HOST must be a numeric loopback address because v1 HTTP has no authentication",
+    );
+  }
+  return { host, port };
+}
+
+function isLoopbackAddress(host: string): boolean {
+  if (host === "::1") return true;
+  const octets = host.split(".");
+  if (octets.length !== 4 || octets[0] !== "127") return false;
+  return octets.every(
+    (octet) =>
+      /^(?:0|[1-9]\d{0,2})$/u.test(octet) && Number(octet) <= 255,
+  );
+}
+
+/** Opens the validated listener and reports bind failures synchronously. */
+export function listenHttpServer(
+  server: Server,
+  binding: DaemonHttpBinding,
+): Promise<void> {
+  if (!isLoopbackAddress(binding.host)) {
+    throw new TypeError("HTTP server binding must be loopback-only");
+  }
+  return new Promise<void>((resolve, reject) => {
+    const onError = (cause: Error): void => {
+      server.removeListener("listening", onListening);
+      reject(cause);
+    };
+    const onListening = (): void => {
+      server.removeListener("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    try {
+      server.listen(binding.port, binding.host);
+    } catch (cause: unknown) {
+      server.removeListener("error", onError);
+      server.removeListener("listening", onListening);
+      reject(cause);
+    }
+  });
+}
+
 /**
  * Starts the daemon: MCP over stdio, and HTTP only when a port was configured.
  *
@@ -1004,6 +1082,10 @@ export async function runDaemon(
   environment: Readonly<Partial<Record<string, string>>> = process.env,
   options?: DaemonRuntimeOptions,
 ): Promise<void> {
+  // Validate the unauthenticated listener before opening databases or loading
+  // model assets. A bad trust-boundary setting is a configuration failure, not
+  // a partially started daemon that now needs recovery.
+  const httpBinding = readHttpBinding(environment);
   let runtime: DaemonRuntime;
   try {
     // The caller's options replace the environment reading rather than merging
@@ -1050,13 +1132,21 @@ export async function runDaemon(
   });
 
   let stopHttpAccepting: (() => Promise<void>) | undefined;
-  const httpPort = readHttpPort(environment);
-  if (httpPort !== undefined) {
+  if (httpBinding !== undefined) {
     const server = createDeliveryHttpServer(
       runtime.httpHandler,
       deliveryExecution,
     );
-    server.listen(httpPort);
+    try {
+      await listenHttpServer(server, httpBinding);
+    } catch (cause: unknown) {
+      // Preparation has already opened the embedding scheduler, database and
+      // maintenance resources. A bind conflict is therefore a startup failure
+      // of the whole daemon, not permission to leave those resources alive.
+      lifecycle.beginDraining();
+      reportShutdownFailures(await lifecycle.shutdown());
+      throw cause;
+    }
     let closeStarted: Promise<void> | undefined;
     stopHttpAccepting = () => {
       closeStarted ??= new Promise<void>((resolve, reject) => {
@@ -1123,12 +1213,17 @@ export async function runDaemon(
     process.stdin.unpipe(mcpInput);
     lifecycle.beginDraining();
     void stopHttpAccepting?.().catch(() => undefined);
-    const failures = await lifecycle.shutdown();
-    for (const failure of failures) {
-      process.stderr.write(
-        `종료 중 ${failure.resource} 정리에 실패했습니다: ${failure.reason}\n`,
-      );
-    }
+    reportShutdownFailures(await lifecycle.shutdown());
+  }
+}
+
+function reportShutdownFailures(
+  failures: readonly { readonly resource: string; readonly reason: string }[],
+): void {
+  for (const failure of failures) {
+    process.stderr.write(
+      `종료 중 ${failure.resource} 정리에 실패했습니다: ${failure.reason}\n`,
+    );
   }
 }
 

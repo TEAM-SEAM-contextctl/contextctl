@@ -6,6 +6,7 @@ import {
   type DocumentSearchHit,
 } from "@contextctl/ingestion-indexing";
 import {
+  assertContextResolutionCanFit,
   assembleContext,
   narrowContextBudget,
   selectContext,
@@ -195,6 +196,12 @@ export class DaemonContextApplication
         this.#selection,
       ),
     );
+
+    // Selection owns the conservative wire bound; daemon invokes it here
+    // because this is the last point before any managed target is executed and
+    // the first point where both the finished plan and effective context budget
+    // are available together.
+    assertContextResolutionCanFit(plan, budget);
 
     const outcomes = await this.#executeManagedTargets(
       plan.query,

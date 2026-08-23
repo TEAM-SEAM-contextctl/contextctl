@@ -1,9 +1,15 @@
 import type { Readable, Writable } from "node:stream";
 
 import {
+  ResolveContextFailure,
   resolveContextError,
   toResolveContextErrorCode,
 } from "../../application/errors.js";
+import { assertContextResolutionPayloadWithinLimit } from "../../application/transport-payload.js";
+import {
+  RESOLVE_REQUEST_MAXIMUM_BYTES,
+  utf8ByteLength,
+} from "../../domain/transport-policy.js";
 import type { DeliveryRequestExecution } from "../transport/request-execution.js";
 import {
   formatJsonRpcResult,
@@ -37,6 +43,7 @@ export async function runStdioServer(
 
   await new Promise<void>((resolve, reject) => {
     let buffer = "";
+    let discardingOversizedFrame = false;
     // Messages are answered strictly in arrival order. `handleMessage` is
     // async and `data` events do not wait for it, so without this chain two
     // chunks arriving close together could have their responses interleaved or
@@ -50,8 +57,14 @@ export async function runStdioServer(
         // A notification produces nothing to write; writing an empty line for
         // it would desynchronise a peer counting framed messages.
         if (response !== undefined) {
-          output.write(`${response}\n`);
+          output.write(`${boundedMcpResponse(response)}\n`);
         }
+      });
+    };
+
+    const rejectOversizedFrame = (): void => {
+      queue = queue.then(() => {
+        output.write(`${requestTooLargeResponse()}\n`);
       });
     };
 
@@ -60,7 +73,14 @@ export async function runStdioServer(
     // the next chunk instead of producing a replacement character.
     input.setEncoding("utf8");
 
-    input.on("data", (chunk: string) => {
+    input.on("data", (incoming: string) => {
+      let chunk = incoming;
+      if (discardingOversizedFrame) {
+        const boundary = chunk.indexOf("\n");
+        if (boundary === -1) return;
+        chunk = chunk.slice(boundary + 1);
+        discardingOversizedFrame = false;
+      }
       buffer += chunk;
 
       let newline = buffer.indexOf("\n");
@@ -69,10 +89,18 @@ export async function runStdioServer(
         buffer = buffer.slice(newline + 1);
         // Blank lines are framing, not messages: answering one with a parse
         // error would turn a peer's stray newline into a protocol failure.
-        if (line.trim() !== "") {
+        if (utf8ByteLength(line) > RESOLVE_REQUEST_MAXIMUM_BYTES) {
+          rejectOversizedFrame();
+        } else if (line.trim() !== "") {
           enqueue(line);
         }
         newline = buffer.indexOf("\n");
+      }
+
+      if (utf8ByteLength(buffer) > RESOLVE_REQUEST_MAXIMUM_BYTES) {
+        buffer = "";
+        discardingOversizedFrame = true;
+        rejectOversizedFrame();
       }
     });
 
@@ -82,10 +110,16 @@ export async function runStdioServer(
       // A final message without a trailing newline is still a message — a
       // writer that closes the stream has framed it as surely as a newline
       // would have.
-      if (buffer.trim() !== "") {
+      if (
+        !discardingOversizedFrame &&
+        utf8ByteLength(buffer) > RESOLVE_REQUEST_MAXIMUM_BYTES
+      ) {
+        rejectOversizedFrame();
+      } else if (!discardingOversizedFrame && buffer.trim() !== "") {
         enqueue(buffer);
       }
       buffer = "";
+      discardingOversizedFrame = false;
       queue.then(resolve, reject);
     });
   });
@@ -129,6 +163,7 @@ async function runControlledStdioServer(
     let writes: Promise<void> = Promise.resolve();
     let buffer = "";
     let bufferedAt: number | undefined;
+    let discardingOversizedFrame = false;
     let ended = false;
     let settled = false;
 
@@ -150,7 +185,7 @@ async function runControlledStdioServer(
       writes = writes.then(
         async () =>
           await new Promise<void>((resolveWrite, rejectWrite) => {
-            output.write(`${line}\n`, (cause) => {
+            output.write(`${boundedMcpResponse(line)}\n`, (cause) => {
               if (cause === undefined || cause === null) resolveWrite();
               else rejectWrite(cause);
             });
@@ -209,7 +244,7 @@ async function runControlledStdioServer(
             if (active?.size === 0) controllers.delete(key);
           }
           inFlight.delete(operation);
-          pump();
+          drainBuffer(ended);
           finishIfDone();
         });
       inFlight.add(operation);
@@ -225,8 +260,15 @@ async function runControlledStdioServer(
         start(message);
       }
 
-      if (pending.length > 0) input.pause();
-      else if (!ended) input.resume();
+      if (
+        pending.length > 0 ||
+        (buffer.includes("\n") &&
+          inFlight.size >= execution.maximumInFlightRequests)
+      ) {
+        input.pause();
+      } else if (!ended) {
+        input.resume();
+      }
       finishIfDone();
     };
 
@@ -241,30 +283,61 @@ async function runControlledStdioServer(
 
     const drainBuffer = (includeTrailing: boolean): void => {
       let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
+      while (
+        newline !== -1 &&
+        pending.length + inFlight.size < execution.maximumInFlightRequests
+      ) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
-        if (line.trim() !== "") {
+        if (utf8ByteLength(line) > RESOLVE_REQUEST_MAXIMUM_BYTES) {
+          queueWrite(requestTooLargeResponse());
+        } else if (line.trim() !== "") {
           acceptLine(line, bufferedAt ?? execution.now());
         }
         bufferedAt = buffer === "" ? undefined : execution.now();
         newline = buffer.indexOf("\n");
       }
-      if (includeTrailing) {
-        if (buffer.trim() !== "") {
+      if (
+        includeTrailing &&
+        pending.length + inFlight.size < execution.maximumInFlightRequests &&
+        newline === -1
+      ) {
+        if (
+          !discardingOversizedFrame &&
+          utf8ByteLength(buffer) > RESOLVE_REQUEST_MAXIMUM_BYTES
+        ) {
+          queueWrite(requestTooLargeResponse());
+        } else if (!discardingOversizedFrame && buffer.trim() !== "") {
           acceptLine(buffer, bufferedAt ?? execution.now());
         }
         buffer = "";
         bufferedAt = undefined;
+        discardingOversizedFrame = false;
       }
       pump();
     };
 
     input.setEncoding("utf8");
-    input.on("data", (chunk: string) => {
+    input.on("data", (incoming: string) => {
+      let chunk = incoming;
+      if (discardingOversizedFrame) {
+        const boundary = chunk.indexOf("\n");
+        if (boundary === -1) return;
+        chunk = chunk.slice(boundary + 1);
+        discardingOversizedFrame = false;
+      }
       if (buffer === "") bufferedAt = execution.now();
       buffer += chunk;
       drainBuffer(false);
+      if (
+        !buffer.includes("\n") &&
+        utf8ByteLength(buffer) > RESOLVE_REQUEST_MAXIMUM_BYTES
+      ) {
+        buffer = "";
+        bufferedAt = undefined;
+        discardingOversizedFrame = true;
+        queueWrite(requestTooLargeResponse());
+      }
     });
     input.once("error", (cause) => {
       if (settled) return;
@@ -309,6 +382,39 @@ function failureResponse(id: JsonRpcId, cause: unknown): string {
     content: [{ type: "text", text: JSON.stringify({ error }) }],
     isError: true,
   });
+}
+
+function requestTooLargeResponse(): string {
+  return failureResponse(
+    null,
+    new ResolveContextFailure(
+      "invalid_request",
+      "MCP request exceeds the public UTF-8 byte limit.",
+    ),
+  );
+}
+
+/** Applies the final wire-size guard before a JSON-RPC frame is committed. */
+function boundedMcpResponse(response: string): string {
+  try {
+    assertContextResolutionPayloadWithinLimit(response);
+    return response;
+  } catch (cause: unknown) {
+    return failureResponse(responseId(response), cause);
+  }
+}
+
+function responseId(response: string): JsonRpcId {
+  try {
+    const parsed: unknown = JSON.parse(response);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    const id = (parsed as Readonly<Record<string, unknown>>)["id"];
+    return isJsonRpcId(id) ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 function isErrorResponse(response: string): boolean {

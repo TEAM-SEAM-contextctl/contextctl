@@ -82,7 +82,7 @@ async function violationsOf(cards: readonly ApprovedCard[], chunkLimitPerScope?:
 }
 
 describe("selection-planning-v1 limits", () => {
-  it("states the SOT's six ceilings", () => {
+  it("states the SOT's planning and response ceilings", () => {
     expect(SELECTION_PLANNING_LIMITS).toEqual({
       admittedCards: 32,
       items: 128,
@@ -90,6 +90,7 @@ describe("selection-planning-v1 limits", () => {
       chunksPerTarget: 8,
       selectedByTotal: 256,
       guideBytes: 64 * 1024,
+      responseBytes: 2 * 1024 * 1024,
     });
     // One number, not two: the default bound per Scope is the policy ceiling.
     expect(DEFAULT_CHUNK_LIMIT_PER_SCOPE).toBe(SELECTION_PLANNING_LIMITS.chunksPerTarget);
