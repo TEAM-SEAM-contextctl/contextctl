@@ -33,6 +33,7 @@ import {
   DEFAULT_CONNECTOR_ID,
   DEFAULT_EMBEDDING_PROFILE,
   DEFAULT_SECURITY_DOMAIN,
+  DEFAULT_STATE_NAMESPACE_ID,
   listenHttpServer,
   readHttpBinding,
   readDaemonRuntimeOptions,
@@ -419,7 +420,10 @@ describe("createDaemonRuntime", () => {
 
     it("applies the security domain and connector it was configured with", () => {
       const runtime = buildRuntime({
-        securityDomain: "x",
+        stateIdentity: {
+          stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+          securityDomain: "x",
+        },
         connectorId: "y",
       });
 
@@ -806,20 +810,22 @@ describe("readDaemonRuntimeOptions", () => {
 
     expect(options).toMatchObject({
       registryDatabaseLocation: "/tmp/cards.sqlite",
-      securityDomain: "payments",
+      stateIdentity: {
+        stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+        securityDomain: "payments",
+      },
       connectorId: "vector.remote",
     });
     expect(options.vectorIndex).toBeDefined();
   });
 
-  it("treats an empty value as a value rather than as an absent setting", () => {
-    const options = readDaemonRuntimeOptions({
-      CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
-      CONTEXTCTL_SECURITY_DOMAIN: "",
-    });
-
-    expect(Object.keys(options).sort()).toEqual(["securityDomain", "vectorIndex"]);
-    expect(options.securityDomain).toBe("");
+  it("refuses an empty deployment identity before opening state", () => {
+    expect(() =>
+      readDaemonRuntimeOptions({
+        CONTEXTCTL_QDRANT_URL: "http://localhost:6333",
+        CONTEXTCTL_SECURITY_DOMAIN: "",
+      }),
+    ).toThrow("Daemon state identity is invalid: securityDomain");
   });
 
   it("ignores every other variable in the environment", () => {
@@ -831,7 +837,7 @@ describe("readDaemonRuntimeOptions", () => {
           HOME: "/root",
         }),
       ),
-    ).toEqual(["vectorIndex"]);
+    ).toEqual(["vectorIndex", "stateIdentity"]);
   });
 
   it("reads independent remote provider configuration and profiles", () => {

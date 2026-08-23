@@ -27,6 +27,7 @@ function healthy(overrides: Partial<StatusObservation> = {}): StatusObservation 
       status: "configured",
       endpoint: "http://localhost:6333/",
     },
+    stateReadiness: { status: "ready" },
     registry: {
       status: "read",
       behindSources: [],
@@ -61,6 +62,20 @@ function statusOf(report: ReturnType<typeof judgeLanes>, lane: LaneName): LaneSt
 }
 
 describe("judgeLanes", () => {
+  it("marks Resolve not ready when shared state identity cannot be verified", () => {
+    const report = judgeLanes(
+      healthy({
+        stateReadiness: {
+          status: "unavailable",
+          detail: "index_catalog:state_identity_mismatch",
+        },
+      }),
+    );
+
+    expect(statusOf(report, "resolve")).toBe("not_ready");
+    expect(report.serviceable).toBe(false);
+  });
+
   it("reports all four lanes, in the order the design lists them", () => {
     const report = judgeLanes(healthy());
 

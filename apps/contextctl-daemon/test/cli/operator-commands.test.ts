@@ -118,6 +118,10 @@ beforeEach(async () => {
     securityDomain: DEFAULT_SECURITY_DOMAIN,
   });
   cli = {
+    stateIdentity: {
+      stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+      securityDomain: DEFAULT_SECURITY_DOMAIN,
+    },
     database,
     cards,
     publications: new SqliteIngestionPublicationStore(ingestionDatabase),

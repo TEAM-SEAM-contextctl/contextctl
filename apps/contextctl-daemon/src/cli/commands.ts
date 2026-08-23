@@ -15,6 +15,9 @@ import {
   assertResolveRequestPayloadWithinLimit,
   ResolveContextFailure,
 } from "@contextctl/selection-delivery";
+import {
+  StaticVectorIndexConnectorRegistry,
+} from "@contextctl/ingestion-indexing";
 
 import type { CliCommand } from "./arguments.js";
 import { EXIT_CODES, operatorExitCode, type ExitCode } from "./exit-codes.js";
@@ -29,7 +32,7 @@ import {
   resolveActiveAssetDirectory,
 } from "./asset-directory.js";
 import { runDiagnosis, type DiagnosisReport } from "./doctor.js";
-import { resolveContextctlPaths } from "./paths.js";
+import { readNonEmpty, resolveContextctlPaths } from "./paths.js";
 import {
   judgeLanes,
   renderStatusReport,
@@ -49,15 +52,16 @@ import {
 } from "./render.js";
 import type { RegistryIntakeResult } from "../registry-intake.js";
 import { resolveVectorBackend } from "../vector-backend.js";
+import { DEFAULT_CONNECTOR_ID } from "../main.js";
 
 /** A Source that Registry refused, with the diagnostic that says why. */
 type IngestRefusal = Extract<
   RegistryIntakeResult,
   { readonly status: "deferred" | "forked" }
 >;
-import { DEFAULT_SECURITY_DOMAIN } from "../main.js";
 import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
 import { toResolveFailure } from "../runtime/runtime-control.js";
+import { assertDaemonStateReady } from "../runtime/state-readiness.js";
 import {
   readActiveEmbeddingProfiles,
   readEmbeddingCompositionConfiguration,
@@ -545,12 +549,10 @@ async function observeEmbeddingBindings(
   environment: Readonly<Partial<Record<string, string>>>,
   ingestionDatabase: string,
 ): Promise<EmbeddingObservation> {
-  const securityDomain =
-    environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN;
   try {
     const configuration = readEmbeddingCompositionConfiguration(
       environment,
-      securityDomain,
+      cli.stateIdentity.securityDomain,
     );
     const profiles = readActiveEmbeddingProfiles(environment, configuration);
     const required = await computeRequiredEmbeddingBindings({
@@ -616,6 +618,11 @@ export async function runStatus(
     registry,
     ingestion: await observeIngestion(cli, registry),
     vectorIndex: observeVectorIndex(context.environment),
+    stateReadiness: await observeStateReadiness(
+      cli,
+      context.environment,
+      paths.ingestionDatabase,
+    ),
     embedding: await observeEmbeddingBindings(
       cli,
       context.environment,
@@ -644,6 +651,43 @@ export async function runStatus(
     ],
     exitCode: EXIT_CODES.laneNotReady,
   };
+}
+
+async function observeStateReadiness(
+  cli: RegistryOnlyRuntime,
+  environment: Readonly<Partial<Record<string, string>>>,
+  ingestionDatabase: string,
+): Promise<StatusObservation["stateReadiness"]> {
+  try {
+    if (!existsSync(ingestionDatabase)) {
+      const cards = await cli.cards.listApprovedCards();
+      const hasManagedScope = cards.cards.some((card) =>
+        card.scopes.some((scope) => scope.kind === "managed_document"),
+      );
+      return hasManagedScope
+        ? {
+            status: "unavailable",
+            detail: "index_catalog:scope_not_published",
+          }
+        : { status: "ready" };
+    }
+
+    const vectorBackend = resolveVectorBackend(environment);
+    const connectorId =
+      readNonEmpty(environment, "CONTEXTCTL_CONNECTOR_ID") ??
+      DEFAULT_CONNECTOR_ID;
+    await assertDaemonStateReady({
+      stateIdentity: cli.stateIdentity,
+      catalog: new RegistryApprovedCardCatalog(cli.cards),
+      publications: cli.indexPublications,
+      vectorIndexes: new StaticVectorIndexConnectorRegistry([
+        { connectorId, vectorIndex: vectorBackend.vectorIndex },
+      ]),
+    });
+    return { status: "ready" };
+  } catch (error) {
+    return { status: "unavailable", detail: describeError(error) };
+  }
 }
 
 function observeVectorIndex(
@@ -872,6 +916,7 @@ export async function runQuery(
     // The query command is a fresh process with an in-memory derived index.
     // Build that index before starting the user's 3-second request budget;
     // otherwise a cold local model makes a correct first query time out.
+    await cli.runtime.prepareStateReadiness();
     await cli.runtime.prepareCardCandidates();
     const arrivedAt = cli.runtime.control.clock.now();
     return await cli.runtime.control.runTransportRequest(async () => {

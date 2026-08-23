@@ -152,8 +152,10 @@ function createRuntime(input: {
   };
   return createDaemonRuntime({
     registryDatabaseLocation: input.registryPath,
-    stateNamespaceId: input.stateNamespaceId,
-    securityDomain: input.securityDomain,
+    stateIdentity: {
+      stateNamespaceId: input.stateNamespaceId,
+      securityDomain: input.securityDomain,
+    },
     embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
     vectorIndex: new QdrantVectorIndexAdapter({ url: requiredQdrantUrl() }),
     sourceConfigurations: {

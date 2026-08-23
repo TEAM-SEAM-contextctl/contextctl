@@ -26,6 +26,7 @@ function observation(
   return {
     assets,
     vectorIndex: { status: "configured", endpoint: "http://localhost:6333/" },
+    stateReadiness: { status: "ready" },
     registry: {
       status: "read",
       behindSources: [],
