@@ -46,7 +46,7 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 |---|---|
 | **Node.js** | **24 이상** — 저장소가 `node:sqlite` 위에 있고, 그 모듈은 Node 24 에서 처음 제공됩니다 |
 | **Qdrant** | 필수입니다. `CONTEXTCTL_QDRANT_URL` 이 없으면 `ingest`·`query`·`serve` 가 시작을 거부합니다 |
-| **디스크** | 임베딩 모델 **396.1 MiB** |
+| **디스크** | 임베딩 모델 **396.1 MiB** — 기본 로컬 실행 기준. 두 임베딩 계층을 모두 원격으로 쓰면 필요 없습니다 |
 
 > ★ **`fnm` · `nvm` · `asdf` 를 쓴다면**: 이들은 **활성 Node 버전의 `bin` 에만** 설치합니다.
 > 버전을 바꾸면 `contextctl` 이 사라진 것처럼 보입니다. `contextctl paths` 가 현재 어느 Node

@@ -7,6 +7,7 @@
 
 - [status](#status) — 실행 영역별로 지금 일을 할 수 있는가
 - [reachability](#reachability) — 인덱싱됐는데 도달할 수 없는 범위
+- [문서에서 내용을 지웠을 때](#문서에서-내용을-지웠을-때) — Card 가 자동으로 내려가는 이유
 - [색인이 비었을 때](#색인이-비었을-때) — 승인 Card 는 있는데 검색이 안 되는 경우
 - [제거](#제거) — 무엇을 지우면 무엇이 사라지는가
 
@@ -35,9 +36,9 @@ contextctl status --json   # 감시 도구가 읽는 형태
 새 게시물이 아직 소비되지 않았고 직전 게시가 끝나지 않은 기계의 실제 출력입니다.
 
 ```
-resolve           ready      승인 Card 1개로 답할 수 있습니다. Registry 지연은 이 판정에 영향을 주지 않습니다.
+resolve           ready      승인 Card 4개로 답할 수 있습니다. Registry 지연은 이 판정에 영향을 주지 않습니다(설계안 120절).
 registry          degraded   소비하지 않은 Publication 이 있는 Source 1개: src_01a02445-0d89-7c22-… (가장 오래된 지연 6분)
-selection_assets  ready      임베딩 자산을 쓸 수 있습니다: ~/.contextctl/embedding-assets/revisions/eb09231254…
+selection_assets  ready      임베딩 자산을 쓸 수 있습니다: ~/.contextctl/embedding-assets/revisions/eb09231254…. 문서 검색 local, Card 선택 local
 ingestion         degraded   게시가 끝나지 않은 Source 1개: src_01a02445-0d89-7c22-… — contextctl ingest 를 다시 실행하면 이어서 마칩니다.
 
 서비스할 수 없는 lane 은 없습니다.
@@ -59,6 +60,10 @@ ingestion         degraded   게시가 끝나지 않은 Source 1개: src_01a0244
   시각을 모를 때는 지연을 비웁니다
 - **승인 Card 가 없으면 `resolve` 는 `degraded`** 입니다. 기계는 다 정상이고 답할 대상만 없는
   상태이므로 다음에 할 일은 `cards approve` 입니다
+- **`selection_assets` 는 임베딩을 어떻게 실행하는지도 함께 말합니다.** 두 계층이 모두
+  원격이면 로컬 모델이 없어도 `ready` 로 판정하고 `로컬 자산이 필요하지 않습니다` 로
+  이유를 답니다. 원격 설정이 불완전하면 `not_ready` 입니다
+  → [설정](configuration.md#임베딩-실행)
 - **`ingestion` 판정에는 한계가 있고 출력이 그 한계를 함께 말합니다.** 점검할 수 있는 Source 는
   한 번이라도 소비된 것뿐입니다 — 게시만 되고 소비된 적 없는 Source 는 이 명령이 알 수 없습니다
 
@@ -92,6 +97,30 @@ contextctl reachability --state orphaned     # 그 상태의 Scope 목록과 이
 
 릴리스 기준(`broken` 0, 이유 없는 `orphaned` 0)을 넘기지 못하면 종료 코드 `3` 으로 끝납니다.
 보고서는 그때도 `stdout` 에 남습니다 — CI 가 판정만 얻고 이유를 잃으면 쓸 수 없기 때문입니다.
+
+---
+
+## 문서에서 내용을 지웠을 때
+
+문서에서 절을 지우고 다시 수집하면 **관련 Card 가 자동으로 서비스에서 내려갑니다.** 지운
+내용의 Card 만이 아니라, 같은 문서에서 재색인된 다른 Card 도 함께 내려갈 수 있습니다.
+
+지운 절의 벡터가 옛 색인에 그대로 남아 있기 때문입니다. 색인은 게시할 때마다 새 버전이 옆에
+생기고 옛 버전은 지워지지 않으므로, 옛 색인을 계속 서비스하던 Card 를 두면 **지운 규정이
+그대로 답으로 나갑니다.** 승인이 경계인 제품에서 가장 나쁜 실패라, 회수가 자동입니다.
+
+내려간 Card 는 삭제되지 않고 이력이 남습니다. 수집이 만든 새 버전(삭제분이 빠진 새 색인을
+가리킵니다)이 검증을 통과해 승인 대기로 함께 올라오므로, 할 일은 재승인뿐입니다.
+
+```bash
+contextctl cards list                  # 내려간 Card 와 새 버전 확인
+contextctl cards approve <cardId>      # 새 버전으로 복귀
+```
+
+`ingest` 출력은 새로 만들어진 버전만 말하고 회수는 말하지 않으므로, 삭제 후에는 `cards list`
+로 무엇이 내려갔는지 확인하십시오. 어느 규칙이 회수를 결정했는지는 Card 이력(lifecycle
+event)에 남습니다 — 삭제된 지식은 `change.removed`, 옛 색인에 남겨진 Card 는
+`scope.document.indexVersionSupersededByRemoval` 입니다.
 
 ---
 
