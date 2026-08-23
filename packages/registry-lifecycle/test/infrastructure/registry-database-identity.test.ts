@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   openRegistryDatabase,
   REGISTRY_DATABASE_APPLICATION_ID,
+  REGISTRY_DATABASE_SCHEMA_VERSION,
 } from "../../src/infrastructure/sqlite/registry-database.js";
 
 /**
@@ -45,6 +46,15 @@ function applicationIdOf(location: string): number {
   };
   database.close();
   return row.application_id;
+}
+
+function schemaVersionOf(location: string): number {
+  const database = new DatabaseSync(location);
+  const row = database.prepare("PRAGMA user_version").get() as {
+    user_version: number;
+  };
+  database.close();
+  return row.user_version;
 }
 
 function objectNamesOf(location: string): readonly string[] {
@@ -230,5 +240,93 @@ describe("registry database ownership", () => {
     ).toThrowError(TypeError);
 
     expect(objectNamesOf(location)).toEqual([]);
+  });
+
+  it("stamps the schema version and refuses a file a newer build wrote", async () => {
+    const location = await databaseFile("registry.db");
+    openRegistryDatabase({
+      location,
+      stateNamespaceId: "state_local",
+      securityDomain: "local",
+    }).close();
+    expect(schemaVersionOf(location)).toBe(REGISTRY_DATABASE_SCHEMA_VERSION);
+
+    const ahead = new DatabaseSync(location);
+    ahead.exec(
+      `PRAGMA user_version = ${String(REGISTRY_DATABASE_SCHEMA_VERSION + 1)}`,
+    );
+    ahead.close();
+    const before = objectNamesOf(location);
+
+    // Reading a shape this build does not know is the quiet corruption the
+    // version exists to prevent: the tables look familiar and the rows may not
+    // mean what they did.
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "schema_newer" }),
+    );
+    expect(objectNamesOf(location)).toEqual(before);
+  });
+
+  it("refuses a file whose columns do not match the version it claims", async () => {
+    // Marked as Registry's, claiming this build's version, and holding a
+    // half-shaped `cards` table — hand-edited, or a migration that stopped.
+    // CREATE TABLE IF NOT EXISTS leaves it as it is, so only a column check
+    // catches it before a store reads a column that is not there.
+    const location = await databaseFile("registry.db");
+    const broken = new DatabaseSync(location);
+    broken.exec("CREATE TABLE cards (card_id TEXT PRIMARY KEY)");
+    broken.exec(
+      `PRAGMA application_id = ${String(REGISTRY_DATABASE_APPLICATION_ID)}`,
+    );
+    broken.exec(
+      `PRAGMA user_version = ${String(REGISTRY_DATABASE_SCHEMA_VERSION)}`,
+    );
+    broken.close();
+
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "schema_invalid" }),
+    );
+  });
+
+  it("makes a file-backed database durable", async () => {
+    // The approval trail lives here, and nothing re-derives an approval: a
+    // power cut that lost the last decisions would bring Cards back serving
+    // what someone had withdrawn.
+    const location = await databaseFile("registry.db");
+
+    openRegistryDatabase({
+      location,
+      stateNamespaceId: "state_local",
+      securityDomain: "local",
+    }).close();
+
+    const database = new DatabaseSync(location);
+    const journal = database.prepare("PRAGMA journal_mode").get() as {
+      journal_mode: string;
+    };
+    database.close();
+    expect(journal.journal_mode.toLowerCase()).toBe("wal");
+  });
+
+  it("refuses a blank location before opening anything", () => {
+    expect(() =>
+      openRegistryDatabase({
+        location: "   ",
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(TypeError);
   });
 });

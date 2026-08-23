@@ -9,9 +9,22 @@ import { DatabaseSync } from "node:sqlite";
  */
 export const REGISTRY_DATABASE_APPLICATION_ID = 0x43545852;
 
+/**
+ * The schema shape this build writes and understands, in `PRAGMA user_version`.
+ *
+ * `1` because that is what this file has always produced — the grounding
+ * columns are added to the same shape rather than versioned separately. Its
+ * job is not to describe history but to let a build refuse a file a *newer*
+ * build wrote: without it, an older daemon opens a future registry.db, sees
+ * tables it recognises, and reads rows whose meaning has moved.
+ */
+export const REGISTRY_DATABASE_SCHEMA_VERSION = 1;
+
 export type RegistryDatabaseIdentityErrorCode =
   | "identity_mismatch"
-  | "foreign_schema";
+  | "foreign_schema"
+  | "schema_invalid"
+  | "schema_newer";
 
 export interface OpenRegistryDatabaseOptions {
   readonly location: string;
@@ -56,24 +69,198 @@ export function openRegistryDatabase(
   options: OpenRegistryDatabaseOptions,
 ): DatabaseSync {
   const { location, stateNamespaceId, securityDomain } = options;
+  if (location.trim() === "") {
+    throw new TypeError("Registry database location is invalid");
+  }
   if (stateNamespaceId.trim() === "" || securityDomain.trim() === "") {
     throw new TypeError("Registry database identity is invalid");
   }
   const database = new DatabaseSync(location);
   try {
     database.exec("PRAGMA foreign_keys = ON");
+    // The CLI and a running daemon both open this file. Without a wait, the
+    // second one fails instantly with SQLITE_BUSY on a lock the first holds
+    // for milliseconds.
+    database.exec("PRAGMA busy_timeout = 5000");
     assertDatabaseClaimable(database);
-    // Both refusals happen before migrate touches the file: a mismatched
-    // deployment identity is another installation's data, and adding this
-    // build's columns to it would be the write the check exists to prevent.
+    // Every refusal happens before migrate touches the file: another
+    // installation's data, or a shape a newer build wrote, must not have this
+    // build's columns added to it.
     assertIdentityIfRecorded(database, stateNamespaceId, securityDomain);
+    assertSchemaNotNewer(database);
+    if (location !== ":memory:") {
+      configureDurability(database);
+    }
     migrate(database);
     recordIdentity(database, stateNamespaceId, securityDomain);
+    claimSchemaVersion(database);
     claimDatabaseApplicationId(database);
+    assertExpectedSchema(database);
+    assertHealthy(database);
     return database;
   } catch (error) {
     database.close();
     throw error;
+  }
+}
+
+/**
+ * Refuses a file a newer build wrote.
+ *
+ * `0` means the version was never stamped — every registry.db from before this
+ * check — and is claimed rather than refused. Anything above what this build
+ * knows is data whose meaning may have moved, and reading it would be the
+ * quiet corruption the check exists to prevent.
+ */
+function assertSchemaNotNewer(database: DatabaseSync): void {
+  if (readSchemaVersion(database) > REGISTRY_DATABASE_SCHEMA_VERSION) {
+    throw new RegistryDatabaseIdentityError("schema_newer");
+  }
+}
+
+function claimSchemaVersion(database: DatabaseSync): void {
+  if (readSchemaVersion(database) !== REGISTRY_DATABASE_SCHEMA_VERSION) {
+    database.exec(
+      `PRAGMA user_version = ${String(REGISTRY_DATABASE_SCHEMA_VERSION)}`,
+    );
+  }
+}
+
+function readSchemaVersion(database: DatabaseSync): number {
+  const row = database.prepare("PRAGMA user_version").get() as
+    | { readonly user_version?: unknown }
+    | undefined;
+  if (
+    !Number.isSafeInteger(row?.user_version) ||
+    (row!.user_version as number) < 0
+  ) {
+    throw new RegistryDatabaseIdentityError("schema_invalid");
+  }
+  return row!.user_version as number;
+}
+
+/**
+ * Makes the file durable, and refuses it if the settings did not take.
+ *
+ * This database holds the approval trail — the record of what a person decided
+ * may be served. Losing the last decisions to a power cut is not a delay that
+ * resolves itself: nothing re-derives an approval, and the Cards would come
+ * back serving what they served before someone withdrew them. Verified rather
+ * than assumed, because a `PRAGMA` on a read-only or locked file silently does
+ * nothing.
+ */
+function configureDurability(database: DatabaseSync): void {
+  database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA synchronous = FULL");
+  const journal = database.prepare("PRAGMA journal_mode").get() as
+    | { readonly journal_mode?: unknown }
+    | undefined;
+  const synchronous = database.prepare("PRAGMA synchronous").get() as
+    | { readonly synchronous?: unknown }
+    | undefined;
+  if (
+    typeof journal?.journal_mode !== "string" ||
+    journal.journal_mode.toLowerCase() !== "wal" ||
+    synchronous?.synchronous !== 2
+  ) {
+    throw new RegistryDatabaseIdentityError("schema_invalid");
+  }
+}
+
+/**
+ * The exact column shape this build expects, checked after migration.
+ *
+ * The pair to `user_version`: the version says which shape a file claims, this
+ * says whether it actually has it. A file that claims the right version with
+ * the wrong columns was edited by hand or left half-migrated, and either way
+ * the stores above it would read columns that are not there.
+ *
+ * Columns are `[name, type, notnull, pk]`, in declaration order — the same
+ * tuple `PRAGMA table_info` returns.
+ */
+const EXPECTED_SCHEMA: Readonly<
+  Record<string, readonly (readonly unknown[])[]>
+> = {
+  registry_metadata: [
+    ["singleton", "INTEGER", 0, 1],
+    ["state_namespace_id", "TEXT", 1, 0],
+    ["security_domain", "TEXT", 1, 0],
+  ],
+  cards: [
+    ["card_id", "TEXT", 0, 1],
+    ["description", "TEXT", 1, 0],
+    ["representative_questions", "TEXT", 1, 0],
+    ["aliases", "TEXT", 1, 0],
+    ["keywords", "TEXT", 1, 0],
+    ["sensitive", "INTEGER", 1, 0],
+    ["allowed_usage", "TEXT", 1, 0],
+    ["current_version_id", "TEXT", 0, 0],
+  ],
+  card_versions: [
+    ["version_id", "TEXT", 0, 1],
+    ["card_id", "TEXT", 1, 0],
+    ["publication_id", "TEXT", 1, 0],
+    ["observation_id", "TEXT", 1, 0],
+    ["knowledge_unit_id", "TEXT", 1, 0],
+    ["scopes", "TEXT", 1, 0],
+    ["validation_state", "TEXT", 1, 0],
+    ["created_at", "TEXT", 1, 0],
+    ["append_order", "INTEGER", 1, 0],
+    ["meaning", "TEXT", 0, 0],
+    ["grounding", "TEXT", 0, 0],
+    ["change_from_previous", "TEXT", 0, 0],
+  ],
+  lifecycle_events: [
+    ["event_id", "TEXT", 0, 1],
+    ["card_id", "TEXT", 1, 0],
+    ["kind", "TEXT", 1, 0],
+    ["occurred_at", "TEXT", 1, 0],
+    ["payload", "TEXT", 1, 0],
+    ["append_order", "INTEGER", 1, 0],
+  ],
+  consumer_checkpoints: [
+    ["publication_id", "TEXT", 0, 1],
+    ["source_id", "TEXT", 1, 0],
+    ["processed_at", "TEXT", 1, 0],
+  ],
+  consumer_source_cursors: [
+    ["source_id", "TEXT", 0, 1],
+    ["publication_id", "TEXT", 1, 0],
+    ["processed_at", "TEXT", 1, 0],
+  ],
+};
+
+function assertExpectedSchema(database: DatabaseSync): void {
+  for (const [table, expected] of Object.entries(EXPECTED_SCHEMA)) {
+    const rows = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      readonly name?: unknown;
+      readonly type?: unknown;
+      readonly notnull?: unknown;
+      readonly pk?: unknown;
+    }>;
+    const actual = rows.map((row) => [
+      row.name,
+      typeof row.type === "string" ? row.type.toUpperCase() : row.type,
+      row.notnull,
+      row.pk,
+    ]);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new RegistryDatabaseIdentityError("schema_invalid");
+    }
+  }
+}
+
+/** Refuses a corrupt file at open rather than at the first read that trips. */
+function assertHealthy(database: DatabaseSync): void {
+  const quickCheck = database.prepare("PRAGMA quick_check").all() as Array<
+    Readonly<Record<string, unknown>>
+  >;
+  if (
+    quickCheck.length !== 1 ||
+    Object.values(quickCheck[0] ?? {})[0] !== "ok" ||
+    database.prepare("PRAGMA foreign_key_check").all().length !== 0
+  ) {
+    throw new RegistryDatabaseIdentityError("schema_invalid");
   }
 }
 
@@ -185,7 +372,9 @@ function readApplicationId(database: DatabaseSync): number {
     | { readonly application_id?: unknown }
     | undefined;
   if (!Number.isSafeInteger(row?.application_id)) {
-    throw new RegistryDatabaseIdentityError("identity_mismatch");
+    // Not a mismatch — the header itself did not read back as a number, which
+    // says the file is not a usable SQLite database at all.
+    throw new RegistryDatabaseIdentityError("schema_invalid");
   }
   return row!.application_id as number;
 }
