@@ -855,6 +855,10 @@ export async function runQuery(
   command: Extract<CliCommand, { kind: "query" }>,
 ): Promise<CommandOutcome> {
   try {
+    // The query command is a fresh process with an in-memory derived index.
+    // Build that index before starting the user's 3-second request budget;
+    // otherwise a cold local model makes a correct first query time out.
+    await cli.runtime.prepareCardCandidates();
     const arrivedAt = cli.runtime.control.clock.now();
     return await cli.runtime.control.runTransportRequest(async () => {
       const resolution = await cli.runtime.contextApplication.resolveContext({

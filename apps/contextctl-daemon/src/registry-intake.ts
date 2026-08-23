@@ -111,15 +111,19 @@ export type RegistryIntakeResult =
 
 export interface RegistryIntakeOptions {
   readonly policy?: CardPolicy;
+  /** Daemon-owned derived-asset refresh after Registry changes serving state. */
+  readonly afterCatalogChange?: () => Promise<void>;
 }
 
 export class RegistryIntake {
   readonly #ports: RegistryIntakePorts;
   readonly #policy: CardPolicy;
+  readonly #afterCatalogChange: (() => Promise<void>) | undefined;
 
   constructor(ports: RegistryIntakePorts, options: RegistryIntakeOptions = {}) {
     this.#ports = ports;
     this.#policy = options.policy ?? DEFAULT_CARD_POLICY;
+    this.#afterCatalogChange = options.afterCatalogChange;
   }
 
   /**
@@ -142,6 +146,10 @@ export class RegistryIntake {
 
     switch (claimed.status) {
       case "already_claimed":
+        // A previous attempt may have committed Registry and then failed to
+        // rebuild the daemon-owned derived asset. Redelivery is the recovery
+        // path, so even the idempotent domain result refreshes the projection.
+        await this.#afterCatalogChange?.();
         return { status: "already_claimed", publicationId, cardVersions: [] };
       case "deferred":
         return {
@@ -161,6 +169,10 @@ export class RegistryIntake {
           diagnostic: claimed.diagnostic,
         };
       case "claimed":
+        // Claims can withdraw a deleted unit without an operator decision.
+        // The prepared catalog must move before the caller is told consumption
+        // finished, or stale source text can remain answerable after deletion.
+        await this.#afterCatalogChange?.();
         return {
           status: "claimed",
           publicationId,
@@ -190,6 +202,13 @@ export class RegistryIntake {
     versionId: string,
     decision: OperatorDecision,
   ): Promise<ContextCard> {
-    return approveCardVersion(this.#ports, cardId, versionId, decision);
+    const approved = await approveCardVersion(
+      this.#ports,
+      cardId,
+      versionId,
+      decision,
+    );
+    await this.#afterCatalogChange?.();
+    return approved;
   }
 }

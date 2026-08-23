@@ -2,6 +2,7 @@ import type {
   CardCandidateIndex,
   CardCandidateIndexRequest,
   CardCandidateIndexStore,
+  CardEmbeddingPort,
 } from "@contextctl/selection-delivery";
 
 import type { AdmissionLane } from "./admission.js";
@@ -26,11 +27,17 @@ export class LaneBoundCardCandidateIndexStore
 {
   readonly #inner: CardCandidateIndexStore;
   readonly #lane: AdmissionLane;
+  readonly #backgroundEmbedding: CardEmbeddingPort | undefined;
   readonly #inFlight = new Map<string, Promise<CardCandidateIndex>>();
 
-  constructor(inner: CardCandidateIndexStore, lane: AdmissionLane) {
+  constructor(
+    inner: CardCandidateIndexStore,
+    lane: AdmissionLane,
+    backgroundEmbedding?: CardEmbeddingPort,
+  ) {
     this.#inner = inner;
     this.#lane = lane;
+    this.#backgroundEmbedding = backgroundEmbedding;
   }
 
   async acquire(
@@ -48,7 +55,12 @@ export class LaneBoundCardCandidateIndexStore
 
     const build = this.#lane
       .run(
-        async () => await this.#inner.acquire(request),
+        async () =>
+          await this.#inner.acquire(
+            this.#backgroundEmbedding === undefined
+              ? request
+              : { ...request, embedding: this.#backgroundEmbedding },
+          ),
         // The caller's cancellation is deliberately not forwarded. One
         // abandoning caller must not cancel a build the others are still
         // waiting on, and the build is bounded by the lane rather than by any

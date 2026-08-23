@@ -170,6 +170,15 @@ describe("LocalCardEmbeddingAdapter", () => {
     expect(adapter.profile).toBe(CARD_PROFILE);
   });
 
+  it("proves physical sharing only for the exact delegated provider", () => {
+    const session = new RecordingEmbeddingPort();
+    const anotherSession = new RecordingEmbeddingPort();
+    const adapter = adapterFor(session);
+
+    expect(adapter.usesProvider(session)).toBe(true);
+    expect(adapter.usesProvider(anotherSession)).toBe(false);
+  });
+
   it("reports an arbitrary exception as a retriable provider failure", async () => {
     const adapter = adapterFor(new ThrowingEmbeddingPort(new Error("boom")));
 

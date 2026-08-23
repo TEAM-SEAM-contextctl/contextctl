@@ -89,8 +89,18 @@ import {
 } from "./runtime/runtime-control.js";
 import { LaneBoundCardCandidateIndexStore } from "./runtime/lane-bound-card-candidate-index.js";
 import { LaneBoundIngestionEmbedding } from "./runtime/lane-bound-ingestion-embedding.js";
+import {
+  PreparedApprovedCardCatalog,
+  RetainingCardCandidateIndexStore,
+} from "./runtime/prepared-card-catalog.js";
 import type { RuntimeClock } from "./runtime/clock.js";
 import type { DaemonRuntimeProfile } from "./runtime/profile.js";
+import {
+  ScheduledCardEmbedding,
+  ScheduledDocumentEmbedding,
+  type EmbeddingRuntimeScheduler,
+  type EmbeddingRuntimeSchedulerProfile,
+} from "./runtime/embedding-runtime-scheduler.js";
 import { IngestionPublicationRepository } from "./adapters/ingestion-publication-repository.js";
 import { LocalCardEmbeddingAdapter } from "./adapters/local-card-embedding-adapter.js";
 import { RegistryApprovedCardCatalog } from "./adapters/registry-approved-card-catalog.js";
@@ -312,6 +322,13 @@ export interface DaemonRuntimeOptions {
    */
   readonly runtimeProfile?: DaemonRuntimeProfile;
   /**
+   * Limits for one physically shared local inference session.
+   *
+   * Supplied whole and versioned. Loose queue or RSS variables would make a
+   * benchmark unable to identify which policy produced it.
+   */
+  readonly embeddingSchedulerProfile?: EmbeddingRuntimeSchedulerProfile;
+  /**
    * The clock admission and deadlines are measured against.
    *
    * Separate from `clock` above, which stamps Registry's audit trail with wall
@@ -383,6 +400,18 @@ export interface DaemonRuntime {
   readonly cardSelectionProfile: CardSelectionProfile;
   readonly cardEmbeddingProvider: CardEmbeddingPort;
   readonly cardCandidateIndex: CardCandidateIndexStore;
+  /**
+   * Prepares the latest approved-Card snapshot outside a user request budget.
+   *
+   * `runDaemon` calls this before opening ingress and the one-shot query CLI
+   * calls it before starting its 3-second request clock. Repeated calls are
+   * cheap because the candidate store is keyed by the snapshot digest.
+   */
+  prepareCardCandidates(): Promise<void>;
+  /** The daemon-owned arbiter for a physically shared local model session. */
+  readonly embeddingScheduler: EmbeddingRuntimeScheduler;
+  /** Whether the two domain ports in this graph actually use that one session. */
+  readonly sharesLocalEmbeddingSession: boolean;
   readonly securityDomain: string;
   readonly connectorId: string;
   readonly embeddingProfile: EmbeddingProfile;
@@ -497,7 +526,52 @@ export function createDaemonRuntime(
     providerOverride: cardProviderOverride(options, cardSelectionProfile),
   });
   const embeddingProvider = documentEmbedding.provider;
-  const cardEmbeddingProvider = cardEmbedding.provider;
+  const rawCardEmbeddingProvider = cardEmbedding.provider;
+
+  const control = new DaemonRuntimeControl({
+    ...(options.runtimeProfile === undefined
+      ? {}
+      : { profile: options.runtimeProfile }),
+    ...(options.runtimeClock === undefined
+      ? {}
+      : { clock: options.runtimeClock }),
+    ...(options.embeddingSchedulerProfile === undefined
+      ? {}
+      : { embeddingSchedulerProfile: options.embeddingSchedulerProfile }),
+  });
+  const sharesLocalEmbeddingSession =
+    embeddingConfiguration.document.mode === "local" &&
+    embeddingConfiguration.card.mode === "local" &&
+    rawCardEmbeddingProvider instanceof LocalCardEmbeddingAdapter &&
+    rawCardEmbeddingProvider.usesProvider(embeddingProvider);
+  const queryDocumentEmbeddingProvider = sharesLocalEmbeddingSession
+    ? new ScheduledDocumentEmbedding(
+        embeddingProvider,
+        control.embeddingScheduler,
+        "resolve",
+      )
+    : embeddingProvider;
+  const ingestionEmbeddingProvider = sharesLocalEmbeddingSession
+    ? new ScheduledDocumentEmbedding(
+        embeddingProvider,
+        control.embeddingScheduler,
+        "background",
+      )
+    : embeddingProvider;
+  const cardEmbeddingProvider = sharesLocalEmbeddingSession
+    ? new ScheduledCardEmbedding(
+        rawCardEmbeddingProvider,
+        control.embeddingScheduler,
+        "resolve",
+      )
+    : rawCardEmbeddingProvider;
+  const backgroundCardEmbeddingProvider = sharesLocalEmbeddingSession
+    ? new ScheduledCardEmbedding(
+        rawCardEmbeddingProvider,
+        control.embeddingScheduler,
+        "background",
+      )
+    : undefined;
 
   const search = new ManagedDocumentSearch({
     // Every required profile, not just the current one. A query against an index
@@ -505,7 +579,11 @@ export function createDaemonRuntime(
     // profile is registered, and an approved Card can still name a Scope inside
     // such an index.
     embeddingProviders: new StaticQueryEmbeddingProviderRegistry(
-      documentEmbedding.registrations,
+      documentEmbedding.registrations.map((registration) =>
+        registration.provider === embeddingProvider
+          ? { ...registration, provider: queryDocumentEmbeddingProvider }
+          : registration,
+      ),
     ),
     vectorIndexes,
     publications,
@@ -515,32 +593,43 @@ export function createDaemonRuntime(
   // per request would re-embed the whole catalog on every query.
   const cardCandidateIndex = new InMemoryCardCandidateIndexStore();
 
-  const catalog = new RegistryApprovedCardCatalog(cards);
-  const control = new DaemonRuntimeControl({
-    ...(options.runtimeProfile === undefined
-      ? {}
-      : { profile: options.runtimeProfile }),
-    ...(options.runtimeClock === undefined
-      ? {}
-      : { clock: options.runtimeClock }),
+  const registryCatalog = new RegistryApprovedCardCatalog(cards);
+  const laneBoundCardCandidateIndex = new LaneBoundCardCandidateIndexStore(
+    cardCandidateIndex,
+    control.selectionAssets,
+    backgroundCardEmbeddingProvider,
+  );
+  // Retention wraps the build boundary, not the other way around. A cache hit
+  // for the active generation must not queue behind a newer generation that is
+  // occupying the single build lane; only actual builds need that admission.
+  const preparedCardCandidateIndex = new RetainingCardCandidateIndexStore(
+    laneBoundCardCandidateIndex,
+  );
+  const catalog = new PreparedApprovedCardCatalog({
+    upstream: registryCatalog,
+    index: preparedCardCandidateIndex,
+    profile: cardSelectionProfile,
+    embedding: cardEmbeddingProvider,
   });
-
-  const registryIntake = new RegistryIntake({
-    publications: new IngestionPublicationRepository(ingestionPublications),
-    checkpoints: new SqliteConsumerCheckpointStore(database, now),
-    // The Cards, their events and the consumer cursor land in one transaction,
-    // so the store that does it is one port rather than two calls in sequence.
-    intake: new SqliteIntakeStore(database, now),
-    meanings: options.meanings ?? new DeterministicCardMeaningGenerator(),
-    cards,
-    clock,
-    ids,
-  });
+  const prepareCardCandidates = async (): Promise<void> => await catalog.refresh();
+  const registryIntake = new RegistryIntake(
+    {
+      publications: new IngestionPublicationRepository(ingestionPublications),
+      checkpoints: new SqliteConsumerCheckpointStore(database, now),
+      // The Cards, their events and the consumer cursor land in one transaction,
+      // so the store that does it is one port rather than two calls in sequence.
+      intake: new SqliteIntakeStore(database, now),
+      meanings: options.meanings ?? new DeterministicCardMeaningGenerator(),
+      cards,
+      clock,
+      ids,
+    },
+    { afterCatalogChange: prepareCardCandidates },
+  );
   const readyNotifier = new RegistryPublicationReadyNotifier({
     intake: registryIntake,
     lane: control.registryConsume,
   });
-
   const pipeline = new DaemonContextApplication({
     catalog,
     search,
@@ -557,10 +646,7 @@ export function createDaemonRuntime(
       // Wrapped rather than passed through: the rebuild inside is background
       // work with its own lane, and a Resolve that triggers it must not be the
       // thing that decides how many run at once.
-      index: new LaneBoundCardCandidateIndexStore(
-        cardCandidateIndex,
-        control.selectionAssets,
-      ),
+      index: preparedCardCandidateIndex,
       profile: cardSelectionProfile,
     },
   });
@@ -588,11 +674,11 @@ export function createDaemonRuntime(
     connectorId,
     stateNamespaceId,
     securityDomain,
-    // Publication batches have their own capacity. Managed-search query
-    // embeddings keep the unwrapped provider reference above, so background
-    // work cannot turn its batch ceiling into Resolve's ceiling.
+    // Publication batches have their own capacity. When one local session is
+    // shared, this reference also carries the scheduler's background priority;
+    // managed-search queries use the separate Resolve-priority view above.
     embeddingProvider: new LaneBoundIngestionEmbedding(
-      embeddingProvider,
+      ingestionEmbeddingProvider,
       control.ingestionEmbedding,
     ),
     vectorIndex,
@@ -636,6 +722,9 @@ export function createDaemonRuntime(
     cardSelectionProfile,
     cardEmbeddingProvider,
     cardCandidateIndex,
+    prepareCardCandidates,
+    embeddingScheduler: control.embeddingScheduler,
+    sharesLocalEmbeddingSession,
     securityDomain,
     connectorId,
     embeddingProfile,
@@ -919,6 +1008,18 @@ export async function runDaemon(
     throw error;
   }
   const { lifecycle } = runtime.control;
+  runtime.embeddingScheduler.startMonitoring();
+  try {
+    // A Card index build is background work, but making the first caller pay
+    // for a cold Granite build spends that caller's whole 3-second budget.
+    // Prepare the current immutable snapshot before either ingress opens. A
+    // later catalog change is still rebuilt through the same coalescing store.
+    await runtime.prepareCardCandidates();
+  } catch (error) {
+    runtime.embeddingScheduler.stopAccepting();
+    runtime.database.close();
+    throw error;
+  }
   const deliveryExecution = createDeliveryRequestExecution(runtime.control);
   // Registered from the inside out because shutdown releases in reverse: the
   // HTTP listener stops before the database it would otherwise still be

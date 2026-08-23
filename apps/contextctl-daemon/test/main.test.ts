@@ -24,9 +24,9 @@ import {
   type ApprovedDocumentIndexRef,
 } from "@contextctl/selection-delivery";
 
-import { LocalCardEmbeddingAdapter } from "../src/adapters/local-card-embedding-adapter.js";
+import { ScheduledCardEmbedding } from "../src/runtime/embedding-runtime-scheduler.js";
+import { PreparedApprovedCardCatalog } from "../src/runtime/prepared-card-catalog.js";
 import { AdmissionControlledResolve } from "../src/runtime/runtime-control.js";
-import { RegistryApprovedCardCatalog } from "../src/adapters/registry-approved-card-catalog.js";
 import {
   createDaemonRuntime,
   DEFAULT_CONNECTOR_ID,
@@ -251,6 +251,10 @@ async function approveSingleScopeCard(
     ),
     [],
   );
+  // This helper intentionally writes behind RegistryIntake. Product paths
+  // refresh after Registry mutations; a direct fixture must make the same
+  // daemon-owned derived-asset boundary explicit.
+  await runtime.prepareCardCandidates();
 }
 
 /** A Scope the daemon never reads itself, so its item is delegated. */
@@ -391,7 +395,7 @@ describe("createDaemonRuntime", () => {
     it("binds the catalog and the coordinator this app owns", () => {
       const runtime = buildRuntime();
 
-      expect(runtime.catalog).toBeInstanceOf(RegistryApprovedCardCatalog);
+      expect(runtime.catalog).toBeInstanceOf(PreparedApprovedCardCatalog);
       // The controlled surface, not the pipeline. Every transport is handed
       // this one, which is what makes admission unavoidable rather than a thing
       // each transport opts into.
@@ -495,9 +499,13 @@ describe("createDaemonRuntime", () => {
       // A separate port and a separate index, over one loaded model file. A
       // second local adapter would hold a second copy of identical weights.
       expect(runtime.cardEmbeddingProvider).toBeInstanceOf(
-        LocalCardEmbeddingAdapter,
+        ScheduledCardEmbedding,
       );
       expect(runtime.cardEmbeddingProvider).not.toBe(runtime.embeddingProvider);
+      expect(runtime.sharesLocalEmbeddingSession).toBe(true);
+      expect(runtime.embeddingScheduler.snapshot.profileVersion).toBe(
+        "embedding-runtime-scheduler-v1",
+      );
       expect(runtime.cardCandidateIndex).toBeInstanceOf(
         InMemoryCardCandidateIndexStore,
       );
