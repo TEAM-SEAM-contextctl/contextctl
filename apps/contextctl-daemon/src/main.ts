@@ -94,8 +94,13 @@ import type { DaemonRuntimeProfile } from "./runtime/profile.js";
 import { IngestionPublicationRepository } from "./adapters/ingestion-publication-repository.js";
 import { LocalCardEmbeddingAdapter } from "./adapters/local-card-embedding-adapter.js";
 import { RegistryApprovedCardCatalog } from "./adapters/registry-approved-card-catalog.js";
+import { RegistryPublicationReadyNotifier } from "./adapters/registry-publication-ready-notifier.js";
 import { resolveVectorBackend } from "./vector-backend.js";
 import { RegistryIntake } from "./registry-intake.js";
+import {
+  IngestionMaintenanceWorker,
+  type IngestionMaintenanceWorkerPolicy,
+} from "./runtime/ingestion-maintenance-worker.js";
 
 export { VectorBackendConfigurationError } from "./vector-backend.js";
 
@@ -314,6 +319,8 @@ export interface DaemonRuntimeOptions {
    * make queue ordering and stage budgets deterministic.
    */
   readonly runtimeClock?: RuntimeClock;
+  /** Versioned cadence for the daemon-owned background Ingestion worker. */
+  readonly ingestionMaintenanceWorkerPolicy?: IngestionMaintenanceWorkerPolicy;
 }
 
 /** The state namespace a local, single-deployment composition publishes under. */
@@ -389,15 +396,18 @@ export interface DaemonRuntime {
    * would leave those callers to invent their own limits.
    */
   readonly control: DaemonRuntimeControl;
+  /** Background scheduling only; maintenance rules remain in Ingestion. */
+  readonly ingestionMaintenanceWorker: IngestionMaintenanceWorker;
 }
 
 /**
  * Builds the daemon's object graph without starting anything.
  *
- * Everything it assembles runs without external infrastructure: SQLite is
- * in-process, and the vector index, the publication catalog and the embedding
- * provider are the network-free adapters Ingestion ships for exactly this.
- * A durable composition swaps those three and changes nothing else.
+ * This function chooses no infrastructure implicitly. Tests may inject
+ * network-free adapters, while an operating composition binds Qdrant, durable
+ * Ingestion stores and the exact configured embedding providers. In either
+ * case construction opens no listener and starts no background timer; the
+ * process entry point owns those effects after the graph validates.
  */
 export function createDaemonRuntime(
   options: DaemonRuntimeOptions,
@@ -515,6 +525,22 @@ export function createDaemonRuntime(
       : { clock: options.runtimeClock }),
   });
 
+  const registryIntake = new RegistryIntake({
+    publications: new IngestionPublicationRepository(ingestionPublications),
+    checkpoints: new SqliteConsumerCheckpointStore(database, now),
+    // The Cards, their events and the consumer cursor land in one transaction,
+    // so the store that does it is one port rather than two calls in sequence.
+    intake: new SqliteIntakeStore(database, now),
+    meanings: options.meanings ?? new DeterministicCardMeaningGenerator(),
+    cards,
+    clock,
+    ids,
+  });
+  const readyNotifier = new RegistryPublicationReadyNotifier({
+    intake: registryIntake,
+    lane: control.registryConsume,
+  });
+
   const pipeline = new DaemonContextApplication({
     catalog,
     search,
@@ -570,6 +596,7 @@ export function createDaemonRuntime(
       control.ingestionEmbedding,
     ),
     vectorIndex,
+    readyNotifier,
     publications: ingestionPublications,
     indexPublications: publications,
     stagingAttempts,
@@ -581,17 +608,13 @@ export function createDaemonRuntime(
       : { observations: stores.observations, checkpoints: stores.checkpoints }),
     clock: now,
   });
-
-  const registryIntake = new RegistryIntake({
-    publications: new IngestionPublicationRepository(ingestionPublications),
-    checkpoints: new SqliteConsumerCheckpointStore(database, now),
-    // The Cards, their events and the consumer cursor land in one transaction,
-    // so the store that does it is one port rather than two calls in sequence.
-    intake: new SqliteIntakeStore(database, now),
-    meanings: options.meanings ?? new DeterministicCardMeaningGenerator(),
-    cards,
-    clock,
-    ids,
+  const ingestionMaintenanceWorker = new IngestionMaintenanceWorker({
+    maintenance: ingestion.maintenance,
+    lane: control.ingestion,
+    clock: control.clock,
+    ...(options.ingestionMaintenanceWorkerPolicy === undefined
+      ? {}
+      : { policy: options.ingestionMaintenanceWorkerPolicy }),
   });
 
   return {
@@ -618,6 +641,7 @@ export function createDaemonRuntime(
     embeddingProfile,
     stateNamespaceId,
     control,
+    ingestionMaintenanceWorker,
   };
 }
 
@@ -902,6 +926,12 @@ export async function runDaemon(
   lifecycle.registerCloseable("registry_database", () => {
     runtime.database.close();
   });
+  lifecycle.registerDrainHook(() => {
+    runtime.ingestionMaintenanceWorker.beginDraining();
+  });
+  lifecycle.registerCloseable("ingestion_maintenance_worker", async () => {
+    await runtime.ingestionMaintenanceWorker.stop();
+  });
 
   let stopHttpAccepting: (() => Promise<void>) | undefined;
   const httpPort = readHttpPort(environment);
@@ -956,6 +986,7 @@ export async function runDaemon(
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
+  runtime.ingestionMaintenanceWorker.start();
 
   try {
     await runStdioServer(

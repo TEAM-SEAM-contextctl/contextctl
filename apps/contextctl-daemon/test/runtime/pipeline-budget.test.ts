@@ -110,6 +110,26 @@ describe("DaemonLifecycle", () => {
     expect(lifecycle.state).toBe("closed");
   });
 
+  it("stops background producers before it stops and drains lanes", async () => {
+    const lane = new AdmissionLane("ingestion", {
+      concurrency: 1,
+      queueDepth: 0,
+    });
+    const { lifecycle } = lifecycleWith([lane]);
+    const order: string[] = [];
+    lifecycle.registerDrainHook(() => {
+      order.push("producer");
+    });
+
+    lifecycle.beginDraining();
+    await expect(
+      lane.run(async () => {
+        order.push("lane_work");
+      }),
+    ).rejects.toThrow();
+    expect(order).toEqual(["producer"]);
+  });
+
   it("closes each resource exactly once across concurrent shutdowns", async () => {
     const { lifecycle } = lifecycleWith([]);
     let closed = 0;

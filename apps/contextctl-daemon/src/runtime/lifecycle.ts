@@ -55,6 +55,7 @@ export class DaemonLifecycle {
   readonly #lanes: readonly AdmissionLane[];
   readonly #drainTimeoutMs: number;
   readonly #closeables: RegisteredCloseable[] = [];
+  readonly #drainHooks: (() => void)[] = [];
   #state: DaemonLifecycleState = "accepting";
   #shutdown: Promise<readonly CloseFailure[]> | undefined;
 
@@ -85,6 +86,22 @@ export class DaemonLifecycle {
   }
 
   /**
+   * Registers synchronous admission shutdown for a background producer.
+   *
+   * A closeable runs after admitted lanes drain, which is too late for a timer:
+   * it could enqueue new maintenance while shutdown was waiting. A drain hook
+   * only prevents new work and must be idempotent; its asynchronous cleanup is
+   * still registered as a closeable so failures are reported normally.
+   */
+  registerDrainHook(stopAccepting: () => void): void {
+    if (this.#state !== "accepting") {
+      stopAccepting();
+      return;
+    }
+    this.#drainHooks.push(stopAccepting);
+  }
+
+  /**
    * Stops accepting, everywhere, at once.
    *
    * Idempotent because both signal handlers and the stdin end path call it, and
@@ -94,6 +111,14 @@ export class DaemonLifecycle {
   beginDraining(): void {
     if (this.#state !== "accepting") return;
     this.#state = "draining";
+    for (const stopAccepting of this.#drainHooks.splice(0)) {
+      try {
+        stopAccepting();
+      } catch {
+        // Drain hooks only close admission and have an asynchronous closeable
+        // behind them. One faulty producer must not leave every lane accepting.
+      }
+    }
     for (const lane of this.#lanes) {
       lane.stopAccepting();
     }

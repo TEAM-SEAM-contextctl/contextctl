@@ -12,7 +12,9 @@ import {
   createDaemonRuntime,
   DEFAULT_EMBEDDING_PROFILE,
   type DaemonRuntime,
+  type DaemonRuntimeOptions,
 } from "../src/main.js";
+import { ManualRuntimeClock } from "../src/runtime/clock.js";
 
 /**
  * The whole pipeline, in one process, over a real file.
@@ -69,7 +71,11 @@ const directories: string[] = [];
 
 afterEach(async () => {
   while (runtimes.length > 0) {
-    runtimes.pop()?.database.close();
+    const runtime = runtimes.pop();
+    if (runtime !== undefined) {
+      await runtime.ingestionMaintenanceWorker.stop();
+      runtime.database.close();
+    }
   }
   await Promise.all(
     directories
@@ -102,12 +108,15 @@ async function buildRuntime(): Promise<DaemonRuntime> {
   return (await buildRuntimeOverFile()).runtime;
 }
 
-async function buildRuntimeOverFile(): Promise<RuntimeUnderTest> {
+async function buildRuntimeOverFile(
+  options: Partial<DaemonRuntimeOptions> = {},
+): Promise<RuntimeUnderTest> {
   const path = await writeFixture();
   const runtime = createDaemonRuntime({
     embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
     vectorIndex: new InMemoryVectorIndexAdapter(),
     sourceConfigurations: { [SOURCE_REFERENCE]: { path } },
+    ...options,
   });
   runtimes.push(runtime);
   return { runtime, path };
@@ -222,6 +231,29 @@ function retrievedText(payload: Readonly<Record<string, unknown>>): string {
 }
 
 describe("daemon vertical assembly", () => {
+  it("delivers a ready Publication through the daemon maintenance worker", async () => {
+    const clock = new ManualRuntimeClock();
+    const { runtime } = await buildRuntimeOverFile({ runtimeClock: clock });
+    const published = await publish(runtime);
+
+    expect(await runtime.cards.listCurrentVersions()).toEqual([]);
+    runtime.ingestionMaintenanceWorker.start();
+    clock.advance(0);
+    for (let index = 0; index < 20; index += 1) {
+      if (runtime.ingestionMaintenanceWorker.status.cycles > 0) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    await expect(
+      runtime.registryIntake.claim(publicationIdOf(published)),
+    ).resolves.toMatchObject({ status: "already_claimed" });
+    expect(runtime.ingestionMaintenanceWorker.status).toMatchObject({
+      cycles: 1,
+      lastOutcome: "completed",
+      phase: "scheduled",
+    });
+  });
+
   it("keeps Indexing searchable while Registry consumption is delayed", async () => {
     const runtime = await buildRuntime();
     const published = await publish(runtime);
