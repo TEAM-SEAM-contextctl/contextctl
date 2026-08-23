@@ -6,6 +6,7 @@ import {
   resolveContextError,
   toResolveContextErrorCode,
 } from "../../application/errors.js";
+import { serializeContextResolutionPayload } from "../../application/transport-payload.js";
 import {
   formatJsonRpcError,
   formatJsonRpcResult,
@@ -217,7 +218,9 @@ async function runTool(
   try {
     const payload = await execute();
     return formatJsonRpcResult(id, {
-      content: [{ type: "text", text: JSON.stringify(payload) }],
+      content: [
+        { type: "text", text: serializeContextResolutionPayload(payload) },
+      ],
     });
   } catch (cause: unknown) {
     const error = resolveContextError(toResolveContextErrorCode(cause));

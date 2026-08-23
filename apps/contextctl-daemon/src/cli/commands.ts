@@ -10,7 +10,11 @@ import {
   type ContextCard,
   type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
-import { ResolveContextFailure } from "@contextctl/selection-delivery";
+import {
+  assertContextResolutionPayloadWithinLimit,
+  assertResolveRequestPayloadWithinLimit,
+  ResolveContextFailure,
+} from "@contextctl/selection-delivery";
 
 import type { CliCommand } from "./arguments.js";
 import { EXIT_CODES, operatorExitCode, type ExitCode } from "./exit-codes.js";
@@ -855,21 +859,28 @@ export async function runQuery(
   command: Extract<CliCommand, { kind: "query" }>,
 ): Promise<CommandOutcome> {
   try {
+    const request = {
+      query: command.text,
+      ...(command.maxContextCharacters === undefined
+        ? {}
+        : { maxContextCharacters: command.maxContextCharacters }),
+    };
+    // argv is already decoded, but it is still a public request. Check the
+    // exact JSON bytes before model preparation or catalog access so the CLI
+    // cannot bypass the same 64 KiB admission boundary as MCP and HTTP.
+    assertResolveRequestPayloadWithinLimit(JSON.stringify(request));
     // The query command is a fresh process with an in-memory derived index.
     // Build that index before starting the user's 3-second request budget;
     // otherwise a cold local model makes a correct first query time out.
     await cli.runtime.prepareCardCandidates();
     const arrivedAt = cli.runtime.control.clock.now();
     return await cli.runtime.control.runTransportRequest(async () => {
-      const resolution = await cli.runtime.contextApplication.resolveContext({
-        query: command.text,
-        ...(command.maxContextCharacters === undefined
-          ? {}
-          : { maxContextCharacters: command.maxContextCharacters }),
-      });
+      const resolution =
+        await cli.runtime.contextApplication.resolveContext(request);
       const stdout = command.json
         ? JSON.stringify(resolution, undefined, 2)
         : renderResolution(resolution);
+      assertContextResolutionPayloadWithinLimit(stdout);
       cli.runtime.control.assertResponseCanCommit();
       return ok(stdout);
     }, { arrivedAt });

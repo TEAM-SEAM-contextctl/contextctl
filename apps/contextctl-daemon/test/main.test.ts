@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -32,6 +33,8 @@ import {
   DEFAULT_CONNECTOR_ID,
   DEFAULT_EMBEDDING_PROFILE,
   DEFAULT_SECURITY_DOMAIN,
+  listenHttpServer,
+  readHttpBinding,
   readDaemonRuntimeOptions,
   readHttpPort,
   VectorBackendConfigurationError,
@@ -895,5 +898,68 @@ describe("readHttpPort", () => {
   it("inherits Number's tolerance for hex and surrounding whitespace", () => {
     expect(readHttpPort({ CONTEXTCTL_HTTP_PORT: "0x1F" })).toBe(31);
     expect(readHttpPort({ CONTEXTCTL_HTTP_PORT: " 8080 " })).toBe(8080);
+  });
+});
+
+describe("unauthenticated HTTP binding", () => {
+  it("stays disabled without a port and defaults an enabled listener to IPv4 loopback", () => {
+    expect(readHttpBinding({})).toBeUndefined();
+    expect(readHttpBinding({ CONTEXTCTL_HTTP_PORT: "8080" })).toEqual({
+      host: "127.0.0.1",
+      port: 8080,
+    });
+  });
+
+  it.each(["127.0.0.1", "127.12.34.56", "::1"])(
+    "accepts numeric loopback %s",
+    (host) => {
+      expect(
+        readHttpBinding({
+          CONTEXTCTL_HTTP_PORT: "8080",
+          CONTEXTCTL_HTTP_HOST: host,
+        }),
+      ).toEqual({ host, port: 8080 });
+    },
+  );
+
+  it.each(["0.0.0.0", "::", "192.168.1.10", "localhost", "127.0.0.256"])(
+    "rejects unauthenticated non-loopback binding %s",
+    (host) => {
+      expect(() =>
+        readHttpBinding({
+          CONTEXTCTL_HTTP_PORT: "8080",
+          CONTEXTCTL_HTTP_HOST: host,
+        }),
+      ).toThrow(TypeError);
+    },
+  );
+
+  it("rejects a host without the port that enables HTTP", () => {
+    expect(() =>
+      readHttpBinding({ CONTEXTCTL_HTTP_HOST: "127.0.0.1" }),
+    ).toThrow(/requires CONTEXTCTL_HTTP_PORT/u);
+  });
+
+  it("binds the actual server only to the validated address", async () => {
+    const server = createServer((_request, response) => response.end("{}"));
+    try {
+      await listenHttpServer(server, { host: "127.0.0.1", port: 0 });
+      const address = server.address();
+      expect(address).not.toBeNull();
+      expect(typeof address).not.toBe("string");
+      if (address !== null && typeof address !== "string") {
+        expect(address.address).toBe("127.0.0.1");
+      }
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("defends the listener helper against an unvalidated external host", () => {
+    const server = createServer();
+    expect(() =>
+      listenHttpServer(server, { host: "0.0.0.0", port: 0 }),
+    ).toThrow(/loopback/u);
+    expect(server.listening).toBe(false);
   });
 });

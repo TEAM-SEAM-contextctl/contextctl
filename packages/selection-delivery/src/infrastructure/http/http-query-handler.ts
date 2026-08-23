@@ -8,6 +8,7 @@ import {
   toResolveContextErrorCode,
   type ResolveContextErrorCode,
 } from "../../application/errors.js";
+import { serializeContextResolutionPayload } from "../../application/transport-payload.js";
 
 /**
  * The read-only HTTP surface over this domain.
@@ -156,7 +157,7 @@ async function runResolution(
     // omits `rank` and `score` — so re-picking fields here would only create a
     // second place for that decision to drift.
     const resolution = await application.resolveContext(request);
-    return { status: 200, body: JSON.stringify(resolution) };
+    return { status: 200, body: serializeContextResolutionPayload(resolution) };
   } catch (cause: unknown) {
     return errorResponse(toResolveContextErrorCode(cause));
   }

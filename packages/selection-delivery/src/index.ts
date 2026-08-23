@@ -85,6 +85,11 @@ export type {
   SelectionSummary,
 } from "./domain/context-resolution.js";
 export {
+  CONTEXT_RESOLUTION_MAXIMUM_BYTES,
+  RESOLVE_REQUEST_MAXIMUM_BYTES,
+  utf8ByteLength,
+} from "./domain/transport-policy.js";
+export {
   buildRetrievalGuide,
   retrievalGuideKey,
   type HttpRetrievalGuide,
@@ -211,6 +216,13 @@ export {
   type ResolveContextApplication,
   type ResolveContextRequest,
 } from "./application/context-application.js";
+export {
+  assertContextResolutionCanFit,
+  assertContextResolutionPayloadWithinLimit,
+  assertResolveRequestPayloadWithinLimit,
+  maximumContextResolutionBytes,
+  serializeContextResolutionPayload,
+} from "./application/transport-payload.js";
 export type { ApprovedCardCatalog } from "./ports/approved-card-catalog.js";
 export {
   assertCardEmbeddingProviderBinding,

@@ -382,6 +382,20 @@ Claude Code 에 붙이려면 프로젝트 루트 `.mcp.json` 에:
 
 `stdout` 은 JSON-RPC 전용입니다. `serve` 의 진단은 전부 `stderr` 로 나갑니다.
 
+HTTP 질의 표면은 기본으로 꺼져 있습니다. 필요한 경우에만 포트를 지정합니다.
+
+```bash
+CONTEXTCTL_HTTP_PORT=8080 contextctl serve
+```
+
+v1 HTTP에는 인증 계층이 없으므로 기본 주소는 `127.0.0.1`이고, `CONTEXTCTL_HTTP_HOST`도
+`127.0.0.0/8` 또는 `::1`의 숫자 loopback 주소만 허용합니다. `0.0.0.0`, `::`, 외부 주소와
+`localhost` 같은 호스트명으로는 시작하지 않습니다. 인터넷이나 사내망에 공개하려면 인증과
+TLS를 제공하는 별도 프록시 뒤에 두고, daemon 자체는 loopback에 유지하십시오.
+
+MCP·HTTP·`query` 요청은 UTF-8 `64KiB`, 최종 응답은 UTF-8 `2MiB`를 넘을 수 없습니다.
+초과 응답을 맞추기 위해 문서 청크를 임의로 자르거나 부분 성공을 전송하지 않습니다.
+
 ---
 
 ## 제거

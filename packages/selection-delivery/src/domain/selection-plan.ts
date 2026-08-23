@@ -20,6 +20,10 @@ import {
   type SqlRetrievalGuide,
 } from "./retrieval-guide.js";
 import type { SelectionResult } from "./selection-verdict.js";
+import {
+  CONTEXT_RESOLUTION_MAXIMUM_BYTES,
+  utf8ByteLength,
+} from "./transport-policy.js";
 
 /**
  * Identifies the rules that turn admitted Cards into items and reads.
@@ -40,15 +44,19 @@ export const SELECTION_PLANNING_POLICY_VERSION = "selection-planning-v1" as cons
  * single query may cause: how many Cards may answer it, how many items the
  * answer may carry, how many managed reads it may issue, how many chunks each
  * read may return, how many Card–item associations travel in `selectedBy`, and
- * how many bytes of public guide the answer may serialize. They are stated as
- * one record so that raising any of them is a change to the policy version
- * rather than to a number somebody found in a function.
+ * how many bytes of public guide the answer may serialize, and how many bytes
+ * the complete public response may occupy. They are stated as one record so
+ * that raising any of them is a change to the policy version rather than to a
+ * number somebody found in a function.
  *
  * `guideBytes` is measured over RFC 8785 canonical JSON in UTF-8, summed across
  * every item's public guide — the bytes the guides actually occupy on the wire,
  * not a character count that would undercount anything outside ASCII.
  *
- * The values are the SOT's (L1470): 32 / 128 / 64 / 8 / 256 / 64 KiB.
+ * The immediate plan limits are the SOT's (L1470):
+ * 32 / 128 / 64 / 8 / 256 / 64 KiB. `responseBytes` is the separate 2 MiB
+ * pre-retrieval response ceiling, evaluated once the plan and context budget
+ * are both available.
  */
 export const SELECTION_PLANNING_LIMITS = {
   admittedCards: 32,
@@ -57,6 +65,7 @@ export const SELECTION_PLANNING_LIMITS = {
   chunksPerTarget: 8,
   selectedByTotal: 256,
   guideBytes: 64 * 1024,
+  responseBytes: CONTEXT_RESOLUTION_MAXIMUM_BYTES,
 } as const;
 
 export type SelectionPlanningLimit = keyof typeof SELECTION_PLANNING_LIMITS;
@@ -384,11 +393,6 @@ export function planningLimitViolations(
       allowed: SELECTION_PLANNING_LIMITS[limit],
       actual,
     }));
-}
-
-/** UTF-8 length without `Buffer`, which this package does not otherwise touch. */
-function utf8ByteLength(text: string): number {
-  return new TextEncoder().encode(text).length;
 }
 
 /**

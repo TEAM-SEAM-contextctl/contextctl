@@ -11,6 +11,8 @@ import {
   resolveContextErrorStatus,
   toResolveContextErrorCode,
 } from "../../application/errors.js";
+import { assertContextResolutionPayloadWithinLimit } from "../../application/transport-payload.js";
+import { RESOLVE_REQUEST_MAXIMUM_BYTES } from "../../domain/transport-policy.js";
 import type { DeliveryRequestExecution } from "../transport/request-execution.js";
 import type { DeliveryHttpHandler } from "./http-query-handler.js";
 
@@ -33,8 +35,6 @@ import type { DeliveryHttpHandler } from "./http-query-handler.js";
  * `error.code` and `error.retriable` must not meet a second, adapter-shaped
  * error object on the one path where the handler never ran.
  */
-const MAXIMUM_REQUEST_BODY_BYTES = 64 * 1024;
-
 /**
  * Wraps a handler in an HTTP server that is bound to nothing.
  *
@@ -90,6 +90,11 @@ async function answer(
         body,
       });
 
+      // A handler is allowed to be replaced in tests and in a future adapter,
+      // so the socket boundary repeats the final check. Nothing is written
+      // until the whole UTF-8 body is known to fit.
+      assertContextResolutionPayloadWithinLimit(answered.body);
+
       if (answered.status >= 200 && answered.status < 300) {
         execution?.assertResponseCanCommit();
       }
@@ -137,6 +142,22 @@ function readBody(
     const chunks: Buffer[] = [];
     let size = 0;
 
+    const declaredLength = request.headers["content-length"];
+    if (
+      declaredLength !== undefined &&
+      /^\d+$/u.test(declaredLength) &&
+      Number(declaredLength) > RESOLVE_REQUEST_MAXIMUM_BYTES
+    ) {
+      reject(
+        new ResolveContextFailure(
+          "invalid_request",
+          "HTTP request body exceeds 64 KiB.",
+        ),
+      );
+      request.resume();
+      return;
+    }
+
     const cleanup = (): void => {
       request.removeListener("data", onData);
       request.removeListener("end", onEnd);
@@ -149,7 +170,7 @@ function readBody(
     };
     const onData = (chunk: Buffer): void => {
       size += chunk.byteLength;
-      if (size > MAXIMUM_REQUEST_BODY_BYTES) {
+      if (size > RESOLVE_REQUEST_MAXIMUM_BYTES) {
         fail(
           new ResolveContextFailure(
             "invalid_request",
