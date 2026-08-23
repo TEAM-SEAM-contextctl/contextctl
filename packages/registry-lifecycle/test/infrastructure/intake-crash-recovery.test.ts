@@ -47,7 +47,7 @@ function childScript(databaseFile: string, distEntry: string): string {
   return `
 import { openRegistryDatabase, SqliteIntakeStore } from ${JSON.stringify(distEntry)};
 
-const database = openRegistryDatabase(${JSON.stringify(databaseFile)});
+const database = openRegistryDatabase({ location: ${JSON.stringify(databaseFile)}, stateNamespaceId: "state_local", securityDomain: "local" });
 const store = new SqliteIntakeStore(database, () => "2026-08-21T00:00:00.000Z");
 
 function versionFor(cardId, versionId) {
@@ -138,7 +138,7 @@ describe("intake after a killed process", () => {
     expect(killed, "the child was expected to die by SIGKILL").toBe(true);
 
     // Reopened from disk: this is the state a restarted daemon would find.
-    const database = openRegistryDatabase(databaseFile);
+    const database = openRegistryDatabase({ location: databaseFile, stateNamespaceId: "state_local", securityDomain: "local" });
     try {
       const cards = new SqliteCardStore(database);
       const checkpoints = new SqliteConsumerCheckpointStore(
@@ -170,7 +170,7 @@ describe("intake after a killed process", () => {
     directories.push(directory);
     const databaseFile = join(directory, "registry.db");
 
-    const database = openRegistryDatabase(databaseFile);
+    const database = openRegistryDatabase({ location: databaseFile, stateNamespaceId: "state_local", securityDomain: "local" });
     try {
       const intake = new SqliteIntakeStore(
         database,

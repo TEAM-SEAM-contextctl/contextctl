@@ -65,7 +65,7 @@ describe("operator card decisions", () => {
   let events: SqliteLifecycleEventStore;
 
   beforeEach(() => {
-    database = openRegistryDatabase(":memory:");
+    database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
     let nextId = 0;
     ports = {
       cards: new SqliteCardStore(database),

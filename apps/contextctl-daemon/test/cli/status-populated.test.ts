@@ -157,7 +157,7 @@ async function seededHome(options: {
     ingestion.close();
   }
 
-  const registry = openRegistryDatabase(join(home, "registry.db"));
+  const registry = openRegistryDatabase({ location: join(home, "registry.db"), stateNamespaceId: "state_local", securityDomain: "local" });
   try {
     // The cursor is what makes the Source nameable at all: it is the only
     // enumeration this process has, so a Source with no cursor is invisible to

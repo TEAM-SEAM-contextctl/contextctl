@@ -13,6 +13,18 @@ export type RegistryDatabaseIdentityErrorCode =
   | "identity_mismatch"
   | "foreign_schema";
 
+export interface OpenRegistryDatabaseOptions {
+  readonly location: string;
+  /**
+   * Which deployment's state this file holds. The same pair
+   * `openIngestionDatabase` requires: `application_id` says which domain a
+   * file belongs to, these say which installation — a registry.db written
+   * under one security domain must not be served under another.
+   */
+  readonly stateNamespaceId: string;
+  readonly securityDomain: string;
+}
+
 /**
  * The file at the configured location belongs to something else.
  *
@@ -40,18 +52,83 @@ export class RegistryDatabaseIdentityError extends Error {
  * Ownership is checked before the first write and claimed after the schema is
  * in place, the same protocol `openIngestionDatabase` uses on its side.
  */
-export function openRegistryDatabase(location: string): DatabaseSync {
+export function openRegistryDatabase(
+  options: OpenRegistryDatabaseOptions,
+): DatabaseSync {
+  const { location, stateNamespaceId, securityDomain } = options;
+  if (stateNamespaceId.trim() === "" || securityDomain.trim() === "") {
+    throw new TypeError("Registry database identity is invalid");
+  }
   const database = new DatabaseSync(location);
   try {
     database.exec("PRAGMA foreign_keys = ON");
     assertDatabaseClaimable(database);
+    // Both refusals happen before migrate touches the file: a mismatched
+    // deployment identity is another installation's data, and adding this
+    // build's columns to it would be the write the check exists to prevent.
+    assertIdentityIfRecorded(database, stateNamespaceId, securityDomain);
     migrate(database);
+    recordIdentity(database, stateNamespaceId, securityDomain);
     claimDatabaseApplicationId(database);
     return database;
   } catch (error) {
     database.close();
     throw error;
   }
+}
+
+/**
+ * Compares the recorded deployment identity against the configured one.
+ *
+ * Nothing recorded — a new file, or one from before identities were stored —
+ * is not a mismatch: `recordIdentity` adopts it after the schema is in place,
+ * the same claim-on-first-open the application id uses. Only a file that says
+ * it belongs to a different namespace or security domain is refused.
+ */
+function assertIdentityIfRecorded(
+  database: DatabaseSync,
+  stateNamespaceId: string,
+  securityDomain: string,
+): void {
+  const table = database
+    .prepare(
+      "SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = 'registry_metadata'",
+    )
+    .get();
+  if (table === undefined) {
+    return;
+  }
+  const row = database
+    .prepare(
+      "SELECT state_namespace_id, security_domain FROM registry_metadata WHERE singleton = 1",
+    )
+    .get() as
+    | {
+        readonly state_namespace_id?: unknown;
+        readonly security_domain?: unknown;
+      }
+    | undefined;
+  if (
+    row !== undefined &&
+    (row.state_namespace_id !== stateNamespaceId ||
+      row.security_domain !== securityDomain)
+  ) {
+    throw new RegistryDatabaseIdentityError("identity_mismatch");
+  }
+}
+
+function recordIdentity(
+  database: DatabaseSync,
+  stateNamespaceId: string,
+  securityDomain: string,
+): void {
+  database
+    .prepare(
+      `INSERT INTO registry_metadata (singleton, state_namespace_id, security_domain)
+       VALUES (1, ?, ?)
+       ON CONFLICT (singleton) DO NOTHING`,
+    )
+    .run(stateNamespaceId, securityDomain);
 }
 
 /**
@@ -116,6 +193,12 @@ function readApplicationId(database: DatabaseSync): number {
 function migrate(database: DatabaseSync): void {
   ensureGroundingColumns(database);
   database.exec(`
+    CREATE TABLE IF NOT EXISTS registry_metadata (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      state_namespace_id TEXT NOT NULL,
+      security_domain TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS cards (
       card_id TEXT PRIMARY KEY,
       description TEXT NOT NULL,

@@ -109,7 +109,7 @@ let cards: SqliteCardStore;
 let cli: RegistryOnlyRuntime;
 
 beforeEach(async () => {
-  database = openRegistryDatabase(":memory:");
+  database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
   cards = new SqliteCardStore(database);
   await cards.saveCard(cardWithTwoVersions("card_payments"), []);
   ingestionDatabase = openIngestionDatabase({

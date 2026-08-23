@@ -276,7 +276,11 @@ async function checkSourcesFile(sourcesFile: string): Promise<DiagnosisStep> {
 function checkRegistryDatabase(location: string): DiagnosisStep {
   let database: { close(): void } | undefined;
   try {
-    database = openRegistryDatabase(location);
+    database = openRegistryDatabase({
+      location,
+      stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+      securityDomain: DEFAULT_SECURITY_DOMAIN,
+    });
     return diagnosis(
       "registry-database",
       "ok",

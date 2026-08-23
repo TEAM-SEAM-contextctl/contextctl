@@ -123,7 +123,7 @@ describe("RegistryApprovedCardCatalog", () => {
   let catalog: RegistryApprovedCardCatalog;
 
   beforeEach(() => {
-    database = openRegistryDatabase(":memory:");
+    database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
     store = new SqliteCardStore(database);
     catalog = new RegistryApprovedCardCatalog(store);
     let nextId = 0;

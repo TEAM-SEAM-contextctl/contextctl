@@ -65,7 +65,7 @@ function groundedVersion(): CardVersion {
 
 describe("grounding persistence", () => {
   it("restores meaning, report and change comparison exactly as written", async () => {
-    const store = new SqliteCardStore(openRegistryDatabase(":memory:"));
+    const store = new SqliteCardStore(openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" }));
     const version = groundedVersion();
     const card = withCardVersions(
       createContextCard(version.cardId, meaning, policy),
@@ -155,7 +155,7 @@ describe("grounding persistence", () => {
     database.close();
 
     // The real opener, against the old file — the migration under test.
-    const store = new SqliteCardStore(openRegistryDatabase(location));
+    const store = new SqliteCardStore(openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" }));
     const card = await store.findCard(legacy.cardId);
     const version = card?.versions.versions[0];
 

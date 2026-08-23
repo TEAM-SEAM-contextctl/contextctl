@@ -176,6 +176,7 @@ export {
   openRegistryDatabase,
   RegistryDatabaseIdentityError,
   REGISTRY_DATABASE_APPLICATION_ID,
+  type OpenRegistryDatabaseOptions,
   type RegistryDatabaseIdentityErrorCode,
 } from "./infrastructure/sqlite/registry-database.js";
 export { SqliteCardStore } from "./infrastructure/sqlite/sqlite-card-store.js";

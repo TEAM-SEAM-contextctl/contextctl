@@ -457,9 +457,11 @@ export function createDaemonRuntime(
   const clock: Clock = { now };
   const ids: IdGenerator = new RandomIdGenerator();
 
-  const database = openRegistryDatabase(
-    options.registryDatabaseLocation ?? ":memory:",
-  );
+  const database = openRegistryDatabase({
+    location: options.registryDatabaseLocation ?? ":memory:",
+    stateNamespaceId,
+    securityDomain,
+  });
   const cards = new SqliteCardStore(database);
 
   const vectorIndex = options.vectorIndex;

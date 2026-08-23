@@ -63,7 +63,7 @@ describe("runOperatorCommand", () => {
   let events: SqliteLifecycleEventStore;
 
   beforeEach(async () => {
-    database = openRegistryDatabase(":memory:");
+    database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
     const store = new SqliteCardStore(database);
     events = new SqliteLifecycleEventStore(database);
     let nextId = 0;
@@ -287,7 +287,7 @@ describe("runOperatorCommand", () => {
     let soloPorts: OperatorCommandPorts;
 
     beforeEach(async () => {
-      const soloDatabase = openRegistryDatabase(":memory:");
+      const soloDatabase = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
       const store = new SqliteCardStore(soloDatabase);
       soloPorts = {
         ...ports,
@@ -531,7 +531,7 @@ describe("runOperatorCommand", () => {
     });
 
     it("reports an empty registry as unprocessed rather than clean", async () => {
-      const emptyDatabase = openRegistryDatabase(":memory:");
+      const emptyDatabase = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
       const result = await runOperatorCommand(
         {
           ...ports,
@@ -557,7 +557,7 @@ describe("runOperatorCommand", () => {
     let twoEvents: SqliteLifecycleEventStore;
 
     beforeEach(async () => {
-      const twoDatabase = openRegistryDatabase(":memory:");
+      const twoDatabase = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
       const store = new SqliteCardStore(twoDatabase);
       twoEvents = new SqliteLifecycleEventStore(twoDatabase);
       twoPorts = {
