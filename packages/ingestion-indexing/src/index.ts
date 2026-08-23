@@ -364,6 +364,12 @@ export {
   QdrantVectorIndexAdapter,
   type QdrantVectorIndexAdapterOptions,
 } from "./infrastructure/qdrant-vector-index-adapter.js";
+export {
+  listPublishedQdrantBackupTargets,
+  PublishedQdrantBackupInventoryError,
+  type PublishedQdrantBackupInventoryErrorCode,
+  type PublishedQdrantBackupTarget,
+} from "./infrastructure/sqlite-published-qdrant-backup-inventory.js";
 export { RemarkMarkdownParser } from "./infrastructure/remark-markdown-parser.js";
 export {
   SourceAdapterRegistry,
