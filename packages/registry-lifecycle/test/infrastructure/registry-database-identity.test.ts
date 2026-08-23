@@ -90,19 +90,31 @@ describe("registry database ownership", () => {
     expect(cards.total).toBe(0);
   });
 
-  it("claims a registry file from before the mark existed", async () => {
-    // A legacy registry.db: Registry tables, application_id 0. `cards` has been
-    // part of every Registry schema, so its presence is the fingerprint.
+  it("refuses an unmarked file that already holds Cards, writing nothing", async () => {
+    // The data looks like ours, and that is exactly why it is refused. Nothing
+    // in an unmarked file says which installation wrote it, so adopting it
+    // would mean absorbing state of unprovable origin — and Cards from another
+    // security domain would then be served under this one.
     const location = await databaseFile("registry.db");
     const legacy = new DatabaseSync(location);
     legacy.exec(
       "CREATE TABLE cards (card_id TEXT PRIMARY KEY, description TEXT NOT NULL, representative_questions TEXT NOT NULL, aliases TEXT NOT NULL, keywords TEXT NOT NULL, sensitive INTEGER NOT NULL, allowed_usage TEXT NOT NULL, current_version_id TEXT)",
     );
     legacy.close();
+    const before = objectNamesOf(location);
 
-    openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" }).close();
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "unidentified_schema" }),
+    );
 
-    expect(applicationIdOf(location)).toBe(REGISTRY_DATABASE_APPLICATION_ID);
+    expect(objectNamesOf(location)).toEqual(before);
+    expect(applicationIdOf(location)).toBe(0);
   });
 
   it("refuses a file marked by another application, writing nothing", async () => {
@@ -138,7 +150,7 @@ describe("registry database ownership", () => {
     expect(() => openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" })).toThrowError(
       expect.objectContaining({
         name: "RegistryDatabaseIdentityError",
-        code: "foreign_schema",
+        code: "unidentified_schema",
       }),
     );
 
@@ -200,22 +212,16 @@ describe("registry database ownership", () => {
     reopened.close();
   });
 
-  it("adopts the configured identity for a file from before identities were recorded", async () => {
-    // A legacy registry.db has no registry_metadata table. Whatever deployment
-    // opens it first is the deployment it belonged to — the same
-    // claim-on-first-open the application id uses.
+  it("refuses a marked file whose identity was never recorded", async () => {
+    // The mark and the identity are written in the same open, so a file with
+    // one and not the other stopped half way — not an older shape to adopt.
     const location = await databaseFile("registry.db");
-    const legacy = new DatabaseSync(location);
-    legacy.exec(
-      "CREATE TABLE cards (card_id TEXT PRIMARY KEY, description TEXT NOT NULL, representative_questions TEXT NOT NULL, aliases TEXT NOT NULL, keywords TEXT NOT NULL, sensitive INTEGER NOT NULL, allowed_usage TEXT NOT NULL, current_version_id TEXT)",
+    const half = new DatabaseSync(location);
+    half.exec("CREATE TABLE cards (card_id TEXT PRIMARY KEY)");
+    half.exec(
+      `PRAGMA application_id = ${String(REGISTRY_DATABASE_APPLICATION_ID)}`,
     );
-    legacy.close();
-
-    openRegistryDatabase({
-      location,
-      stateNamespaceId: "state_prod",
-      securityDomain: "prod",
-    }).close();
+    half.close();
 
     expect(() =>
       openRegistryDatabase({
@@ -224,7 +230,7 @@ describe("registry database ownership", () => {
         securityDomain: "local",
       }),
     ).toThrowError(
-      expect.objectContaining({ code: "identity_mismatch" }),
+      expect.objectContaining({ code: "schema_invalid" }),
     );
   });
 

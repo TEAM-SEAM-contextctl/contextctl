@@ -14,7 +14,11 @@ import {
   withCardVersions,
 } from "../../src/domain/context-card.js";
 import type { GroundingReport } from "../../src/domain/fact-grounding.js";
-import { openRegistryDatabase } from "../../src/infrastructure/sqlite/registry-database.js";
+import {
+  openRegistryDatabase,
+  REGISTRY_DATABASE_APPLICATION_ID,
+  REGISTRY_DATABASE_SCHEMA_VERSION,
+} from "../../src/infrastructure/sqlite/registry-database.js";
 import { SqliteCardStore } from "../../src/infrastructure/sqlite/sqlite-card-store.js";
 import { createDocumentCardVersion } from "../fixtures/card-version.fixture.js";
 
@@ -94,6 +98,10 @@ describe("grounding persistence", () => {
     // columns. `openRegistryDatabase` must add the columns without touching the
     // row, and the row must come back with the optional fields absent — not
     // null, not fabricated.
+    //
+    // Stamped as this deployment's own, because that is the only file the
+    // opener writes to: ownership and the column migration are separate
+    // subjects, and this one is about the columns.
     const directory = await mkdtemp(join(tmpdir(), "contextctl-migration-"));
     directories.push(directory);
     const location = join(directory, "registry.db");
@@ -120,7 +128,21 @@ describe("grounding persistence", () => {
         created_at TEXT NOT NULL,
         append_order INTEGER NOT NULL
       );
+
+      CREATE TABLE registry_metadata (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        state_namespace_id TEXT NOT NULL,
+        security_domain TEXT NOT NULL
+      );
+      INSERT INTO registry_metadata (singleton, state_namespace_id, security_domain)
+        VALUES (1, 'state_local', 'local');
     `);
+    database.exec(
+      `PRAGMA application_id = ${String(REGISTRY_DATABASE_APPLICATION_ID)}`,
+    );
+    database.exec(
+      `PRAGMA user_version = ${String(REGISTRY_DATABASE_SCHEMA_VERSION)}`,
+    );
     const legacy = createDocumentCardVersion();
     database
       .prepare(
