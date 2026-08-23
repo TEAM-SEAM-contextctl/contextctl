@@ -86,10 +86,14 @@ export function openRegistryDatabase(
     // installation's data, data of unprovable origin, or a shape a newer build
     // wrote must not have this build's columns added to it.
     const state = assertDatabaseClaimable(database);
+    // Version first, then identity. A file a newer build wrote may have moved
+    // `registry_metadata` itself, so reading the identity out of it before
+    // knowing the shape is trusted would report a mismatch for a file whose
+    // real problem is that this build cannot read it at all.
+    assertSchemaNotNewer(database);
     if (state === "registry") {
       assertRecordedIdentity(database, stateNamespaceId, securityDomain);
     }
-    assertSchemaNotNewer(database);
     if (location !== ":memory:") {
       configureDurability(database);
     }
@@ -281,12 +285,22 @@ function assertRecordedIdentity(
   stateNamespaceId: string,
   securityDomain: string,
 ): void {
-  const table = database
-    .prepare(
-      "SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = 'registry_metadata'",
-    )
-    .get();
-  if (table === undefined) {
+  // The columns are checked before they are selected. Reading first would let
+  // a table of the right name and the wrong shape surface as a raw SQLite
+  // `no such column`, which no caller can branch on and which says nothing
+  // about the file being unusable.
+  const columns = new Set(
+    (
+      database.prepare("PRAGMA table_info(registry_metadata)").all() as {
+        readonly name?: unknown;
+      }[]
+    ).map((row) => row.name),
+  );
+  if (
+    !columns.has("singleton") ||
+    !columns.has("state_namespace_id") ||
+    !columns.has("security_domain")
+  ) {
     throw new RegistryDatabaseIdentityError("schema_invalid");
   }
   const row = database

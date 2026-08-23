@@ -176,6 +176,7 @@ export {
   openRegistryDatabase,
   RegistryDatabaseIdentityError,
   REGISTRY_DATABASE_APPLICATION_ID,
+  REGISTRY_DATABASE_SCHEMA_VERSION,
   type OpenRegistryDatabaseOptions,
   type RegistryDatabaseIdentityErrorCode,
 } from "./infrastructure/sqlite/registry-database.js";
