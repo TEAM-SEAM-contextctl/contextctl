@@ -22,7 +22,7 @@ export const REGISTRY_DATABASE_SCHEMA_VERSION = 1;
 
 export type RegistryDatabaseIdentityErrorCode =
   | "identity_mismatch"
-  | "foreign_schema"
+  | "unidentified_schema"
   | "schema_invalid"
   | "schema_newer";
 
@@ -82,17 +82,21 @@ export function openRegistryDatabase(
     // second one fails instantly with SQLITE_BUSY on a lock the first holds
     // for milliseconds.
     database.exec("PRAGMA busy_timeout = 5000");
-    assertDatabaseClaimable(database);
     // Every refusal happens before migrate touches the file: another
-    // installation's data, or a shape a newer build wrote, must not have this
-    // build's columns added to it.
-    assertIdentityIfRecorded(database, stateNamespaceId, securityDomain);
+    // installation's data, data of unprovable origin, or a shape a newer build
+    // wrote must not have this build's columns added to it.
+    const state = assertDatabaseClaimable(database);
+    if (state === "registry") {
+      assertRecordedIdentity(database, stateNamespaceId, securityDomain);
+    }
     assertSchemaNotNewer(database);
     if (location !== ":memory:") {
       configureDurability(database);
     }
     migrate(database);
-    recordIdentity(database, stateNamespaceId, securityDomain);
+    if (state === "empty") {
+      recordIdentity(database, stateNamespaceId, securityDomain);
+    }
     claimSchemaVersion(database);
     claimDatabaseApplicationId(database);
     assertExpectedSchema(database);
@@ -267,12 +271,12 @@ function assertHealthy(database: DatabaseSync): void {
 /**
  * Compares the recorded deployment identity against the configured one.
  *
- * Nothing recorded — a new file, or one from before identities were stored —
- * is not a mismatch: `recordIdentity` adopts it after the schema is in place,
- * the same claim-on-first-open the application id uses. Only a file that says
- * it belongs to a different namespace or security domain is refused.
+ * A marked file must be able to say which installation it belongs to. A
+ * missing table or a missing row is a half-initialised file rather than an
+ * older one — the mark and the identity are written in the same open — so it
+ * is refused instead of adopted.
  */
-function assertIdentityIfRecorded(
+function assertRecordedIdentity(
   database: DatabaseSync,
   stateNamespaceId: string,
   securityDomain: string,
@@ -283,7 +287,7 @@ function assertIdentityIfRecorded(
     )
     .get();
   if (table === undefined) {
-    return;
+    throw new RegistryDatabaseIdentityError("schema_invalid");
   }
   const row = database
     .prepare(
@@ -295,10 +299,12 @@ function assertIdentityIfRecorded(
         readonly security_domain?: unknown;
       }
     | undefined;
+  if (row === undefined) {
+    throw new RegistryDatabaseIdentityError("schema_invalid");
+  }
   if (
-    row !== undefined &&
-    (row.state_namespace_id !== stateNamespaceId ||
-      row.security_domain !== securityDomain)
+    row.state_namespace_id !== stateNamespaceId ||
+    row.security_domain !== securityDomain
   ) {
     throw new RegistryDatabaseIdentityError("identity_mismatch");
   }
@@ -318,21 +324,35 @@ function recordIdentity(
     .run(stateNamespaceId, securityDomain);
 }
 
+/** What the file at the location turned out to be. */
+type ClaimableState =
+  /** Nothing in it — this open initialises it and takes ownership. */
+  | "empty"
+  /** Marked as Registry's, so its recorded identity decides the rest. */
+  | "registry";
+
 /**
  * Whether this file is Registry's to write into.
  *
- * Three cases. A file already marked with Registry's id is ours. A file marked
- * with any other id belongs to another application and is refused untouched. A
- * file with no mark (`0`) predates the mark — it is claimable only if it is
- * empty or already shaped like a Registry database (`cards` is the table every
- * Registry schema version has had). An unmarked file holding anything else is
- * some other database from before marks existed — an old ingestion.db, most
- * likely — and gets the same refusal.
+ * Only two files are accepted: one already marked as Registry's, and one that
+ * is completely empty. Everything else is refused, including a file that holds
+ * Cards but carries no mark.
+ *
+ * That last case is the one worth stating plainly, because the data looks like
+ * ours and the temptation is to adopt it. Nothing in an unmarked file says
+ * which installation wrote it, so adopting it means a deployment silently
+ * absorbing state whose origin cannot be shown — and if that state came from
+ * another security domain, its Cards would then be served under this one. A
+ * fingerprint (`cards` exists, so it must be a registry.db) proves the shape
+ * and not the owner, which is the wrong question. `openIngestionDatabase`
+ * draws the same line, and unmarked Registry files exist only from builds
+ * before this check, so the refusal costs a rebuild of local state and buys
+ * an invariant: every file this opener writes to has said whose it is.
  */
-function assertDatabaseClaimable(database: DatabaseSync): void {
+function assertDatabaseClaimable(database: DatabaseSync): ClaimableState {
   const applicationId = readApplicationId(database);
   if (applicationId === REGISTRY_DATABASE_APPLICATION_ID) {
-    return;
+    return "registry";
   }
   if (applicationId !== 0) {
     throw new RegistryDatabaseIdentityError("identity_mismatch");
@@ -343,17 +363,10 @@ function assertDatabaseClaimable(database: DatabaseSync): void {
       "SELECT 1 AS present FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' LIMIT 1",
     )
     .get();
-  if (objects === undefined) {
-    return;
+  if (objects !== undefined) {
+    throw new RegistryDatabaseIdentityError("unidentified_schema");
   }
-  const cards = database
-    .prepare(
-      "SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = 'cards'",
-    )
-    .get();
-  if (cards === undefined) {
-    throw new RegistryDatabaseIdentityError("foreign_schema");
-  }
+  return "empty";
 }
 
 function claimDatabaseApplicationId(database: DatabaseSync): void {
