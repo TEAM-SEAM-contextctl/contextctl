@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   DeterministicEmbeddingAdapter,
+  IngestionMaintenance,
   InMemoryVectorIndexAdapter,
   InMemoryMarkdownPublicationCheckpointStore,
   OpenAiCompatibleEmbeddingAdapter,
@@ -213,6 +214,7 @@ describe("MarkdownPublicationWorkflow", () => {
       clock: () => NOW,
     });
 
+    expect(runtime.maintenance).toBeInstanceOf(IngestionMaintenance);
     const result = await runtime.workflow.publish(command());
 
     expect(result.status).toBe("published");
