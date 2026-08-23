@@ -70,7 +70,7 @@ describe("SqliteScopeReachabilityStore", () => {
   let checkpoints: SqliteConsumerCheckpointStore;
 
   beforeEach(() => {
-    database = openRegistryDatabase(":memory:");
+    database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
     cards = new SqliteCardStore(database);
     scopes = new SqliteScopeReachabilityStore(database);
     checkpoints = new SqliteConsumerCheckpointStore(

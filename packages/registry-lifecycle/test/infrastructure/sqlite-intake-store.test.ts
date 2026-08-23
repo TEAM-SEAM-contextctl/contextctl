@@ -45,7 +45,7 @@ let cards: SqliteCardStore;
 let checkpoints: SqliteConsumerCheckpointStore;
 
 beforeEach(() => {
-  database = openRegistryDatabase(":memory:");
+  database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
   intake = new SqliteIntakeStore(database, () => "2026-08-21T00:00:00.000Z");
   cards = new SqliteCardStore(database);
   checkpoints = new SqliteConsumerCheckpointStore(

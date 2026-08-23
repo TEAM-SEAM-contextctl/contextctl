@@ -27,7 +27,7 @@ afterEach(async () => {
 describe("SqliteConsumerCheckpointStore", () => {
   it("reports a publication as unprocessed until it is marked", async () => {
     const store = new SqliteConsumerCheckpointStore(
-      openRegistryDatabase(":memory:"),
+      openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" }),
       now,
     );
 
@@ -41,7 +41,7 @@ describe("SqliteConsumerCheckpointStore", () => {
 
   it("tolerates marking the same publication twice", async () => {
     const store = new SqliteConsumerCheckpointStore(
-      openRegistryDatabase(":memory:"),
+      openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" }),
       now,
     );
 
@@ -76,7 +76,7 @@ describe("SqliteConsumerCheckpointStore", () => {
       ids: { nextId: () => "cv_1" },
     });
 
-    const first = openRegistryDatabase(location);
+    const first = openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" });
     const firstCheckpoints = new SqliteConsumerCheckpointStore(first, now);
     const claimed = await claimPublication(
       ports(firstCheckpoints),
@@ -90,7 +90,7 @@ describe("SqliteConsumerCheckpointStore", () => {
     first.close();
 
     // A fresh process opens the same file and receives the notification again.
-    const second = openRegistryDatabase(location);
+    const second = openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" });
     const replayed = await claimPublication(
       ports(new SqliteConsumerCheckpointStore(second, now)),
       publication.publicationId,

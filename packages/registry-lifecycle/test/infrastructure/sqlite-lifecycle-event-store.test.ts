@@ -42,7 +42,7 @@ const otherCard: LifecycleEvent = {
 };
 
 function createStore(): SqliteLifecycleEventStore {
-  return new SqliteLifecycleEventStore(openRegistryDatabase(":memory:"));
+  return new SqliteLifecycleEventStore(openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" }));
 }
 
 describe("SqliteLifecycleEventStore", () => {

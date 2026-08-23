@@ -52,7 +52,7 @@ describe("SqliteCardStore", () => {
   let store: SqliteCardStore;
 
   beforeEach(() => {
-    database = openRegistryDatabase(":memory:");
+    database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
     store = new SqliteCardStore(database);
   });
 

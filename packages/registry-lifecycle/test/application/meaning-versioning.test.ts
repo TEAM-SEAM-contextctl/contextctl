@@ -193,7 +193,7 @@ describe("meaning travels with the version", () => {
   });
 
   it("serves the promoted version's words from the approved catalog", async () => {
-    const store = new SqliteCardStore(openRegistryDatabase(":memory:"));
+    const store = new SqliteCardStore(openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" }));
     const versionWith = (id: string, meaning: CardMeaning): CardVersion => ({
       id,
       cardId: UNIT_ID,

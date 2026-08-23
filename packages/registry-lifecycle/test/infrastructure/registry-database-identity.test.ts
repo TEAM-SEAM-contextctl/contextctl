@@ -62,16 +62,16 @@ describe("registry database ownership", () => {
   it("stamps a new file with Registry's application id", async () => {
     const location = await databaseFile("registry.db");
 
-    openRegistryDatabase(location).close();
+    openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" }).close();
 
     expect(applicationIdOf(location)).toBe(REGISTRY_DATABASE_APPLICATION_ID);
   });
 
   it("reopens its own file", async () => {
     const location = await databaseFile("registry.db");
-    openRegistryDatabase(location).close();
+    openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" }).close();
 
-    const reopened = openRegistryDatabase(location);
+    const reopened = openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" });
     const cards = reopened
       .prepare("SELECT COUNT(*) AS total FROM cards")
       .get() as { total: number };
@@ -90,7 +90,7 @@ describe("registry database ownership", () => {
     );
     legacy.close();
 
-    openRegistryDatabase(location).close();
+    openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" }).close();
 
     expect(applicationIdOf(location)).toBe(REGISTRY_DATABASE_APPLICATION_ID);
   });
@@ -105,7 +105,7 @@ describe("registry database ownership", () => {
     foreign.close();
     const before = objectNamesOf(location);
 
-    expect(() => openRegistryDatabase(location)).toThrowError(
+    expect(() => openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" })).toThrowError(
       expect.objectContaining({
         name: "RegistryDatabaseIdentityError",
         code: "identity_mismatch",
@@ -125,7 +125,7 @@ describe("registry database ownership", () => {
     foreign.close();
     const before = objectNamesOf(location);
 
-    expect(() => openRegistryDatabase(location)).toThrowError(
+    expect(() => openRegistryDatabase({ location, stateNamespaceId: "state_local", securityDomain: "local" })).toThrowError(
       expect.objectContaining({
         name: "RegistryDatabaseIdentityError",
         code: "foreign_schema",
@@ -137,12 +137,98 @@ describe("registry database ownership", () => {
   });
 
   it("still opens :memory:", () => {
-    const database = openRegistryDatabase(":memory:");
+    const database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
     const cards = database
       .prepare("SELECT COUNT(*) AS total FROM cards")
       .get() as { total: number };
     database.close();
 
     expect(cards.total).toBe(0);
+  });
+
+  it("records the deployment identity and refuses a different one, writing nothing", async () => {
+    // The second axis, same as openIngestionDatabase: application_id says which
+    // domain a file belongs to, this says which installation. A registry.db
+    // written under one security domain must not serve another.
+    const location = await databaseFile("registry.db");
+    openRegistryDatabase({
+      location,
+      stateNamespaceId: "state_prod",
+      securityDomain: "prod",
+    }).close();
+    const before = objectNamesOf(location);
+
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "RegistryDatabaseIdentityError",
+        code: "identity_mismatch",
+      }),
+    );
+
+    expect(objectNamesOf(location)).toEqual(before);
+  });
+
+  it("reopens under the same deployment identity", async () => {
+    const location = await databaseFile("registry.db");
+    openRegistryDatabase({
+      location,
+      stateNamespaceId: "state_prod",
+      securityDomain: "prod",
+    }).close();
+
+    const reopened = openRegistryDatabase({
+      location,
+      stateNamespaceId: "state_prod",
+      securityDomain: "prod",
+    });
+    reopened.close();
+  });
+
+  it("adopts the configured identity for a file from before identities were recorded", async () => {
+    // A legacy registry.db has no registry_metadata table. Whatever deployment
+    // opens it first is the deployment it belonged to — the same
+    // claim-on-first-open the application id uses.
+    const location = await databaseFile("registry.db");
+    const legacy = new DatabaseSync(location);
+    legacy.exec(
+      "CREATE TABLE cards (card_id TEXT PRIMARY KEY, description TEXT NOT NULL, representative_questions TEXT NOT NULL, aliases TEXT NOT NULL, keywords TEXT NOT NULL, sensitive INTEGER NOT NULL, allowed_usage TEXT NOT NULL, current_version_id TEXT)",
+    );
+    legacy.close();
+
+    openRegistryDatabase({
+      location,
+      stateNamespaceId: "state_prod",
+      securityDomain: "prod",
+    }).close();
+
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "state_local",
+        securityDomain: "local",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "identity_mismatch" }),
+    );
+  });
+
+  it("refuses a blank identity before touching the file", async () => {
+    const location = await databaseFile("registry.db");
+
+    expect(() =>
+      openRegistryDatabase({
+        location,
+        stateNamespaceId: "  ",
+        securityDomain: "local",
+      }),
+    ).toThrowError(TypeError);
+
+    expect(objectNamesOf(location)).toEqual([]);
   });
 });

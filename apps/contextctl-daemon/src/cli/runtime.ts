@@ -125,7 +125,13 @@ export function openRegistryOnlyRuntime(input: {
   // machine is a legitimate first command. `sources-file.ts` does the same on
   // write for the same reason.
   mkdirSync(dirname(paths.registryDatabase), { recursive: true });
-  const database = openRegistryDatabase(paths.registryDatabase);
+  const database = openRegistryDatabase({
+    location: paths.registryDatabase,
+    // The same identity every other open in this file uses for Ingestion: the
+    // CLI pins the defaults, and the two databases of one home must agree.
+    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+    securityDomain: DEFAULT_SECURITY_DOMAIN,
+  });
 
   // Opened on first use, not up front. Only the reachability report reads
   // Ingestion; a Card decision never does, and eagerly opening the second
@@ -394,7 +400,11 @@ export async function resolveCliEmbeddingRuntime(input: {
   );
 
   mkdirSync(dirname(input.paths.registryDatabase), { recursive: true });
-  const registryDatabase = openRegistryDatabase(input.paths.registryDatabase);
+  const registryDatabase = openRegistryDatabase({
+    location: input.paths.registryDatabase,
+    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
+    securityDomain: DEFAULT_SECURITY_DOMAIN,
+  });
   let requiredBindings: RequiredEmbeddingBindings;
   try {
     requiredBindings = await computeRequiredEmbeddingBindings({

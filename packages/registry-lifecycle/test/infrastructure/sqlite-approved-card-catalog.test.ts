@@ -75,7 +75,7 @@ describe("SqliteCardStore approved catalog", () => {
   let ports: CardDecisionPorts;
 
   beforeEach(() => {
-    database = openRegistryDatabase(":memory:");
+    database = openRegistryDatabase({ location: ":memory:", stateNamespaceId: "state_local", securityDomain: "local" });
     store = new SqliteCardStore(database);
     let nextId = 0;
     ports = {
