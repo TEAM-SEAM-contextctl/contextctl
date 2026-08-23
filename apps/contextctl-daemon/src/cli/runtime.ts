@@ -130,10 +130,7 @@ export function openRegistryOnlyRuntime(input: {
   mkdirSync(dirname(paths.registryDatabase), { recursive: true });
   const database = openRegistryDatabase({
     location: paths.registryDatabase,
-    // The same identity every other open in this file uses for Ingestion: the
-    // CLI pins the defaults, and the two databases of one home must agree.
-    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-    securityDomain: DEFAULT_SECURITY_DOMAIN,
+    ...stateIdentity,
   });
 
   // Opened on first use, not up front. Only the reachability report reads
@@ -412,8 +409,7 @@ export async function resolveCliEmbeddingRuntime(input: {
   mkdirSync(dirname(input.paths.registryDatabase), { recursive: true });
   const registryDatabase = openRegistryDatabase({
     location: input.paths.registryDatabase,
-    stateNamespaceId: DEFAULT_STATE_NAMESPACE_ID,
-    securityDomain: DEFAULT_SECURITY_DOMAIN,
+    ...input.stateIdentity,
   });
   let requiredBindings: RequiredEmbeddingBindings;
   try {
