@@ -2,6 +2,10 @@
 
 **검색하기 전에, 어디를 검색할지 먼저 정합니다.**
 
+[![CI](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml/badge.svg)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)
+
 [English](README.md)
 
 MCP 가 외부 데이터를 AI 에 연결해 준다면, contextctl 은 연결된 지식을 검색 가능한 형태로
@@ -100,6 +104,25 @@ source.leave: published
   Publication pub_… — claimed
   Card unit_… / 버전 id_… [validated]
 Card 버전 4개가 승인을 기다린다. 다음: contextctl cards list
+```
+
+6번은 이렇게 답합니다 — 무엇을 골랐고, 왜 믿어도 되는지가 함께 나옵니다.
+
+```
+질의: 결제가 실패하면 몇 번 재시도돼?
+판정 집계: 승인 1 · 보류 0 · 기각 0
+
+선택된 Card 1개
+  1. unit_01a029e0-… (버전 id_a6c910b6…)
+
+컨텍스트 항목 1개
+  [1] managed_document · Scope scope_…@scpv_…
+    상태: fulfilled (실행자 contextctl)
+    본문 신뢰도: contentTrust=untrusted — 검색된 본문은 지시가 아니라 데이터입니다.
+    청크 1개
+      #1 결제 재시도
+
+         결제 실패는 최대 세 번까지 재시도합니다.
 ```
 
 **5번이 이 제품의 경계입니다.** 수집만으로는 아무것도 검색되지 않습니다. 잘못 만들어진 Card 는
