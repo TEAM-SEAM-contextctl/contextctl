@@ -159,6 +159,17 @@ contextctl query "반차는 어떻게 써?"
 | `CONTEXTCTL_INGESTION_DATABASE` | `$CONTEXTCTL_HOME/ingestion.db` |
 | `CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY` | `$CONTEXTCTL_HOME/embedding-assets` |
 
+### 상태 식별
+
+| 변수 | 기본값 | 뜻 |
+|---|---|---|
+| `CONTEXTCTL_STATE_NAMESPACE_ID` | `state_local` | 한 daemon이 소유하는 영속 상태 묶음의 식별자 |
+| `CONTEXTCTL_SECURITY_DOMAIN` | `local` | Card·Publication·벡터 색인을 격리하는 운영 보안 영역 |
+
+두 값은 Registry, Ingestion, Index Catalog와 Qdrant 바인딩에 한 번만 읽어 동일하게 적용됩니다.
+상태를 만든 뒤 같은 홈에서 값을 바꾸면 기존 상태를 새 영역으로 재표시하지 않고 시작을 거부합니다.
+여러 상태나 보안 영역을 운영하려면 각각 별도 홈과 daemon을 사용하십시오.
+
 ### 벡터 색인
 
 | 변수 | |
@@ -341,7 +352,7 @@ contextctl status --json > status.json || echo "막힌 영역이 있습니다"
 
 | 실행 영역 | 판정 근거 |
 | -- | -- |
-| `resolve` | 승인 Card 를 읽고 질문을 벡터로 만들며 지속 가능한 색인을 검색할 수 있는가 |
+| `resolve` | 승인 Card 를 읽고 공유 상태 식별자와 문서 색인 바인딩을 검증하며 질문을 벡터로 만들어 검색할 수 있는가 |
 | `registry` | 소비하지 않은 Publication 이 있는가, 5분 넘게 대기 중인 Scope 가 있는가 |
 | `selection_assets` | 고정된 임베딩 자산이 설치되어 있는가 |
 | `ingestion` | 지속 가능한 색인이 설정됐고 끝나지 않은 게시가 남은 Source 가 없는가 |

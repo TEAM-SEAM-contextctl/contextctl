@@ -191,7 +191,7 @@ function openRuntime(
   };
   const runtime = createDaemonRuntime({
     registryDatabaseLocation: join(home, "registry.db"),
-    ...identity,
+    stateIdentity: identity,
     embeddingProfile: DEFAULT_EMBEDDING_PROFILE,
     vectorIndex: new QdrantVectorIndexAdapter({ url: requiredQdrantUrl() }),
     sourceConfigurations: { [SOURCE_REFERENCE]: { path: markdownPath } },

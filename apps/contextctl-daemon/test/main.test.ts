@@ -396,6 +396,17 @@ describe("createDaemonRuntime", () => {
       ).toThrow("an explicit vector index is required");
     });
 
+    it("refuses legacy split identity fields hidden by object spread", () => {
+      const legacy = {
+        stateNamespaceId: "state_legacy",
+        securityDomain: "legacy",
+      } as unknown as Partial<DaemonRuntimeOptions>;
+
+      expect(() => buildRuntime(legacy)).toThrow(
+        "state identity must be supplied as one stateIdentity object",
+      );
+    });
+
     it("binds the catalog and the coordinator this app owns", () => {
       const runtime = buildRuntime();
 

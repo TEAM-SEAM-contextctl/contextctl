@@ -29,6 +29,29 @@ afterEach(async () => {
 });
 
 describe("state backup CLI command", () => {
+  it("refuses an invalid shared identity before touching backup state", async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), "contextctl-backup-cli-"));
+    directories.push(workingDirectory);
+
+    await expect(
+      runStateBackupCommand({
+        command: { kind: "backup_create", destination: "backup" },
+        environment: {
+          ...environment,
+          CONTEXTCTL_SECURITY_DOMAIN: " ",
+        },
+        workingDirectory,
+        vectors: new EmptyVectorArchive(),
+      }),
+    ).rejects.toMatchObject({
+      code: "state_identity_invalid",
+      field: "securityDomain",
+    });
+    await expect(access(join(workingDirectory, "backup"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("creates and restores state without constructing the model runtime", async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), "contextctl-backup-cli-"));
     directories.push(workingDirectory);

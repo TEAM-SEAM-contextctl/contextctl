@@ -1,12 +1,11 @@
 import { lstat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
-import { DEFAULT_SECURITY_DOMAIN, DEFAULT_STATE_NAMESPACE_ID } from "../main.js";
+import { readDaemonStateIdentity } from "../main.js";
 import { QdrantSnapshotArchive } from "../operations/qdrant-snapshot-archive.js";
 import {
   createStateBackup,
   restoreStateBackup,
-  type StateBackupIdentity,
   type VectorSnapshotArchive,
 } from "../operations/state-backup.js";
 import { readQdrantConnectionOptions } from "../vector-backend.js";
@@ -27,7 +26,7 @@ export async function runStateBackupCommand(input: {
   /** Test seam; production always constructs the configured Qdrant archive. */
   readonly vectors?: VectorSnapshotArchive;
 }): Promise<CommandOutcome> {
-  const identity = readStateBackupIdentity(input.environment);
+  const identity = readDaemonStateIdentity(input.environment);
   const vectors =
     input.vectors ??
     new QdrantSnapshotArchive(
@@ -83,18 +82,6 @@ export async function runStateBackupCommand(input: {
     `검증 후 CONTEXTCTL_HOME=${targetHome} 로 전환하십시오.`,
     "개별 DB 경로 환경 변수를 사용 중이라면 새 홈의 ingestion.db와 registry.db를 가리키도록 함께 바꾸십시오.",
   ].join("\n"));
-}
-
-function readStateBackupIdentity(
-  environment: Readonly<Partial<Record<string, string>>>,
-): StateBackupIdentity {
-  return {
-    stateNamespaceId:
-      environment.CONTEXTCTL_STATE_NAMESPACE_ID ??
-      DEFAULT_STATE_NAMESPACE_ID,
-    securityDomain:
-      environment.CONTEXTCTL_SECURITY_DOMAIN ?? DEFAULT_SECURITY_DOMAIN,
-  };
 }
 
 function absoluteFrom(workingDirectory: string, path: string): string {
