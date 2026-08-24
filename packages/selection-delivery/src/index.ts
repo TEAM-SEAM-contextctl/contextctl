@@ -244,6 +244,11 @@ export {
   OpenAiCompatibleCardEmbeddingAdapter,
   type OpenAiCompatibleCardEmbeddingAdapterOptions,
 } from "./infrastructure/openai-compatible-card-embedding-adapter.js";
+export {
+  TransformersJsLocalCardEmbeddingAdapter,
+  type LocalCardEmbeddingInferenceResource,
+  type TransformersJsLocalCardEmbeddingAdapterOptions,
+} from "./infrastructure/transformers-js-local-card-embedding-adapter.js";
 export { InMemoryCardCandidateIndexStore } from "./infrastructure/in-memory-card-candidate-index-store.js";
 export {
   createHttpQueryHandler,

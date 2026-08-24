@@ -125,7 +125,9 @@ export const DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE: DocumentRetrievalEmbe
  */
 export interface LocalDocumentEmbeddingInferenceResource {
   readonly execution: LocalDocumentEmbeddingExecution;
-  tokenCount(text: string): number;
+  /** The tokenizer limit of the loaded model, independent of product admission. */
+  readonly modelMaxTokens: number;
+  tokenCount(text: string): number | Promise<number>;
   embed(
     texts: readonly string[],
     options: {
@@ -146,6 +148,7 @@ export interface LocalFeatureExtractionRuntimeFactory {
   load(input: {
     readonly artifactDirectory: string;
     readonly execution: LocalDocumentEmbeddingExecution;
+    readonly modelMaxTokens: number;
   }): Promise<LocalFeatureExtractionRuntime>;
 }
 
@@ -227,7 +230,10 @@ export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
     for (const input of request.inputs) {
       let count: number;
       try {
-        count = runtime.tokenCount(input.text);
+        count = await withAbort(
+          Promise.resolve(runtime.tokenCount(input.text)),
+          request.signal,
+        );
       } catch {
         throw new EmbeddingProviderFault("invalid_request", false);
       }
@@ -310,6 +316,7 @@ export async function loadLocalDocumentEmbeddingInferenceResource(options: {
     ).load({
       artifactDirectory,
       execution: profile.execution,
+      modelMaxTokens: profile.modelMaxTokens,
     });
     assertMatchingInferenceResource(resource, profile.execution);
     return resource;
@@ -377,6 +384,7 @@ class TransformersJsRuntimeFactory
   async load(input: {
     readonly artifactDirectory: string;
     readonly execution: LocalDocumentEmbeddingExecution;
+    readonly modelMaxTokens: number;
   }): Promise<LocalFeatureExtractionRuntime> {
     const { env, mean_pooling, pipeline } = await import(
       "@huggingface/transformers"
@@ -397,6 +405,7 @@ class TransformersJsRuntimeFactory
     );
     return {
       execution: Object.freeze({ ...input.execution }),
+      modelMaxTokens: input.modelMaxTokens,
       tokenCount: (text) => extractor.tokenizer.encode(text).length,
       embed: async (texts, options) => {
         const modelInputs = extractor.tokenizer([...texts], {
@@ -432,6 +441,8 @@ function assertMatchingInferenceResource(
   if (
     typeof resource.tokenCount !== "function" ||
     typeof resource.embed !== "function" ||
+    !Number.isSafeInteger(resource.modelMaxTokens) ||
+    resource.modelMaxTokens <= 0 ||
     canonicalJson(resource.execution) !== canonicalJson(execution)
   ) {
     throw new TypeError(
