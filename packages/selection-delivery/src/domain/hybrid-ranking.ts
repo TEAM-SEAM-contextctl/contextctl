@@ -159,17 +159,10 @@ export function rankHybridCandidates(
   const similarityByVersionId = new Map(
     input.semantic.map((entry) => [entry.cardVersionId, entry.similarity]),
   );
-  const orderedSemantic = [...input.semantic]
-    .sort((left, right) => {
-      if (left.similarity !== right.similarity) return right.similarity - left.similarity;
-      return left.cardVersionId < right.cardVersionId
-        ? -1
-        : left.cardVersionId > right.cardVersionId
-          ? 1
-          : 0;
-    });
-  const leadingSemantic = orderedSemantic[0];
-  const runnerUpSemantic = orderedSemantic[1];
+  // `CardCandidateIndex.topK` already guarantees this order. Sorting a copy on
+  // every request adds short-lived allocations without changing one result.
+  const leadingSemantic = input.semantic[0];
+  const runnerUpSemantic = input.semantic[1];
   const leadingSemanticVersionId = leadingSemantic?.cardVersionId;
   const union = new Set<string>(similarityByVersionId.keys());
   for (const candidate of topLexical(input.lexical, input.lexicalTopK)) {
