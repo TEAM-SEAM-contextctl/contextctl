@@ -67,6 +67,9 @@ curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/mai
 확인. **모델은 받지 않습니다.** 396 MiB 다운로드는 별도 동의가 필요한 일이라 다음 단계에서
 직접 물어봅니다.
 
+`PATH` 에서 찾지 못하면 스크립트가 실제 `bin` 경로와 `export PATH=…` 한 줄을 알려주고 멈춥니다.
+설치된 위치는 나중에 `contextctl paths` 로도 확인할 수 있습니다.
+
 ---
 
 ## 5분 만에 해보기
@@ -183,6 +186,12 @@ contextctl help                 # 전체
 contextctl help cards approve   # 한 명령
 contextctl status               # 지금 어느 실행 영역이 일을 못 하는가
 ```
+
+## 기여
+
+버그 신고와 Pull Request 를 환영합니다. 먼저 [CONTRIBUTING.md](CONTRIBUTING.md) 를 읽어
+주십시오 — 검증 명령, 고정 Node·npm 버전, 워크스페이스 경계, 브랜치·커밋·리뷰 규칙이 거기
+있습니다.
 
 ## License
 
