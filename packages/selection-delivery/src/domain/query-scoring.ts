@@ -61,7 +61,8 @@ interface WeightedField {
   readonly text: string;
   readonly weight: number;
   readonly tokens: readonly string[];
-  readonly ngrams: ReadonlySet<string>;
+  /** Sorted ids into the catalog generation's one n-gram dictionary. */
+  readonly ngramIds: Uint32Array;
 }
 
 interface IndexedCard {
@@ -76,13 +77,22 @@ interface CatalogStatistics {
   readonly documentFrequency: ReadonlyMap<string, number>;
   readonly declaredTermFrequency: ReadonlyMap<string, number>;
   readonly averageWeightedLength: number;
+  /** Each distinct 2/3-character string is retained once per generation. */
+  readonly ngramIds: ReadonlyMap<string, number>;
+}
+
+interface QueryNgrams {
+  /** Only ids known by this catalog, sorted for a linear intersection. */
+  readonly knownIds: Uint32Array;
+  /** Includes unknown query n-grams because they still belong in Dice's denominator. */
+  readonly size: number;
 }
 
 interface QueryAnalysis {
   readonly tokens: readonly string[];
   /** First occurrence of each token, retained in query order. */
   readonly uniqueTokens: readonly string[];
-  readonly ngrams: ReadonlySet<string>;
+  readonly ngrams: QueryNgrams;
   readonly sourceIntents: ReadonlySet<SourceIntent>;
 }
 
@@ -108,13 +118,13 @@ export function scoreCardsAgainstQuery(
 ): readonly CandidateScore[] {
   const query = normalizeText(queryText);
   const tokens = tokenize(query);
+  const statistics = catalogStatistics(cards);
   const analysis: QueryAnalysis = {
     tokens,
     uniqueTokens: uniqueInOrder(tokens),
-    ngrams: toCharacterNgrams(query),
+    ngrams: queryNgrams(query, statistics.ngramIds),
     sourceIntents: inferSourceIntents(tokens),
   };
-  const statistics = catalogStatistics(cards);
 
   return statistics.cards.map((indexed) =>
     scoreCard(analysis, indexed, statistics),
@@ -132,7 +142,8 @@ function catalogStatistics(cards: readonly ApprovedCard[]): CatalogStatistics {
 function buildCatalogStatistics(
   cards: readonly ApprovedCard[],
 ): CatalogStatistics {
-  const indexedCards = cards.map(indexCard);
+  const ngramIds = new Map<string, number>();
+  const indexedCards = cards.map((card) => indexCard(card, ngramIds));
   const documentFrequency = new Map<string, number>();
   const declaredTermFrequency = new Map<string, number>();
 
@@ -162,30 +173,37 @@ function buildCatalogStatistics(
     declaredTermFrequency,
     averageWeightedLength:
       indexedCards.length === 0 ? 0 : totalLength / indexedCards.length,
+    ngramIds,
   };
 }
 
-function indexCard(card: ApprovedCard): IndexedCard {
+function indexCard(
+  card: ApprovedCard,
+  ngramIds: Map<string, number>,
+): IndexedCard {
   const fields: WeightedField[] = [];
-  appendFields(fields, "keyword", card.meaning.keywords, FIELD_WEIGHTS.keyword);
-  appendFields(fields, "alias", card.meaning.aliases, FIELD_WEIGHTS.alias);
+  appendFields(fields, "keyword", card.meaning.keywords, FIELD_WEIGHTS.keyword, ngramIds);
+  appendFields(fields, "alias", card.meaning.aliases, FIELD_WEIGHTS.alias, ngramIds);
   appendFields(
     fields,
     "representative_question",
     card.meaning.representativeQuestions,
     FIELD_WEIGHTS.representative_question,
+    ngramIds,
   );
   appendFields(
     fields,
     "description",
     [card.meaning.description],
     FIELD_WEIGHTS.description,
+    ngramIds,
   );
   appendFields(
     fields,
     "scope",
     card.scopes.flatMap(scopeSearchValues),
     FIELD_WEIGHTS.scope,
+    ngramIds,
   );
 
   const termFrequency = new Map<string, number>();
@@ -204,6 +222,7 @@ function appendFields(
   field: WeightedField["field"],
   values: readonly string[],
   weight: number,
+  ngramIds: Map<string, number>,
 ): void {
   for (const text of values) {
     const normalized = normalizeText(text);
@@ -214,7 +233,7 @@ function appendFields(
         text,
         weight,
         tokens,
-        ngrams: toCharacterNgrams(normalized),
+        ngramIds: catalogNgramIds(normalized, ngramIds),
       });
     }
   }
@@ -503,7 +522,7 @@ function normalizeBm25(value: number): number {
 }
 
 function bestNgramScore(
-  queryNgrams: ReadonlySet<string>,
+  queryNgrams: QueryNgrams,
   fields: readonly WeightedField[],
 ): ScoreSignal & { readonly field: Exclude<ScoreSignal["field"], "bm25"> } {
   let best: ScoreSignal & { field: Exclude<ScoreSignal["field"], "bm25"> } = {
@@ -512,7 +531,7 @@ function bestNgramScore(
     contribution: 0,
   };
   for (const field of fields) {
-    const similarity = ngramDice(queryNgrams, field.ngrams);
+    const similarity = ngramDice(queryNgrams, field.ngramIds);
     const contribution = similarity * Math.min(field.weight / FIELD_WEIGHTS.keyword, 1);
     if (contribution > best.contribution) {
       best = { field: field.field, matched: field.text, contribution };
@@ -599,7 +618,7 @@ function normalizeKoreanSuffix(value: string): string {
   return value;
 }
 
-function toCharacterNgrams(text: string): ReadonlySet<string> {
+function characterNgrams(text: string): ReadonlySet<string> {
   const compact = text.replace(/\s+/gu, "");
   const ngrams = new Set<string>();
   for (const size of [2, 3]) {
@@ -610,13 +629,56 @@ function toCharacterNgrams(text: string): ReadonlySet<string> {
   return ngrams;
 }
 
-function ngramDice(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
-  if (left.size === 0 || right.size === 0) return 0;
-  const [smaller, larger] =
-    left.size <= right.size ? [left, right] : [right, left];
+function catalogNgramIds(
+  text: string,
+  dictionary: Map<string, number>,
+): Uint32Array {
+  const ids: number[] = [];
+  for (const ngram of characterNgrams(text)) {
+    let id = dictionary.get(ngram);
+    if (id === undefined) {
+      id = dictionary.size;
+      dictionary.set(ngram, id);
+    }
+    ids.push(id);
+  }
+  ids.sort((left, right) => left - right);
+  return Uint32Array.from(ids);
+}
+
+function queryNgrams(
+  text: string,
+  dictionary: ReadonlyMap<string, number>,
+): QueryNgrams {
+  const ngrams = characterNgrams(text);
+  const knownIds: number[] = [];
+  for (const ngram of ngrams) {
+    const id = dictionary.get(ngram);
+    if (id !== undefined) knownIds.push(id);
+  }
+  knownIds.sort((left, right) => left - right);
+  return { knownIds: Uint32Array.from(knownIds), size: ngrams.size };
+}
+
+function ngramDice(left: QueryNgrams, right: Uint32Array): number {
+  if (left.size === 0 || right.length === 0) return 0;
   let intersection = 0;
-  for (const ngram of smaller) if (larger.has(ngram)) intersection += 1;
-  return (2 * intersection) / (left.size + right.size);
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.knownIds.length && rightIndex < right.length) {
+    const leftId = left.knownIds[leftIndex]!;
+    const rightId = right[rightIndex]!;
+    if (leftId === rightId) {
+      intersection += 1;
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (leftId < rightId) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+  return (2 * intersection) / (left.size + right.length);
 }
 
 function clampToUnitInterval(value: number): number {
