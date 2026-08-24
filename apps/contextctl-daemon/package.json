@@ -13,7 +13,7 @@
   "bin": {
     "contextctl": "./bin/contextctl.mjs"
   },
-  "files": ["bin", "dist"],
+  "files": ["bin", "dist", "!dist/.tsbuildinfo"],
   "dependencies": {
     "@contextctl/ingestion-indexing": "0.1.0",
     "@contextctl/registry-lifecycle": "0.1.0",

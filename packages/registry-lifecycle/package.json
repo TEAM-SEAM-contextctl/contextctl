@@ -10,7 +10,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "!dist/.tsbuildinfo"],
   "dependencies": {
     "@contextctl/contracts": "0.1.0"
   }

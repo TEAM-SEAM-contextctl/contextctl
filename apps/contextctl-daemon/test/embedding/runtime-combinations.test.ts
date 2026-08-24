@@ -25,9 +25,9 @@ import {
  * The unit tests next door prove the binding rules; this one proves the daemon
  * actually reaches them — that the two layers are read from separate settings,
  * bound by separate factories and neither derived from the other on the way
- * through `createDaemonRuntime`. Both concrete adapters are injected, because
- * one of the two domains has not shipped its remote provider yet and the
- * assembly is testable without either.
+ * through `createDaemonRuntime`. Test providers are injected here so the suite
+ * remains network-free; the release product gate separately exercises the
+ * concrete remote adapters over their public daemon configuration.
  */
 
 const runtimes: DaemonRuntime[] = [];

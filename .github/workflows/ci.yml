@@ -29,6 +29,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run test:release-package
       - run: npm test
 
   qdrant-integration:
@@ -50,6 +51,7 @@ jobs:
       - run: test "$(node --version)" = "v24.18.0"
       - run: test "$(npm --version)" = "11.16.0"
       - run: npm ci
+      - run: npm run build
       - name: Wait for Qdrant readiness
         run: |
           for attempt in {1..30}; do
@@ -61,6 +63,10 @@ jobs:
           echo "Qdrant did not become ready within 30 seconds" >&2
           exit 1
       - run: npm run test:integration:qdrant
+      - name: Verify installed remote product lifecycle
+        env:
+          CONTEXTCTL_RELEASE_E2E_QDRANT_URL: http://127.0.0.1:6333
+        run: npm run test:release-product
 
   granite-integration:
     runs-on: ubuntu-24.04
