@@ -75,6 +75,8 @@ interface IndexedCard {
   readonly fields: readonly WeightedField[];
   readonly termFrequency: ReadonlyMap<string, number>;
   readonly weightedLength: number;
+  /** Shared immutable rejection record for queries with no usable evidence. */
+  readonly noScore: CandidateScore;
 }
 
 interface CatalogStatistics {
@@ -219,7 +221,18 @@ function indexCard(
       termFrequency.set(token, (termFrequency.get(token) ?? 0) + field.weight);
     }
   }
-  return { card, fields, termFrequency, weightedLength };
+  return {
+    card,
+    fields,
+    termFrequency,
+    weightedLength,
+    noScore: Object.freeze({
+      cardId: card.cardId,
+      versionId: card.versionId,
+      score: 0,
+      signals: NO_SCORE_SIGNALS,
+    }),
+  };
 }
 
 function appendFields(
@@ -249,7 +262,7 @@ function scoreCard(
   indexed: IndexedCard,
   statistics: CatalogStatistics,
 ): CandidateScore {
-  if (query.tokens.length === 0) return emptyScore(indexed.card);
+  if (query.tokens.length === 0) return indexed.noScore;
 
   const bm25 = bm25Score(query.uniqueTokens, indexed, statistics);
   const normalizedBm25 = normalizeBm25(bm25);
@@ -274,12 +287,7 @@ function scoreCard(
       ? 0
       : rawIndirect;
   if (direct === 0 && indirect === 0) {
-    return {
-      cardId: indexed.card.cardId,
-      versionId: indexed.card.versionId,
-      score: 0,
-      signals: NO_SCORE_SIGNALS,
-    };
+    return indexed.noScore;
   }
   const signals: ScoreSignal[] = [...directSignals];
   if (bm25 > 0) {
@@ -597,15 +605,6 @@ function scopeSearchValues(scope: ApprovedScope): readonly string[] {
         ]),
       ];
   }
-}
-
-function emptyScore(card: ApprovedCard): CandidateScore {
-  return {
-    cardId: card.cardId,
-    versionId: card.versionId,
-    score: 0,
-    signals: NO_SCORE_SIGNALS,
-  };
 }
 
 function normalizeText(text: string): string {
