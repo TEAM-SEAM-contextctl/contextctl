@@ -73,6 +73,10 @@ The script does three things — check the Node version, install five packages
 globally, confirm `PATH` reaches them. **It does not download the model.** A
 396 MiB download needs its own consent, so the next step asks for it.
 
+If `PATH` does not reach the install, the script stops and prints the real `bin`
+directory with the `export PATH=…` line to add. `contextctl paths` reports the
+same location later.
+
 ---
 
 ## Five minutes
@@ -195,6 +199,13 @@ contextctl help                 # everything
 contextctl help cards approve   # one command
 contextctl status               # which execution lane cannot work right now
 ```
+
+## Contributing
+
+Bug reports and pull requests are welcome. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) first — it carries the verification commands,
+the exact pinned Node and npm, the workspace boundaries, and the branch, commit
+and review rules.
 
 ## License
 
