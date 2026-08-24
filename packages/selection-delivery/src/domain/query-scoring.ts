@@ -56,6 +56,8 @@ export interface CandidateScore {
   readonly signals: readonly ScoreSignal[];
 }
 
+const NO_SCORE_SIGNALS: readonly ScoreSignal[] = Object.freeze([]);
+
 interface WeightedField {
   readonly field: Exclude<ScoreSignal["field"], "bm25">;
   readonly text: string;
@@ -263,24 +265,29 @@ function scoreCard(
     MAX_INDIRECT_SCORE,
     BM25_WEIGHT * normalizedBm25 + NGRAM_WEIGHT * ngram.contribution,
   );
-  const signals: ScoreSignal[] = [...directSignals];
+  let signals: ScoreSignal[] | undefined =
+    directSignals.length === 0 ? undefined : [...directSignals];
   if (bm25 > 0) {
-    signals.push({ field: "bm25", matched: "catalog", contribution: normalizedBm25 });
+    (signals ??= []).push({
+      field: "bm25",
+      matched: "catalog",
+      contribution: normalizedBm25,
+    });
   }
   if (
     ngram.contribution > 0 &&
-    !signals.some(
+    !(signals ?? NO_SCORE_SIGNALS).some(
       (signal) => signal.field === ngram.field && signal.matched === ngram.matched,
     )
   ) {
-    signals.push(ngram);
+    (signals ??= []).push(ngram);
   }
 
   return {
     cardId: indexed.card.cardId,
     versionId: indexed.card.versionId,
     score: clampToUnitInterval(Math.max(direct, indirect)),
-    signals,
+    signals: signals ?? NO_SCORE_SIGNALS,
   };
 }
 
@@ -290,13 +297,13 @@ function collectDirectSignals(
   statistics: CatalogStatistics,
   normalizedBm25: number,
 ): readonly ScoreSignal[] {
-  const matched: {
+  let matched: {
     readonly field: "keyword" | "alias" | "scope";
     readonly text: string;
     readonly tokens: readonly string[];
     readonly specificity: number;
-  }[] = [];
-  const matchedDeclarations = new Set<string>();
+  }[] | undefined;
+  let matchedDeclarations: Set<string> | undefined;
 
   for (const field of indexed.fields) {
     if (field.field === "scope") {
@@ -305,9 +312,9 @@ function collectDirectSignals(
         field.tokens.every((token, index) => token === query.tokens[index]);
       if (exactCoordinate) {
         const declarationKey = `scope-coordinate:${field.tokens.join(" ")}`;
-        if (!matchedDeclarations.has(declarationKey)) {
-          matchedDeclarations.add(declarationKey);
-          matched.push({
+        if (matchedDeclarations?.has(declarationKey) !== true) {
+          (matchedDeclarations ??= new Set()).add(declarationKey);
+          (matched ??= []).push({
             field: "scope",
             text: field.text,
             tokens: field.tokens,
@@ -321,9 +328,9 @@ function collectDirectSignals(
         if (field.tokens.indexOf(token) !== index) continue;
         if (!query.uniqueTokens.includes(token)) continue;
         const declarationKey = `scope:${token}`;
-        if (matchedDeclarations.has(declarationKey)) continue;
-        matchedDeclarations.add(declarationKey);
-        matched.push({
+        if (matchedDeclarations?.has(declarationKey) === true) continue;
+        (matchedDeclarations ??= new Set()).add(declarationKey);
+        (matched ??= []).push({
           field: "scope",
           text: token,
           tokens: [token],
@@ -340,8 +347,8 @@ function collectDirectSignals(
       continue;
     }
     const declarationKey = `${field.field}:${field.tokens.join(" ")}`;
-    if (matchedDeclarations.has(declarationKey)) continue;
-    matchedDeclarations.add(declarationKey);
+    if (matchedDeclarations?.has(declarationKey) === true) continue;
+    (matchedDeclarations ??= new Set()).add(declarationKey);
     const specificity = Math.max(
       ...field.tokens.map((token) =>
         declaredSpecificity(
@@ -350,7 +357,7 @@ function collectDirectSignals(
         ),
       ),
     );
-    matched.push({
+    (matched ??= []).push({
       field: field.field,
       text: field.text,
       tokens: field.tokens,
@@ -358,7 +365,7 @@ function collectDirectSignals(
     });
   }
 
-  if (matched.length === 0) return [];
+  if (matched === undefined) return NO_SCORE_SIGNALS;
   const strongest = Math.max(...matched.map((entry) => entry.specificity));
   let contextualOverlap = 0;
   for (const queryToken of query.uniqueTokens) {
@@ -578,7 +585,12 @@ function scopeSearchValues(scope: ApprovedScope): readonly string[] {
 }
 
 function emptyScore(card: ApprovedCard): CandidateScore {
-  return { cardId: card.cardId, versionId: card.versionId, score: 0, signals: [] };
+  return {
+    cardId: card.cardId,
+    versionId: card.versionId,
+    score: 0,
+    signals: NO_SCORE_SIGNALS,
+  };
 }
 
 function normalizeText(text: string): string {
