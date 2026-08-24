@@ -1,6 +1,6 @@
 {
   "name": "contextctl",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -28,7 +28,7 @@
     "test:benchmark:ingestion-indexing": "node scripts/run-external-test.mjs ingestion-indexing-benchmark"
   },
   "dependencies": {
-    "@contextctl/daemon": "0.1.0",
+    "@contextctl/daemon": "1.0.0",
     "@huggingface/transformers": "4.2.0",
     "onnxruntime-node": "1.24.3"
   },

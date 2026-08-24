@@ -1,6 +1,6 @@
 {
   "name": "@contextctl/daemon",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24.0.0" },
@@ -15,8 +15,8 @@
   },
   "files": ["bin", "dist", "!dist/.tsbuildinfo"],
   "dependencies": {
-    "@contextctl/ingestion-indexing": "0.1.0",
-    "@contextctl/registry-lifecycle": "0.1.0",
-    "@contextctl/selection-delivery": "0.1.0"
+    "@contextctl/ingestion-indexing": "1.0.0",
+    "@contextctl/registry-lifecycle": "1.0.0",
+    "@contextctl/selection-delivery": "1.0.0"
   }
 }
