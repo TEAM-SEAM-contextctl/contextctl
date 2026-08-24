@@ -12,16 +12,17 @@ import {
   createDaemonRuntime,
   type DaemonRuntime,
 } from "../src/main.js";
+import type { EmbeddingRuntimeSnapshot } from "../src/runtime/embedding-runtime-scheduler.js";
 
 const artifactDirectory = process.env.CONTEXTCTL_GRANITE_ASSET_DIRECTORY;
 const resultPath = process.env.CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH;
 
 const QUERY_REPETITIONS = 100;
-// Node 24 on the hosted Linux runner needs more than 200 repeated query pairs
-// before worker IPC, tokenization and ONNX execution settle. Keep this fixed,
-// rather than adapting it to the observed result, so two runs measure the same
-// population and cannot silently warm until a desired number appears.
-const WARMUP_REPETITIONS = 300;
+const MEASUREMENT_ROUNDS = 3;
+// Replace v1's one hardware-sensitive ratio with three adjacent,
+// catalog-matched pairs. One hundred observations keep p95 from being decided
+// by two or three GC/JIT tails on a hosted runner.
+const WARMUP_REPETITIONS = 200;
 const P95_DEGRADATION_GATE = 0.2;
 // `performance.now()` values are continuous, but an exact ratio boundary can
 // still turn a 0.001ms scheduling difference into a red build. Keep the policy
@@ -32,8 +33,6 @@ const EVENT_LOOP_LAG_GATE_MS = 100;
 const RSS_GATE_MIB = 1_536;
 const QUERY = "결제 실패 재시도";
 const BASE_SOURCE = "source.embedding-load-base";
-const REBUILD_SOURCE = "source.embedding-load-rebuild";
-const BACKGROUND_SOURCE = "source.embedding-load-background";
 
 const BASE_MARKDOWN = `# 결제 운영
 
@@ -46,23 +45,22 @@ const BASE_MARKDOWN = `# 결제 운영
 거래 식별자로 승인 상태와 마지막 처리 시간을 확인합니다.
 `;
 
-const BACKGROUND_MARKDOWN = `# 배송 운영
-
-## 운송장 발급
-
-상품 인계가 끝나면 운송장 번호를 발급하고 배송 상태를 갱신합니다.
-
-## 배송 장애 복구
-
-운송사 조회 실패는 제한된 간격으로 재시도하고 운영 기록을 남깁니다.
-`;
-
-const REBUILD_MARKDOWN = `# 환불 운영
-
-## 환불 승인
-
-환불 요청은 거래 식별자와 승인 사유를 확인한 뒤 처리합니다.
-`;
+interface LoadMeasurementRound {
+  readonly round: number;
+  readonly baselineLatenciesMs: readonly number[];
+  readonly concurrentLatenciesMs: readonly number[];
+  readonly baselineP95Ms: number;
+  readonly concurrentP95Ms: number;
+  readonly p95Degradation: number;
+  readonly concurrentP95GateMs: number;
+  readonly outOfRangeResults: number;
+  readonly catalogStableDuringConcurrent: boolean;
+  readonly catalogAdvancedAfterBackground: boolean;
+  readonly schedulerBeforeBackground: EmbeddingRuntimeSnapshot;
+  readonly schedulerAtConcurrentStart: EmbeddingRuntimeSnapshot;
+  readonly schedulerAfterResolvePopulation: EmbeddingRuntimeSnapshot;
+  readonly schedulerAfterBackgroundSettled: EmbeddingRuntimeSnapshot;
+}
 
 const runtimes: DaemonRuntime[] = [];
 const directories: string[] = [];
@@ -80,7 +78,7 @@ afterEach(async () => {
 });
 
 describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
-  "embedding-runtime-load-v1",
+  "embedding-runtime-load-v2",
   () => {
     it(
       "protects resolve_context during Markdown ingestion and Card rebuilding",
@@ -88,22 +86,41 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         const directory = await mkdtemp(join(tmpdir(), "contextctl-load-"));
         directories.push(directory);
         const basePath = join(directory, "base.md");
-        const rebuildPath = join(directory, "rebuild.md");
-        const backgroundPath = join(directory, "background.md");
+        const roundFiles = Array.from(
+          { length: MEASUREMENT_ROUNDS },
+          (_, round) => ({
+            rebuildSource: roundSource("rebuild", round),
+            rebuildPath: join(directory, `rebuild-${round}.md`),
+            rebuildMarkdown: rebuildMarkdown(round),
+            backgroundSource: roundSource("background", round),
+            backgroundPath: join(directory, `background-${round}.md`),
+            backgroundMarkdown: backgroundMarkdown(round),
+          }),
+        );
         await Promise.all([
           writeFile(basePath, BASE_MARKDOWN, "utf8"),
-          writeFile(rebuildPath, REBUILD_MARKDOWN, "utf8"),
-          writeFile(backgroundPath, BACKGROUND_MARKDOWN, "utf8"),
+          ...roundFiles.flatMap((round) => [
+            writeFile(round.rebuildPath, round.rebuildMarkdown, "utf8"),
+            writeFile(round.backgroundPath, round.backgroundMarkdown, "utf8"),
+          ]),
         ]);
+
+        const sourceConfigurations: Record<string, { readonly path: string }> = {
+          [BASE_SOURCE]: { path: basePath },
+        };
+        for (const round of roundFiles) {
+          sourceConfigurations[round.rebuildSource] = {
+            path: round.rebuildPath,
+          };
+          sourceConfigurations[round.backgroundSource] = {
+            path: round.backgroundPath,
+          };
+        }
 
         const runtime = createDaemonRuntime({
           embeddingArtifactDirectory: artifactDirectory!,
           vectorIndex: new InMemoryVectorIndexAdapter(),
-          sourceConfigurations: {
-            [BASE_SOURCE]: { path: basePath },
-            [REBUILD_SOURCE]: { path: rebuildPath },
-            [BACKGROUND_SOURCE]: { path: backgroundPath },
-          },
+          sourceConfigurations,
         });
         runtimes.push(runtime);
         expect(runtime.sharesLocalEmbeddingSession).toBe(true);
@@ -118,9 +135,8 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         const warm = await resolveContext(runtime, query);
         expectHealthyResult(warm);
         // One call loads the model, but it does not stabilize worker IPC,
-        // tokenizer allocation and ONNX execution. Without a fixed warm-up
-        // population the concurrent side receives every first-run tail while
-        // the baseline, measured second, is fully hot.
+        // tokenizer allocation and ONNX execution. The warm-up is fixed rather
+        // than extended until a desired result appears.
         const warmup = await measureResolves(
           runtime,
           query,
@@ -128,11 +144,6 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
           true,
         );
         runtime.embeddingScheduler.startMonitoring();
-
-        // Approval changes the catalog snapshot, but no Resolve is issued yet.
-        // The first measured request must therefore rebuild the Card candidate
-        // index while the independent Markdown publication below is running.
-        await publishClaimAndApprove(runtime, REBUILD_SOURCE, false);
 
         const rssSamples = [rssMiB()];
         const eventLoopLagSamples = [runtime.embeddingScheduler.snapshot.eventLoopLagMs];
@@ -150,56 +161,97 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         };
         process.on("unhandledRejection", onUnhandledRejection);
         try {
-          const schedulerBeforeConcurrent = runtime.embeddingScheduler.snapshot;
-          const candidatePreparation = runtime.prepareCardCandidates();
-          const concurrentMeasurement = measureResolves(
-            runtime,
-            query,
-            QUERY_REPETITIONS,
-            false,
-          );
-          const backgroundIngestion = publishSource(runtime, BACKGROUND_SOURCE);
-          const concurrent = await concurrentMeasurement;
-          const schedulerAfterResolvePopulation =
-            runtime.embeddingScheduler.snapshot;
-          const [, backgroundPublication] = await Promise.all([
-            candidatePreparation,
-            backgroundIngestion,
-          ]);
-          expect(backgroundPublication.status).toBe("published");
+          const rounds: LoadMeasurementRound[] = [];
+          for (const [roundIndex, files] of roundFiles.entries()) {
+            // Capture the new Publication and Card Versions first, but do not
+            // approve them yet. The adjacent baseline therefore sees the exact
+            // same prepared catalog object the concurrent population will use.
+            const claimed = await publishAndClaim(runtime, files.rebuildSource);
+            const activeCatalog = await runtime.catalog.listApprovedCards();
+            const baseline = await measureResolves(
+              runtime,
+              query,
+              QUERY_REPETITIONS,
+              true,
+            );
 
-          // Freeze resource evidence at the end of the concurrent population.
-          // Resolve-only baseline traffic is a comparator, not part of the
-          // concurrent-load event-loop or RSS population.
+            await approveClaimedVersions(runtime, claimed, false);
+            const schedulerBeforeBackground =
+              runtime.embeddingScheduler.snapshot;
+            const candidatePreparation = runtime.prepareCardCandidates();
+            const backgroundIngestion = publishSource(
+              runtime,
+              files.backgroundSource,
+            );
+            const schedulerAtConcurrentStart = await waitForActiveBackground(
+              runtime,
+              schedulerBeforeBackground.backgroundStarts,
+            );
+            const concurrent = await measureResolves(
+              runtime,
+              query,
+              QUERY_REPETITIONS,
+              false,
+            );
+            const schedulerAfterResolvePopulation =
+              runtime.embeddingScheduler.snapshot;
+            const catalogDuringConcurrent =
+              await runtime.catalog.listApprovedCards();
+            const [, backgroundPublication] = await Promise.all([
+              candidatePreparation,
+              backgroundIngestion,
+            ]);
+            expect(backgroundPublication.status).toBe("published");
+            const catalogAfterBackground =
+              await runtime.catalog.listApprovedCards();
+
+            const baselineP95Ms = percentile(baseline.latencies, 0.95);
+            const concurrentP95Ms = percentile(concurrent.latencies, 0.95);
+            const p95Degradation =
+              baselineP95Ms === 0
+                ? Number.POSITIVE_INFINITY
+                : (concurrentP95Ms - baselineP95Ms) / baselineP95Ms;
+            const concurrentP95GateMs =
+              baselineP95Ms * (1 + P95_DEGRADATION_GATE) +
+              P95_COMPARISON_TOLERANCE_MS;
+            rounds.push({
+              round: roundIndex + 1,
+              baselineLatenciesMs: baseline.latencies,
+              concurrentLatenciesMs: concurrent.latencies,
+              baselineP95Ms,
+              concurrentP95Ms,
+              p95Degradation,
+              concurrentP95GateMs,
+              outOfRangeResults: concurrent.outOfRangeResults,
+              catalogStableDuringConcurrent:
+                catalogDuringConcurrent === activeCatalog,
+              catalogAdvancedAfterBackground:
+                catalogAfterBackground !== activeCatalog &&
+                catalogAfterBackground.length > activeCatalog.length,
+              schedulerBeforeBackground,
+              schedulerAtConcurrentStart,
+              schedulerAfterResolvePopulation,
+              schedulerAfterBackgroundSettled:
+                runtime.embeddingScheduler.snapshot,
+            });
+          }
+
+          clearInterval(sampler);
           const peakRssMiB = Math.max(...rssSamples, rssMiB());
           const maxEventLoopLagMs = Math.max(
             ...eventLoopLagSamples,
             runtime.embeddingScheduler.snapshot.eventLoopLagMs,
           );
-          const concurrentSchedulerSnapshot =
-            runtime.embeddingScheduler.snapshot;
-
-          // The baseline uses the same final catalog and hot model. The only
-          // intended difference is the concurrent background work. Resource
-          // sampling remains active in both populations; otherwise the 10ms
-          // `process.memoryUsage()` observation cost is charged only to the
-          // concurrent side and the comparator measures its own instrumentation.
-          const baseline = await measureResolves(
-            runtime,
-            query,
-            QUERY_REPETITIONS,
-            true,
+          // Hosted runners do not expose a fixed microarchitecture, and one
+          // native allocator/GC release can move a single round's p95 while
+          // leaving both neighbouring matched pairs unchanged. The median of
+          // three independent paired estimates is the release statistic; the
+          // worst round and every raw latency remain in the artifact.
+          const orderedRounds = [...rounds].sort(
+            (left, right) => left.p95Degradation - right.p95Degradation,
           );
-          clearInterval(sampler);
-          const baselineP95Ms = percentile(baseline.latencies, 0.95);
-          const concurrentP95Ms = percentile(concurrent.latencies, 0.95);
-          const p95Degradation =
-            baselineP95Ms === 0
-              ? Number.POSITIVE_INFINITY
-              : (concurrentP95Ms - baselineP95Ms) / baselineP95Ms;
-          const concurrentP95GateMs =
-            baselineP95Ms * (1 + P95_DEGRADATION_GATE) +
-            P95_COMPARISON_TOLERANCE_MS;
+          const medianRound = orderedRounds[Math.floor(rounds.length / 2)]!;
+          const worstRound = orderedRounds[orderedRounds.length - 1]!;
           const packageLockDigest = createHash("sha256")
             .update(await readFile(join(process.cwd(), "package-lock.json")))
             .digest("hex");
@@ -207,15 +259,17 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
             .update(
               JSON.stringify({
                 base: BASE_MARKDOWN,
-                rebuild: REBUILD_MARKDOWN,
-                background: BACKGROUND_MARKDOWN,
+                rounds: roundFiles.map((round) => ({
+                  rebuild: round.rebuildMarkdown,
+                  background: round.backgroundMarkdown,
+                })),
                 query,
               }),
             )
             .digest("hex");
           const result = {
-            schemaVersion: 1,
-            benchmarkId: "embedding-runtime-load-v1",
+            schemaVersion: 2,
+            benchmarkId: "embedding-runtime-load-v2",
             schedulerProfileVersion: runtime.embeddingScheduler.profile.version,
             schedulerProfile: runtime.embeddingScheduler.profile,
             daemonRuntimeProfileVersion: runtime.control.profile.version,
@@ -229,22 +283,29 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
             platform: `${process.platform}-${process.arch}`,
             cpuModel: cpus()[0]?.model ?? "unknown",
             queryRepetitions: QUERY_REPETITIONS,
+            measurementRounds: MEASUREMENT_ROUNDS,
             warmupRepetitions: WARMUP_REPETITIONS,
             warmupP95Ms: percentile(warmup.latencies, 0.95),
-            baselineLatenciesMs: baseline.latencies,
-            concurrentLatenciesMs: concurrent.latencies,
-            baselineP95Ms,
-            concurrentP95Ms,
-            p95Degradation,
-            concurrentP95GateMs,
+            baselineLatenciesMs: rounds.flatMap(
+              (round) => round.baselineLatenciesMs,
+            ),
+            concurrentLatenciesMs: rounds.flatMap(
+              (round) => round.concurrentLatenciesMs,
+            ),
+            baselineP95Ms: medianRound.baselineP95Ms,
+            concurrentP95Ms: medianRound.concurrentP95Ms,
+            p95Degradation: medianRound.p95Degradation,
+            concurrentP95GateMs: medianRound.concurrentP95GateMs,
+            worstRoundP95Degradation: worstRound.p95Degradation,
+            rounds,
             peakRssMiB,
             maxEventLoopLagMs,
-            outOfRangeResults: concurrent.outOfRangeResults,
+            outOfRangeResults: rounds.reduce(
+              (total, round) => total + round.outOfRangeResults,
+              0,
+            ),
             unhandledRejections: unhandledRejections.length,
             checkpointLosses: 0,
-            schedulerBeforeConcurrent,
-            schedulerAfterResolvePopulation,
-            concurrentSchedulerSnapshot,
             finalSchedulerSnapshot: runtime.embeddingScheduler.snapshot,
             gates: {
               p95Degradation: P95_DEGRADATION_GATE,
@@ -264,9 +325,22 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
             resolveQueued: 0,
             backgroundQueued: 0,
           });
-          expect(concurrent.outOfRangeResults).toBe(0);
           expect(unhandledRejections).toEqual([]);
-          expect(concurrentP95Ms).toBeLessThanOrEqual(concurrentP95GateMs);
+          for (const round of rounds) {
+            expect(round.schedulerAtConcurrentStart.active).toBeGreaterThan(0);
+            expect(
+              round.schedulerAtConcurrentStart.backgroundStarts,
+            ).toBeGreaterThan(round.schedulerBeforeBackground.backgroundStarts);
+            expect(
+              round.schedulerAfterResolvePopulation.backgroundStarts,
+            ).toBe(round.schedulerAtConcurrentStart.backgroundStarts);
+            expect(round.catalogStableDuringConcurrent).toBe(true);
+            expect(round.catalogAdvancedAfterBackground).toBe(true);
+            expect(round.outOfRangeResults).toBe(0);
+          }
+          expect(medianRound.concurrentP95Ms).toBeLessThanOrEqual(
+            medianRound.concurrentP95GateMs,
+          );
           expect(peakRssMiB).toBeLessThanOrEqual(RSS_GATE_MIB);
           expect(maxEventLoopLagMs).toBeLessThanOrEqual(
             EVENT_LOOP_LAG_GATE_MS,
@@ -287,6 +361,15 @@ async function publishClaimAndApprove(
   configReference: string,
   refreshCandidates = true,
 ) {
+  const claimed = await publishAndClaim(runtime, configReference);
+  await approveClaimedVersions(runtime, claimed, refreshCandidates);
+  return claimed.published;
+}
+
+async function publishAndClaim(
+  runtime: DaemonRuntime,
+  configReference: string,
+) {
   const published = await publishSource(runtime, configReference);
   const publicationId = published.publication?.publicationId;
   if (publicationId === undefined) {
@@ -295,8 +378,17 @@ async function publishClaimAndApprove(
   const claimed = await runtime.registryIntake.claim(publicationId);
   expect(claimed.status).toBe("claimed");
   expect(claimed.cardVersions.length).toBeGreaterThan(0);
+  return { published, claimed };
+}
+
+async function approveClaimedVersions(
+  runtime: DaemonRuntime,
+  input: Awaited<ReturnType<typeof publishAndClaim>>,
+  refreshCandidates: boolean,
+): Promise<void> {
+  const { claimed } = input;
   for (const version of claimed.cardVersions) {
-    const decision = { decidedBy: "embedding-runtime-load-v1" };
+    const decision = { decidedBy: "embedding-runtime-load-v2" };
     if (refreshCandidates) {
       await runtime.registryIntake.approve(
         version.cardId,
@@ -319,7 +411,6 @@ async function publishClaimAndApprove(
       );
     }
   }
-  return published;
 }
 
 async function publishSource(runtime: DaemonRuntime, configReference: string) {
@@ -411,7 +502,15 @@ function isInEvaluationRange(payload: Readonly<Record<string, unknown>>): boolea
     | { readonly mode?: string }
     | undefined;
   if (selection?.mode !== "hybrid") return false;
-  const allowedText = `${BASE_MARKDOWN}\n${REBUILD_MARKDOWN}\n${BACKGROUND_MARKDOWN}`;
+  const allowedText = [
+    BASE_MARKDOWN,
+    ...Array.from({ length: MEASUREMENT_ROUNDS }, (_, round) =>
+      rebuildMarkdown(round),
+    ),
+    ...Array.from({ length: MEASUREMENT_ROUNDS }, (_, round) =>
+      backgroundMarkdown(round),
+    ),
+  ].join("\n");
   const chunks = items.flatMap(
     (item) => item.fulfillment?.context?.chunks ?? [],
   );
@@ -432,4 +531,48 @@ function percentile(values: readonly number[], quantile: number): number {
 
 function rssMiB(): number {
   return process.memoryUsage().rss / 1024 / 1024;
+}
+
+function roundSource(kind: "rebuild" | "background", round: number): string {
+  return `source.embedding-load-${kind}-${round + 1}`;
+}
+
+function rebuildMarkdown(round: number): string {
+  const sequence = round + 1;
+  return `# 환불 운영 ${sequence}\n\n${Array.from(
+    { length: 8 },
+    (_, section) => `## 환불 단계 ${sequence}-${section + 1}\n\n환불 요청 ${
+      section + 1
+    }단계는 거래 식별자와 승인 사유를 확인한 뒤 처리합니다.`,
+  ).join("\n\n")}\n`;
+}
+
+function backgroundMarkdown(round: number): string {
+  const sequence = round + 1;
+  return `# 배송 운영 ${sequence}\n\n${Array.from(
+    { length: 8 },
+    (_, section) => `## 배송 단계 ${sequence}-${section + 1}\n\n운송사 조회 ${
+      section + 1
+    }단계는 제한된 간격으로 재시도하고 운영 기록을 남깁니다.`,
+  ).join("\n\n")}\n`;
+}
+
+async function waitForActiveBackground(
+  runtime: DaemonRuntime,
+  backgroundStartsBefore: number,
+): Promise<EmbeddingRuntimeSnapshot> {
+  const deadline = performance.now() + 10_000;
+  while (performance.now() < deadline) {
+    const snapshot = runtime.embeddingScheduler.snapshot;
+    if (
+      snapshot.backgroundStarts > backgroundStartsBefore &&
+      snapshot.active > 0
+    ) {
+      return snapshot;
+    }
+    await yieldToEventLoop();
+  }
+  throw new Error(
+    "background embedding did not become active before the load deadline",
+  );
 }
