@@ -116,16 +116,34 @@ export function judgeCandidates(
   // The caller's array is never reordered: ranking is an observation, not a
   // mutation of the input.
   const ranked = [...candidates].sort(compareCandidates);
+  if (candidates.length < FINDING_CACHE_MIN_CANDIDATES) {
+    return {
+      outcomes: ranked.map((candidate) =>
+        judgeOrdinaryCandidate(candidate, thresholds),
+      ),
+      provenance: {
+        policyVersion: SELECTION_RANKING_POLICY_VERSION,
+        thresholds,
+        tieBreak: "cardVersionId",
+        consideredCount: candidates.length,
+        ranked: ranked.map(({ cardId, versionId, score }) => ({
+          cardId,
+          versionId,
+          score,
+        })),
+      },
+    };
+  }
   // A catalog commonly has thousands of candidates on the same side of a
   // threshold with the same score. Their audit message is value-identical, so
   // retain one immutable finding per `(verdict, score)` for this judgement
   // instead of allocating one object and one string per Card.
-  const findings: SelectionFindingCache | undefined =
-    candidates.length < FINDING_CACHE_MIN_CANDIDATES
-      ? undefined
-      : { reject: new Map(), defer: new Map() };
+  const findings: SelectionFindingCache = {
+    reject: new Map(),
+    defer: new Map(),
+  };
   const outcomes = ranked.map((candidate) =>
-    judgeCandidate(candidate, thresholds, findings),
+    judgeCompactCandidate(candidate, thresholds, findings),
   );
 
   return {
@@ -135,25 +153,68 @@ export function judgeCandidates(
       thresholds,
       tieBreak: "cardVersionId",
       consideredCount: candidates.length,
-      // Preserve the narrow audit record at ordinary product scale. At the
-      // 10,000-Card envelope the scored records are structurally identical and
-      // retaining another copy per query materially expands the heap.
-      ranked:
-        findings === undefined
-          ? ranked.map(({ cardId, versionId, score }) => ({
-              cardId,
-              versionId,
-              score,
-            }))
-          : ranked,
+      // At the 10,000-Card envelope the scored records are structurally
+      // identical and retaining another copy per query materially expands the
+      // heap. The ordinary path above preserves the narrow audit shape.
+      ranked,
     },
   };
 }
 
-function judgeCandidate(
+function judgeOrdinaryCandidate(
   candidate: ScoredCandidate,
   thresholds: SelectionThresholds,
-  findingCache: SelectionFindingCache | undefined,
+): SelectionOutcome {
+  const { cardId, versionId, score } = candidate;
+  if (!Number.isFinite(score)) {
+    return {
+      verdict: "reject",
+      cardId,
+      versionId,
+      score,
+      findings: [
+        {
+          rule: "score.not.finite",
+          message: `score ${score} is not a finite number and cannot be ranked`,
+        },
+      ],
+    };
+  }
+  if (score >= thresholds.admit) {
+    return { verdict: "admit", cardId, versionId, score };
+  }
+  if (score <= thresholds.reject) {
+    return {
+      verdict: "reject",
+      cardId,
+      versionId,
+      score,
+      findings: [
+        {
+          rule: "score.at.or.below.reject",
+          message: `score ${score} is at or below the reject threshold ${thresholds.reject}`,
+        },
+      ],
+    };
+  }
+  return {
+    verdict: "defer",
+    cardId,
+    versionId,
+    score,
+    findings: [
+      {
+        rule: "score.below.admit",
+        message: `score ${score} is below the admit threshold ${thresholds.admit} and above the reject threshold ${thresholds.reject}`,
+      },
+    ],
+  };
+}
+
+function judgeCompactCandidate(
+  candidate: ScoredCandidate,
+  thresholds: SelectionThresholds,
+  findingCache: SelectionFindingCache,
 ): SelectionOutcome {
   const { cardId, versionId, score } = candidate;
 
@@ -183,15 +244,7 @@ function judgeCandidate(
       cardId,
       versionId,
       score,
-      findings:
-        findingCache === undefined
-          ? [
-              {
-                rule: "score.at.or.below.reject",
-                message: `score ${score} is at or below the reject threshold ${thresholds.reject}`,
-              },
-            ]
-          : rejectionFindings(findingCache, score, thresholds.reject),
+      findings: rejectionFindings(findingCache, score, thresholds.reject),
     };
   }
   return {
@@ -199,15 +252,7 @@ function judgeCandidate(
     cardId,
     versionId,
     score,
-    findings:
-      findingCache === undefined
-        ? [
-            {
-              rule: "score.below.admit",
-              message: `score ${score} is below the admit threshold ${thresholds.admit} and above the reject threshold ${thresholds.reject}`,
-            },
-          ]
-        : deferFindings(findingCache, score, thresholds),
+    findings: deferFindings(findingCache, score, thresholds),
   };
 }
 
