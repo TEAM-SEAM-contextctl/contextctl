@@ -20,6 +20,7 @@ contextctl help cards approve   # 한 명령
 - [지식 등록과 수집](#지식-등록과-수집) — `source`, `ingest`
 - [승인과 되돌리기](#승인과-되돌리기) — `cards`
 - [질의](#질의) — `query`, `serve`
+- [백업](#백업) — `backup create`, `backup restore`
 - [종료 코드](#종료-코드)
 
 ---
@@ -41,6 +42,8 @@ contextctl cards disable <cardId> [--by <who>] [--note <text>]
 contextctl cards rollback <cardId> <versionId> [--by <who>] [--note <text>]
 contextctl reachability [--state <state>]
 contextctl status [--json]
+contextctl backup create <directory>
+contextctl backup restore <directory> --target-home <new-directory>
 contextctl query "<질문>" [--json] [--max-context <n>]
 contextctl serve
 contextctl help [<command>]
@@ -160,6 +163,21 @@ MCP 서버로 뜹니다. `stdout` 은 JSON-RPC 전용이고 진단은 전부 `st
 
 에이전트에 노출되는 도구는 `resolve_context` **하나**입니다. 승인·거부 같은 제어 명령은
 의도적으로 없습니다 → [README](../README.ko.md#mcp-로-붙이기)
+
+---
+
+## 백업
+
+`backup create` 는 두 SQLite 저장소와 현재 Publication 계보가 참조하는 Qdrant 컬렉션을 **하나의
+묶음**으로 저장합니다. 절차와 복원 방법은 → [운영](operations.md#백업과-복원)
+
+| 명령 | |
+| -- | -- |
+| `backup create <directory>` | 목적지가 이미 있으면 덮어쓰지 않고 실패합니다 |
+| `backup restore <directory> --target-home <new-directory>` | 제자리 교체가 아니라 **새 홈으로만** 복원합니다 |
+
+두 명령 모두 `CONTEXTCTL_QDRANT_URL` 이 필요합니다. 벡터 없이 SQLite 만 담은 묶음은 복구에
+쓸 수 없기 때문입니다.
 
 ---
 

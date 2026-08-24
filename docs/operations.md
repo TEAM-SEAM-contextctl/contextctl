@@ -8,6 +8,7 @@
 - [status](#status) — 실행 영역별로 지금 일을 할 수 있는가
 - [reachability](#reachability) — 인덱싱됐는데 도달할 수 없는 범위
 - [문서에서 내용을 지웠을 때](#문서에서-내용을-지웠을-때) — Card 가 자동으로 내려가는 이유
+- [백업과 복원](#백업과-복원) — 무엇을 함께 묶어야 하는가
 - [색인이 비었을 때](#색인이-비었을-때) — 승인 Card 는 있는데 검색이 안 되는 경우
 - [제거](#제거) — 무엇을 지우면 무엇이 사라지는가
 
@@ -121,6 +122,51 @@ contextctl cards approve <cardId>      # 새 버전으로 복귀
 로 무엇이 내려갔는지 확인하십시오. 어느 규칙이 회수를 결정했는지는 Card 이력(lifecycle
 event)에 남습니다 — 삭제된 지식은 `change.removed`, 옛 색인에 남겨진 Card 는
 `scope.document.indexVersionSupersededByRemoval` 입니다.
+
+---
+
+## 백업과 복원
+
+**둘 중 하나만 백업하면 복구되지 않습니다.** SQLite 파일만 복사하면 Qdrant 색인과 시점이
+어긋나고, Qdrant 만 스냅샷으로 남기면 승인 Card 와 Publication 계보를 잃습니다.
+
+`backup create` 는 Ingestion 과 Registry 쓰기를 같은 순서로 잠근 뒤, 두 SQLite 저장소와 현재
+계보가 참조하는 Qdrant 컬렉션을 하나의 복구 묶음으로 저장합니다. 임베딩 모델 자산은 다시
+설치할 수 있으므로 넣지 않습니다.
+
+```bash
+CONTEXTCTL_QDRANT_URL=http://127.0.0.1:6333 \
+  contextctl backup create ./contextctl-backup-2026-08-24
+```
+
+묶음에는 원본 문서에서 만든 검색 청크와 승인 이력이 들어 있으므로 **운영 상태와 같은 보안
+등급으로** 보관합니다. Qdrant API 키는 묶음이나 manifest 에 기록되지 않습니다. 목적지
+디렉터리가 이미 있으면 덮어쓰지 않고 실패합니다.
+
+### 복원은 새 홈으로만 합니다
+
+기존 상태를 제자리에서 교체하지 않습니다. 새 상태 디렉터리와, 같은 이름의 contextctl 컬렉션이
+하나도 없는 대상 Qdrant 를 준비한 뒤 실행합니다. 복원 중에는 그 대상 홈을 쓰는 daemon 을
+시작하지 않습니다.
+
+```bash
+CONTEXTCTL_QDRANT_URL=http://127.0.0.1:7333 \
+  contextctl backup restore ./contextctl-backup-2026-08-24 \
+  --target-home ./contextctl-restored
+
+CONTEXTCTL_HOME=./contextctl-restored \
+CONTEXTCTL_QDRANT_URL=http://127.0.0.1:7333 \
+  contextctl status
+```
+
+`CONTEXTCTL_STATE_NAMESPACE_ID` 와 `CONTEXTCTL_SECURITY_DOMAIN` 은 백업을 만든 배포와 같아야
+하고, 다르면 SQLite 나 Qdrant 를 쓰기 전에 거부합니다
+→ [설정](configuration.md#상태-식별). `CONTEXTCTL_INGESTION_DATABASE` 나
+`CONTEXTCTL_REGISTRY_DATABASE` 를 따로 설정했다면 전환할 때 새 홈의 파일을 가리키도록 함께
+바꿉니다.
+
+**`status` 와 대표 질의를 확인한 뒤에만** 트래픽을 새 홈으로 넘깁니다. 실패해도 기존 홈과 기존
+Qdrant 가 그대로 남아 있으므로 되돌릴 수 있습니다 — 제자리 교체를 하지 않는 이유가 이것입니다.
 
 ---
 
