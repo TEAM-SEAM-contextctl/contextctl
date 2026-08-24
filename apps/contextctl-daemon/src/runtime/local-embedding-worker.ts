@@ -2,7 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 
 import {
   EmbeddingProviderFault,
-  TransformersJsLocalEmbeddingAdapter,
+  loadLocalDocumentEmbeddingInferenceResource,
 } from "@contextctl/ingestion-indexing";
 
 import type {
@@ -17,7 +17,7 @@ if (parentPort === null) {
 
 const port = parentPort;
 const bootstrap = workerData as LocalEmbeddingWorkerBootstrap;
-const provider = new TransformersJsLocalEmbeddingAdapter({
+const resource = loadLocalDocumentEmbeddingInferenceResource({
   artifactDirectory: bootstrap.artifactDirectory,
   profile: bootstrap.profile,
 });
@@ -37,19 +37,36 @@ port.on("message", (request: LocalEmbeddingWorkerRequest) => {
 async function handle(request: LocalEmbeddingWorkerRequest): Promise<void> {
   try {
     if (request.kind === "ready") {
-      await provider.ready();
+      await resource;
       post({ id: request.id, status: "ready" });
       return;
     }
-    const outputs = await provider.embed({
-      profile: bootstrap.profile,
-      inputs: request.inputs,
-      // Native inference is not safely pre-emptible. The parent may stop
-      // waiting, but this worker deliberately lets the call reach its honest
-      // completion boundary before accepting another one.
-      signal: new AbortController().signal,
+    const loaded = await resource;
+    if (request.kind === "token_count") {
+      const count = await loaded.tokenCount(request.text);
+      post({ id: request.id, status: "token_counted", count });
+      return;
+    }
+    if (request.kind === "token_counts") {
+      const counts = await Promise.all(
+        request.texts.map(async (text) => await loaded.tokenCount(text)),
+      );
+      post({ id: request.id, status: "token_counts_counted", counts });
+      return;
+    }
+    // Native inference is not safely pre-emptible. The parent may stop waiting,
+    // but this worker lets the call reach its honest completion boundary before
+    // accepting another message.
+    const tensor = await loaded.embed(request.texts, {
+      pooling: request.pooling,
+      normalize: true,
     });
-    post({ id: request.id, status: "embedded", outputs });
+    post({
+      id: request.id,
+      status: "embedded",
+      dimensions: tensor.dimensions,
+      data: tensor.data,
+    });
   } catch (cause: unknown) {
     const fault =
       cause instanceof EmbeddingProviderFault

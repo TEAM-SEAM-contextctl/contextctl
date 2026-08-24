@@ -48,7 +48,6 @@ import {
   DETERMINISTIC_CARD_SELECTION_PROFILE,
   DeterministicCardEmbeddingAdapter,
   InMemoryCardCandidateIndexStore,
-  isCardSelectionEmbeddingProfile,
   runStdioServer,
   type ApprovedCardCatalog,
   type CardCandidateIndexStore,
@@ -73,6 +72,7 @@ import {
   cardProfileExecutionKind,
   documentProfileExecutionKind,
   IngestionDocumentEmbeddingProviderFactory,
+  LocalEmbeddingInferenceResourcePool,
   SelectionCardEmbeddingProviderFactory,
   type CardEmbeddingProviderFactory,
   type DocumentEmbeddingProviderFactory,
@@ -103,7 +103,6 @@ import {
   type EmbeddingRuntimeSchedulerProfile,
 } from "./runtime/embedding-runtime-scheduler.js";
 import { IngestionPublicationRepository } from "./adapters/ingestion-publication-repository.js";
-import { LocalCardEmbeddingAdapter } from "./adapters/local-card-embedding-adapter.js";
 import { RegistryApprovedCardCatalog } from "./adapters/registry-approved-card-catalog.js";
 import { RegistryPublicationReadyNotifier } from "./adapters/registry-publication-ready-notifier.js";
 import { resolveVectorBackend } from "./vector-backend.js";
@@ -414,8 +413,8 @@ export interface DaemonRuntime {
    *
    * All three are separate values from the document ones above and none of them
    * is derived from the others at use time: separate profile, separate port,
-   * separate index. The one thing that may be shared is the loaded session
-   * inside `embeddingProvider`, which `LocalCardEmbeddingAdapter` wraps.
+   * separate index. The one thing that may be shared is the daemon-owned
+   * physical inference resource injected into both domain adapters.
    */
   readonly cardSelectionProfile: CardSelectionProfile;
   readonly cardEmbeddingProvider: CardEmbeddingPort;
@@ -530,6 +529,9 @@ export function createDaemonRuntime(
   const requiredBindings =
     options.requiredEmbeddingBindings ??
     currentProfilesOnly(embeddingProfile, cardSelectionProfile);
+  const localEmbeddingResources = new LocalEmbeddingInferenceResourcePool(
+    options.localEmbeddingInferenceResources,
+  );
 
   // Two calls, not one. Neither reads the other's configuration or result, which
   // is what makes local/local, local/remote, remote/local and remote/remote the
@@ -537,8 +539,12 @@ export function createDaemonRuntime(
   const ownedDocumentEmbeddingFactory =
     options.documentEmbeddingFactory === undefined
       ? new IngestionDocumentEmbeddingProviderFactory(
-          options.localEmbeddingInferenceResources,
+          localEmbeddingResources,
         )
+      : undefined;
+  const ownedCardEmbeddingFactory =
+    options.cardEmbeddingFactory === undefined
+      ? new SelectionCardEmbeddingProviderFactory(localEmbeddingResources)
       : undefined;
   const documentEmbedding = composeDocumentEmbedding({
     configuration: embeddingConfiguration.document,
@@ -562,11 +568,7 @@ export function createDaemonRuntime(
     securityDomain,
     artifactDirectory: options.embeddingArtifactDirectory,
     factory:
-      options.cardEmbeddingFactory ??
-      transitionalCardEmbeddingFactory(
-        documentEmbedding.provider,
-        embeddingProfile,
-      ),
+      options.cardEmbeddingFactory ?? ownedCardEmbeddingFactory!,
     providerOverride: cardProviderOverride(options, cardSelectionProfile),
   });
   const embeddingProvider = documentEmbedding.provider;
@@ -583,19 +585,28 @@ export function createDaemonRuntime(
       ? {}
       : { embeddingSchedulerProfile: options.embeddingSchedulerProfile }),
   });
-  if (ownedDocumentEmbeddingFactory !== undefined) {
+  if (
+    ownedDocumentEmbeddingFactory !== undefined ||
+    ownedCardEmbeddingFactory !== undefined
+  ) {
     control.lifecycle.registerCloseable("local_embedding_workers", async () => {
-      await ownedDocumentEmbeddingFactory.close();
+      await localEmbeddingResources.close();
     });
   }
   const prepareEmbeddingRuntime = async (): Promise<void> => {
-    await ownedDocumentEmbeddingFactory?.ready();
+    await localEmbeddingResources.ready();
   };
+  const documentLocalResource = localEmbeddingResources.resourceFor(
+    documentEmbedding.provider,
+  );
+  const cardLocalResource = localEmbeddingResources.resourceFor(
+    rawCardEmbeddingProvider,
+  );
   const sharesLocalEmbeddingSession =
     embeddingConfiguration.document.mode === "local" &&
     embeddingConfiguration.card.mode === "local" &&
-    rawCardEmbeddingProvider instanceof LocalCardEmbeddingAdapter &&
-    rawCardEmbeddingProvider.usesProvider(embeddingProvider);
+    documentLocalResource !== undefined &&
+    documentLocalResource === cardLocalResource;
   const queryDocumentEmbeddingProvider = sharesLocalEmbeddingSession
     ? new ScheduledDocumentEmbedding(
         embeddingProvider,
@@ -909,48 +920,6 @@ function cardProviderOverride(
     return new DeterministicCardEmbeddingAdapter({ profile });
   }
   return undefined;
-}
-
-/**
- * The Card factory this package still has to supply, and is scheduled to stop.
- *
- * Selection owns `CardEmbeddingPort` and will ship providers that implement it
- * directly. Until then the only thing in the repository that can answer a
- * production local Card profile is `LocalCardEmbeddingAdapter`, the translation
- * adapter this package holds, and deleting it before the replacement exists
- * would take local Card selection away rather than move it.
- *
- * Confined to one function on purpose. When Selection's adapters land, this
- * function and the adapter it names are one deletion, and the default becomes
- * `SelectionCardEmbeddingProviderFactory` — which is already the shape the
- * replacement plugs into. Anything a caller injects wins over this, so a
- * composition that has Selection's adapter never reaches it.
- *
- * The remote branch refuses and must not grow a wrapper of its own: reaching the
- * Card family through whatever provider the document family chose is exactly the
- * coupling two independent settings exist to prevent.
- */
-function transitionalCardEmbeddingFactory(
-  documentProvider: EmbeddingPort,
-  documentProfile: EmbeddingProfile,
-): CardEmbeddingProviderFactory {
-  const selection = new SelectionCardEmbeddingProviderFactory();
-  return {
-    createLocal: (input) => {
-      if (
-        isCardSelectionEmbeddingProfile(input.profile) &&
-        documentProfileExecutionKind(documentProfile) === "local"
-      ) {
-        return new LocalCardEmbeddingAdapter({
-          provider: documentProvider,
-          session: documentProfile,
-          card: input.profile,
-        });
-      }
-      return selection.createLocal(input);
-    },
-    createRemote: (input) => selection.createRemote(input),
-  };
 }
 
 /** Reads the runtime's configuration out of the environment. */

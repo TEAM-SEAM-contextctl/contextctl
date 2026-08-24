@@ -43,9 +43,9 @@ describe("the Card selection profile and the document profile pin one artifact",
   it("names the same artifact the document path loads, field for field", () => {
     const { card, document } = productionExecution();
 
-    // One artifact on disk, one loaded session: `LocalCardEmbeddingAdapter`
-    // serves Card vectors from the document provider, which is sound only
-    // while the two profiles describe identical weights.
+    // One artifact on disk and one daemon-owned physical session may be
+    // injected into the two domain-owned adapters only while the profiles
+    // describe identical weights.
     expect(card.artifactRepository).toBe(document.artifactRepository);
     expect(card.artifactRevision).toBe(document.artifactRevision);
     expect(card.artifactPath).toBe(document.artifactPath);

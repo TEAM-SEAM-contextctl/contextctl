@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { EmbeddingProviderFault } from "@contextctl/ingestion-indexing";
+import { isCardSelectionEmbeddingProfile } from "@contextctl/selection-delivery";
 
 import {
   composeCardEmbedding,
@@ -10,6 +11,7 @@ import {
 import {
   EmbeddingModeProfileMismatchError,
   IngestionDocumentEmbeddingProviderFactory,
+  LocalEmbeddingInferenceResourcePool,
   SelectionCardEmbeddingProviderFactory,
 } from "../../src/embedding/provider-factory.js";
 import { RemoteEmbeddingBindingError } from "../../src/embedding/remote-binding.js";
@@ -106,6 +108,7 @@ describe("embedding composition", () => {
     const factory = new IngestionDocumentEmbeddingProviderFactory([
       {
         execution: profile.execution,
+        modelMaxTokens: profile.modelMaxTokens,
         tokenCount: () => 1,
         embed: async (texts) => ({
           dimensions: [texts.length, profile.dimensions],
@@ -128,6 +131,58 @@ describe("embedding composition", () => {
       {
         key: "query",
         vector: [1, ...new Array(profile.dimensions - 1).fill(0)],
+      },
+    ]);
+  });
+
+  it("injects one physical resource into two domain-owned local adapters", async () => {
+    const documentProfile = localDocumentProfile();
+    const cardProfile = localCardProfile();
+    if (
+      documentProfile.execution.kind !== "local" ||
+      !isCardSelectionEmbeddingProfile(cardProfile) ||
+      cardProfile.execution.kind !== "local"
+    ) {
+      throw new Error("shared resource fixtures must use local production profiles");
+    }
+    const resource = {
+      execution: documentProfile.execution,
+      modelMaxTokens: documentProfile.modelMaxTokens,
+      tokenCount: async () => 1,
+      embed: async (texts: readonly string[]) => ({
+        dimensions: [texts.length, documentProfile.dimensions],
+        data: texts.flatMap(() => [
+          1,
+          ...new Array(documentProfile.dimensions - 1).fill(0),
+        ]),
+      }),
+    };
+    const resources = new LocalEmbeddingInferenceResourcePool([resource]);
+    const document = new IngestionDocumentEmbeddingProviderFactory(
+      resources,
+    ).createLocal({
+      profile: documentProfile,
+      artifactDirectory: "/unused",
+    });
+    const card = new SelectionCardEmbeddingProviderFactory(
+      resources,
+    ).createLocal({
+      profile: cardProfile,
+      artifactDirectory: "/unused",
+    });
+
+    expect(resources.resourceFor(document)).toBe(resource);
+    expect(resources.resourceFor(card)).toBe(resource);
+    expect(document).not.toBe(card);
+    await expect(
+      card.embed({
+        profile: cardProfile,
+        inputs: [{ key: "query", text: "배송 조회" }],
+      }),
+    ).resolves.toEqual([
+      {
+        key: "query",
+        vector: [1, ...new Array(cardProfile.dimensions - 1).fill(0)],
       },
     ]);
   });

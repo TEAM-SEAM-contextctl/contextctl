@@ -201,6 +201,7 @@ describe("Transformers.js local embedding adapter", () => {
               ...execution,
               artifactSha256: "f".repeat(64),
             },
+            modelMaxTokens: resource.modelMaxTokens,
             tokenCount: (text) => resource.tokenCount(text),
             embed: (texts, options) => resource.embed(texts, options),
           },
@@ -388,6 +389,7 @@ class RecordingRuntimeFactory implements LocalFeatureExtractionRuntimeFactory {
   async load(input: {
     readonly artifactDirectory: string;
     readonly execution: LocalDocumentEmbeddingExecution;
+    readonly modelMaxTokens: number;
   }): Promise<LocalFeatureExtractionRuntime> {
     this.loads.push(input);
     this.runtime.execution = input.execution;
@@ -397,6 +399,7 @@ class RecordingRuntimeFactory implements LocalFeatureExtractionRuntimeFactory {
 
 class RecordingRuntime implements LocalFeatureExtractionRuntime {
   execution = {} as LocalDocumentEmbeddingExecution;
+  modelMaxTokens = 8;
   readonly texts: string[][] = [];
   readonly options: unknown[] = [];
   readonly tokenCounts = new Map<string, number>();

@@ -236,7 +236,7 @@ describe("OpenAiCompatibleCardEmbeddingAdapter", () => {
     ).toThrow(TypeError);
   });
 
-  it("refuses a duplicated key, a blank key, an empty text and an oversized batch before any byte leaves", async () => {
+  it("refuses a duplicated key, a blank key, an empty text and more than one catalog before any byte leaves", async () => {
     let calls = 0;
     const adapter = adapterWith(
       async () => {
@@ -250,7 +250,10 @@ describe("OpenAiCompatibleCardEmbeddingAdapter", () => {
       [{ key: "dup", text: "alpha" }, { key: "dup", text: "beta" }],
       [{ key: "  ", text: "alpha" }],
       [{ key: "k", text: "   " }],
-      [{ key: "a", text: "x" }, { key: "b", text: "y" }, { key: "c", text: "z" }],
+      Array.from({ length: 10_001 }, (_, index) => ({
+        key: `card_${String(index)}`,
+        text: "x",
+      })),
     ]) {
       await expect(adapter.embed(request(inputs))).rejects.toMatchObject({
         code: "invalid_request",
@@ -258,6 +261,46 @@ describe("OpenAiCompatibleCardEmbeddingAdapter", () => {
       });
     }
     expect(calls).toBe(0);
+  });
+
+  it("keeps one logical catalog call while splitting bounded provider requests", async () => {
+    const captured: string[][] = [];
+    const adapter = adapterWith(
+      async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as { input: string[] };
+        captured.push(body.input);
+        return Response.json({
+          model: remoteProfile.model,
+          data: body.input.map((_, index) => ({
+            index,
+            embedding: index % 2 === 0 ? [1, 0, 0] : [0, 1, 0],
+          })),
+        });
+      },
+      { maxBatchSize: 2 },
+    );
+
+    await expect(
+      adapter.embed(
+        request(
+          Array.from({ length: 5 }, (_, index) => ({
+            key: `card_${String(index)}`,
+            text: `text_${String(index)}`,
+          })),
+        ),
+      ),
+    ).resolves.toEqual([
+      { key: "card_0", vector: [1, 0, 0] },
+      { key: "card_1", vector: [0, 1, 0] },
+      { key: "card_2", vector: [1, 0, 0] },
+      { key: "card_3", vector: [0, 1, 0] },
+      { key: "card_4", vector: [1, 0, 0] },
+    ]);
+    expect(captured).toEqual([
+      ["text_0", "text_1"],
+      ["text_2", "text_3"],
+      ["text_4"],
+    ]);
   });
 
   it("answers an empty batch without a call", async () => {

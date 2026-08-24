@@ -10,9 +10,14 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const releaseVersion = await readReleaseVersion();
-const productMode = process.argv[2] === "--product-e2e";
+const productArgument = process.argv[2];
+const productMode =
+  productArgument === "--product-e2e" ||
+  productArgument === "--product-e2e-local-matrix";
 if (process.argv.length !== (productMode ? 3 : 2)) {
-  throw new Error("usage: node scripts/verify-release-package.mjs [--product-e2e]");
+  throw new Error(
+    "usage: node scripts/verify-release-package.mjs [--product-e2e|--product-e2e-local-matrix]",
+  );
 }
 
 const workspaces = Object.freeze([
@@ -121,17 +126,25 @@ try {
 
   if (productMode) {
     embeddingProvider = await startEmbeddingProvider();
-    await verifyRemoteProduct({
+    await verifyProductMatrix({
       executable,
       temporaryRoot,
       installationRoot: installDirectory,
       provider: embeddingProvider,
+      combinations:
+        productArgument === "--product-e2e-local-matrix"
+          ? [
+              { document: "local", card: "local" },
+              { document: "local", card: "remote" },
+              { document: "remote", card: "local" },
+            ]
+          : [{ document: "remote", card: "remote" }],
     });
   }
 
   process.stdout.write(
     productMode
-      ? `verified ${workspaces.length} release tarballs and the remote/remote product lifecycle\n`
+      ? `verified ${workspaces.length} release tarballs and the configured product lifecycle matrix\n`
       : `verified ${workspaces.length} release tarballs and the installed contextctl command\n`,
   );
 } finally {
@@ -257,13 +270,25 @@ async function assertClosedFailureWithoutQdrant(executable, environment, context
   }
 }
 
-async function verifyRemoteProduct(input) {
+async function verifyProductMatrix(input) {
+  for (const combination of input.combinations) {
+    await verifyProduct({ ...input, combination });
+  }
+}
+
+async function verifyProduct(input) {
   const qdrantUrl = requiredEnvironment("CONTEXTCTL_RELEASE_E2E_QDRANT_URL");
-  const productHome = join(input.temporaryRoot, "product-home");
-  const restoredHome = join(input.temporaryRoot, "restored-home");
-  const backupDirectory = join(input.temporaryRoot, "backup");
-  const documentPath = join(input.temporaryRoot, "shipping.md");
-  const suffix = `${Date.now().toString(36)}-${process.pid.toString(36)}`;
+  const combinationName = `${input.combination.document}-${input.combination.card}`;
+  const productHome = join(input.temporaryRoot, `product-home-${combinationName}`);
+  const restoredHome = join(input.temporaryRoot, `restored-home-${combinationName}`);
+  const backupDirectory = join(input.temporaryRoot, `backup-${combinationName}`);
+  const documentPath = join(input.temporaryRoot, `shipping-${combinationName}.md`);
+  const suffix = [
+    input.combination.document,
+    input.combination.card,
+    Date.now().toString(36),
+    process.pid.toString(36),
+  ].join("-");
   const profileModuleRoot = join(input.installationRoot, "node_modules", "@contextctl");
   const ingestion = await import(
     fileUrl(join(profileModuleRoot, "ingestion-indexing", "dist", "index.js"))
@@ -271,21 +296,44 @@ async function verifyRemoteProduct(input) {
   const selection = await import(
     fileUrl(join(profileModuleRoot, "selection-delivery", "dist", "index.js"))
   );
-  const profiles = remoteProfiles(ingestion, selection, suffix);
+  const profiles = productProfiles(
+    ingestion,
+    selection,
+    suffix,
+    input.combination,
+  );
   const environment = {
     ...process.env,
     CONTEXTCTL_HOME: productHome,
     CONTEXTCTL_QDRANT_URL: qdrantUrl,
     CONTEXTCTL_STATE_NAMESPACE_ID: `release-e2e-${suffix}`,
     CONTEXTCTL_SECURITY_DOMAIN: `release-e2e-${suffix}`,
-    CONTEXTCTL_DOCUMENT_EMBEDDING_MODE: "remote",
-    CONTEXTCTL_DOCUMENT_EMBEDDING_ENDPOINT: input.provider.documentEndpoint,
-    CONTEXTCTL_DOCUMENT_EMBEDDING_API_KEY: input.provider.documentCredential,
+    CONTEXTCTL_DOCUMENT_EMBEDDING_MODE: input.combination.document,
     CONTEXTCTL_DOCUMENT_EMBEDDING_PROFILE: JSON.stringify(profiles.document),
-    CONTEXTCTL_CARD_EMBEDDING_MODE: "remote",
-    CONTEXTCTL_CARD_EMBEDDING_ENDPOINT: input.provider.cardEndpoint,
-    CONTEXTCTL_CARD_EMBEDDING_API_KEY: input.provider.cardCredential,
+    CONTEXTCTL_CARD_EMBEDDING_MODE: input.combination.card,
     CONTEXTCTL_CARD_EMBEDDING_PROFILE: JSON.stringify(profiles.card),
+    ...(input.combination.document === "remote"
+      ? {
+          CONTEXTCTL_DOCUMENT_EMBEDDING_ENDPOINT:
+            input.provider.documentEndpoint,
+          CONTEXTCTL_DOCUMENT_EMBEDDING_API_KEY:
+            input.provider.documentCredential,
+        }
+      : {}),
+    ...(input.combination.card === "remote"
+      ? {
+          CONTEXTCTL_CARD_EMBEDDING_ENDPOINT: input.provider.cardEndpoint,
+          CONTEXTCTL_CARD_EMBEDDING_API_KEY: input.provider.cardCredential,
+        }
+      : {}),
+    ...(input.combination.document === "local" ||
+    input.combination.card === "local"
+      ? {
+          CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY: requiredEnvironment(
+            "CONTEXTCTL_RELEASE_E2E_ASSET_ROOT",
+          ),
+        }
+      : {}),
     ...(process.env.CONTEXTCTL_RELEASE_E2E_QDRANT_API_KEY === undefined
       ? {}
       : {
@@ -293,7 +341,12 @@ async function verifyRemoteProduct(input) {
             process.env.CONTEXTCTL_RELEASE_E2E_QDRANT_API_KEY,
         }),
   };
-  delete environment.CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY;
+  if (
+    input.combination.document === "remote" &&
+    input.combination.card === "remote"
+  ) {
+    delete environment.CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY;
+  }
   delete environment.CONTEXTCTL_CARD_MEANING_BASE_URL;
   delete environment.CONTEXTCTL_CARD_MEANING_MODEL;
   delete environment.CONTEXTCTL_CARD_MEANING_API_KEY;
@@ -364,37 +417,43 @@ async function verifyRemoteProduct(input) {
   }
 }
 
-function remoteProfiles(ingestion, selection, suffix) {
+function productProfiles(ingestion, selection, suffix, combination) {
   const documentLocal = ingestion.DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
   const cardLocal = selection.CARD_SELECTION_EMBEDDING_PROFILE;
   const model = `contextctl/release-e2e-${suffix}`;
   return {
-    document: {
-      ...documentLocal,
-      id: `document-release-e2e-${suffix}`,
-      model,
-      modelRevision: `release-e2e-${suffix}`,
-      pooling: "provider_defined",
-      execution: {
-        kind: "remote",
-        adapter: "openai-compatible",
-        adapterVersion: "1",
-        model,
-      },
-    },
-    card: {
-      ...cardLocal,
-      id: `card-release-e2e-${suffix}`,
-      model,
-      modelRevision: `release-e2e-${suffix}`,
-      pooling: "provider_defined",
-      execution: {
-        kind: "remote",
-        adapter: "openai-compatible",
-        adapterVersion: "1",
-        model,
-      },
-    },
+    document:
+      combination.document === "local"
+        ? documentLocal
+        : {
+            ...documentLocal,
+            id: `document-release-e2e-${suffix}`,
+            model,
+            modelRevision: `release-e2e-${suffix}`,
+            pooling: "provider_defined",
+            execution: {
+              kind: "remote",
+              adapter: "openai-compatible",
+              adapterVersion: "1",
+              model,
+            },
+          },
+    card:
+      combination.card === "local"
+        ? cardLocal
+        : {
+            ...cardLocal,
+            id: `card-release-e2e-${suffix}`,
+            model,
+            modelRevision: `release-e2e-${suffix}`,
+            pooling: "provider_defined",
+            execution: {
+              kind: "remote",
+              adapter: "openai-compatible",
+              adapterVersion: "1",
+              model,
+            },
+          },
   };
 }
 

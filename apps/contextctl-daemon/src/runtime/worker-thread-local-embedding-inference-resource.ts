@@ -3,15 +3,11 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import {
-  embeddingProfilesMatch,
   EmbeddingProviderFault,
   type DocumentRetrievalEmbeddingProfile,
-  type EmbeddingPort,
-  type EmbeddingProviderInput,
-  type EmbeddingProviderOutput,
-  type EmbeddingProviderRequest,
+  type LocalDocumentEmbeddingExecution,
+  type LocalDocumentEmbeddingInferenceResource,
 } from "@contextctl/ingestion-indexing";
-
 import type {
   LocalEmbeddingWorkerBootstrap,
   LocalEmbeddingWorkerRequest,
@@ -25,17 +21,18 @@ interface PendingWorkerRequest {
 }
 
 /**
- * Daemon execution wrapper for Ingestion's local embedding adapter.
+ * Daemon-owned proxy for one physical local inference session.
  *
- * The worker owns exactly one domain adapter and therefore one tokenizer and
- * ONNX session. Requests and responses still use Ingestion's port unchanged;
- * this wrapper only keeps CPU-heavy tokenization/inference off the daemon event
- * loop. It is persistent for the daemon lifetime, so no per-request process or
- * model-startup cost is introduced.
+ * It implements only the two domains' minimal resource interfaces, never either
+ * embedding port. Their adapters stay in their packages and retain profile,
+ * input, output and fault semantics. The worker keeps tokenizer and ONNX work
+ * off the daemon event loop and is persistent for the daemon lifetime.
  */
-export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
-  readonly providerKind = "local" as const;
-  readonly embeddingProfile: DocumentRetrievalEmbeddingProfile;
+export class WorkerThreadLocalEmbeddingInferenceResource
+  implements LocalDocumentEmbeddingInferenceResource
+{
+  readonly execution: LocalDocumentEmbeddingExecution;
+  readonly modelMaxTokens: number;
   readonly #bootstrap: LocalEmbeddingWorkerBootstrap;
   readonly #pending = new Map<number, PendingWorkerRequest>();
   #worker: Worker | undefined;
@@ -46,7 +43,11 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
     readonly artifactDirectory: string;
     readonly profile: DocumentRetrievalEmbeddingProfile;
   }) {
-    this.embeddingProfile = input.profile;
+    if (input.profile.execution.kind !== "local") {
+      throw new TypeError("local inference worker requires a local profile");
+    }
+    this.execution = input.profile.execution;
+    this.modelMaxTokens = input.profile.modelMaxTokens;
     this.#bootstrap = {
       artifactDirectory: input.artifactDirectory,
       profile: input.profile,
@@ -60,22 +61,36 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
     }
   }
 
+  async tokenCount(text: string): Promise<number> {
+    const response = await this.#request({ kind: "token_count", text });
+    if (response.status !== "token_counted") {
+      throw new EmbeddingProviderFault("invalid_response", false);
+    }
+    return response.count;
+  }
+
+  async tokenCounts(texts: readonly string[]): Promise<readonly number[]> {
+    const response = await this.#request({ kind: "token_counts", texts });
+    if (response.status !== "token_counts_counted") {
+      throw new EmbeddingProviderFault("invalid_response", false);
+    }
+    return response.counts;
+  }
+
   async embed(
-    request: EmbeddingProviderRequest,
-  ): Promise<readonly EmbeddingProviderOutput[]> {
-    request.signal.throwIfAborted();
-    if (!embeddingProfilesMatch(request.profile, this.embeddingProfile)) {
+    texts: readonly string[],
+    options: { readonly pooling: "cls" | "mean"; readonly normalize: true },
+  ): Promise<{ readonly dimensions: readonly number[]; readonly data: readonly number[] }> {
+    if (options.normalize !== true) {
       throw new EmbeddingProviderFault("invalid_request", false);
     }
-    if (request.inputs.length === 0) return [];
     const response = await this.#request(
-      { kind: "embed", inputs: request.inputs },
-      request.signal,
+      { kind: "embed", texts, pooling: options.pooling },
     );
     if (response.status !== "embedded") {
       throw new EmbeddingProviderFault("invalid_response", false);
     }
-    return response.outputs;
+    return { dimensions: response.dimensions, data: response.data };
   }
 
   async close(): Promise<void> {
@@ -89,15 +104,20 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
     this.#pending.clear();
     const worker = this.#worker;
     this.#worker = undefined;
-    if (worker !== undefined) await worker.terminate();
+    if (worker !== undefined) {
+      await worker.terminate();
+    }
   }
 
   async #request(
     request:
       | { readonly kind: "ready" }
+      | { readonly kind: "token_count"; readonly text: string }
+      | { readonly kind: "token_counts"; readonly texts: readonly string[] }
       | {
           readonly kind: "embed";
-          readonly inputs: readonly EmbeddingProviderInput[];
+          readonly texts: readonly string[];
+          readonly pooling: "cls" | "mean";
         },
     signal?: AbortSignal,
   ): Promise<LocalEmbeddingWorkerResponse> {
@@ -106,10 +126,7 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
     }
     signal?.throwIfAborted();
     const id = this.#sequence++;
-    const message: LocalEmbeddingWorkerRequest =
-      request.kind === "ready"
-        ? { kind: "ready", id }
-        : { kind: "embed", id, inputs: request.inputs };
+    const message: LocalEmbeddingWorkerRequest = { ...request, id };
     const worker = this.#getWorker();
     return await new Promise<LocalEmbeddingWorkerResponse>((resolve, reject) => {
       const onAbort = (): void => {
@@ -118,7 +135,6 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
         this.#pending.delete(id);
         pending.detach();
         reject(signal?.reason);
-        this.#unrefIfIdle();
       };
       this.#pending.set(id, {
         resolve,
@@ -130,14 +146,12 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
         onAbort();
         return;
       }
-      worker.ref();
       try {
         worker.postMessage(message);
       } catch (cause: unknown) {
         this.#pending.delete(id);
         signal?.removeEventListener("abort", onAbort);
         reject(cause);
-        this.#unrefIfIdle();
       }
     });
   }
@@ -147,7 +161,6 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
     const worker = new Worker(resolveWorkerUrl(), {
       workerData: this.#bootstrap,
     });
-    worker.unref();
     worker.on("message", (response: LocalEmbeddingWorkerResponse) => {
       const pending = this.#pending.get(response.id);
       if (pending === undefined) return;
@@ -160,7 +173,6 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
       } else {
         pending.resolve(response);
       }
-      this.#unrefIfIdle();
     });
     worker.on("error", (cause) => {
       this.#failPending(cause);
@@ -187,11 +199,6 @@ export class WorkerThreadLocalEmbeddingAdapter implements EmbeddingPort {
       pending.reject(failure);
     }
     this.#pending.clear();
-    this.#unrefIfIdle();
-  }
-
-  #unrefIfIdle(): void {
-    if (this.#pending.size === 0) this.#worker?.unref();
   }
 }
 

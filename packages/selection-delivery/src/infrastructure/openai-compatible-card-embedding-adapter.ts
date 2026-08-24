@@ -45,7 +45,7 @@ export interface OpenAiCompatibleCardEmbeddingAdapterOptions {
   /** Sent on every request, typically an `Authorization` header. Never logged. */
   readonly headers?: Readonly<Record<string, string>>;
   readonly fetch?: typeof globalThis.fetch;
-  /** The most inputs one request may carry. Defaults to 64, at most 2,048. */
+  /** The most inputs one physical provider request may carry. Defaults to 64. */
   readonly maxBatchSize?: number;
 }
 
@@ -58,6 +58,7 @@ const FORBIDDEN_HEADERS = new Set([
 ]);
 const DEFAULT_MAX_BATCH_SIZE = 64;
 const MAX_CONFIGURED_BATCH_SIZE = 2_048;
+const MAX_LOGICAL_INPUTS = 10_000;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
@@ -109,7 +110,7 @@ export class OpenAiCompatibleCardEmbeddingAdapter implements CardEmbeddingPort {
       return [];
     }
     if (
-      request.inputs.length > this.#maxBatchSize ||
+      request.inputs.length > MAX_LOGICAL_INPUTS ||
       new Set(request.inputs.map((input) => input.key)).size !==
         request.inputs.length ||
       request.inputs.some(
@@ -120,9 +121,22 @@ export class OpenAiCompatibleCardEmbeddingAdapter implements CardEmbeddingPort {
       // back to its output, and an empty text has no vector to ask for.
       throw new CardEmbeddingFault("invalid_request", false);
     }
+    const outputs: CardEmbeddingOutput[] = [];
+    for (let offset = 0; offset < request.inputs.length; offset += this.#maxBatchSize) {
+      request.signal?.throwIfAborted();
+      const inputs = request.inputs.slice(offset, offset + this.#maxBatchSize);
+      outputs.push(...(await this.#embedBatch(request, inputs)));
+    }
+    return outputs;
+  }
+
+  async #embedBatch(
+    request: CardEmbeddingRequest,
+    inputs: CardEmbeddingRequest["inputs"],
+  ): Promise<readonly CardEmbeddingOutput[]> {
     const body = JSON.stringify({
       model: this.#model,
-      input: request.inputs.map((input) => input.text),
+      input: inputs.map((input) => input.text),
     });
     if (new TextEncoder().encode(body).byteLength > MAX_REQUEST_BYTES) {
       throw new CardEmbeddingFault("input_limit_exceeded", false);
@@ -163,7 +177,7 @@ export class OpenAiCompatibleCardEmbeddingAdapter implements CardEmbeddingPort {
       }
       throw new CardEmbeddingFault("invalid_response", false);
     }
-    return parseResponse(payload, request);
+    return parseResponse(payload, { ...request, inputs });
   }
 }
 

@@ -1,23 +1,28 @@
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   isDocumentRetrievalEmbeddingProfile,
   OpenAiCompatibleEmbeddingAdapter,
   TransformersJsLocalEmbeddingAdapter,
+  type DocumentRetrievalEmbeddingProfile,
   type EmbeddingPort,
   type EmbeddingProfile,
   type LocalDocumentEmbeddingInferenceResource,
+  type LocalDocumentEmbeddingExecution,
 } from "@contextctl/ingestion-indexing";
 import {
   isCardSelectionEmbeddingProfile,
   OpenAiCompatibleCardEmbeddingAdapter,
+  TransformersJsLocalCardEmbeddingAdapter,
   type CardEmbeddingPort,
   type CardSelectionProfile,
+  type LocalCardEmbeddingInferenceResource,
 } from "@contextctl/selection-delivery";
 
 import type { EmbeddingLayer, EmbeddingExecutionMode } from "./configuration.js";
 import type { RemoteEmbeddingBinding } from "./remote-binding.js";
-import { WorkerThreadLocalEmbeddingAdapter } from "../runtime/worker-thread-local-embedding-adapter.js";
+import { WorkerThreadLocalEmbeddingInferenceResource } from "../runtime/worker-thread-local-embedding-inference-resource.js";
 
 /**
  * How the composition asks for a document embedding provider.
@@ -55,14 +60,13 @@ export interface CardEmbeddingProviderFactory {
 }
 
 /**
- * An adapter the owning domain has not shipped yet.
+ * A requested adapter/profile combination that the owning domain cannot bind.
  *
  * Thrown rather than substituted. The whole point of the two-layer split is that
  * a Card vector and a document vector come from independently chosen providers,
  * so quietly answering a Card request with a document adapter would produce
  * vectors that are wrong in a way nothing downstream can detect. A named,
- * greppable failure is what makes the rebase step obvious once the domain branch
- * lands.
+ * greppable failure makes an invalid production graph fail during composition.
  */
 export class EmbeddingAdapterUnavailableError extends Error {
   constructor(
@@ -77,6 +81,129 @@ export class EmbeddingAdapterUnavailableError extends Error {
   }
 }
 
+type SharedLocalEmbeddingInferenceResource =
+  LocalDocumentEmbeddingInferenceResource & LocalCardEmbeddingInferenceResource;
+
+interface LocalEmbeddingWorkerEntry {
+  readonly artifactDirectory: string;
+  readonly execution: LocalDocumentEmbeddingExecution;
+  readonly worker: WorkerThreadLocalEmbeddingInferenceResource;
+}
+
+/**
+ * Owns physical local sessions without owning either domain's embedding port.
+ *
+ * An exact execution match receives the same object. Different artifacts or
+ * runtime semantics receive different workers, and no profile is translated
+ * into another profile merely to make sharing possible.
+ */
+export class LocalEmbeddingInferenceResourcePool {
+  readonly #injected: readonly LocalDocumentEmbeddingInferenceResource[];
+  readonly #workers: LocalEmbeddingWorkerEntry[] = [];
+  readonly #providerResources = new WeakMap<object, SharedLocalEmbeddingInferenceResource>();
+
+  constructor(
+    injected: readonly LocalDocumentEmbeddingInferenceResource[] = [],
+  ) {
+    this.#injected = injected;
+  }
+
+  acquireDocument(input: {
+    readonly profile: EmbeddingProfile;
+    readonly artifactDirectory: string;
+  }): LocalDocumentEmbeddingInferenceResource {
+    if (!isDocumentRetrievalEmbeddingProfile(input.profile)) {
+      throw new EmbeddingAdapterUnavailableError("document", "local", "Ingestion");
+    }
+    return this.#acquire(input.profile, input.artifactDirectory);
+  }
+
+  acquireCard(input: {
+    readonly profile: CardSelectionProfile;
+    readonly artifactDirectory: string;
+  }): LocalCardEmbeddingInferenceResource {
+    if (
+      !isCardSelectionEmbeddingProfile(input.profile) ||
+      input.profile.execution.kind !== "local"
+    ) {
+      throw new EmbeddingAdapterUnavailableError("card", "local", "Selection");
+    }
+    const injected = this.#findInjected(input.profile.execution);
+    if (injected !== undefined) return asCardResource(injected);
+    const physicalProfile = DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE;
+    if (
+      physicalProfile.execution.kind !== "local" ||
+      !isDeepStrictEqual(physicalProfile.execution, input.profile.execution)
+    ) {
+      throw new EmbeddingAdapterUnavailableError("card", "local", "Selection");
+    }
+    return asCardResource(this.#acquire(physicalProfile, input.artifactDirectory));
+  }
+
+  bindProvider(
+    provider: object,
+    resource: LocalDocumentEmbeddingInferenceResource | LocalCardEmbeddingInferenceResource,
+  ): void {
+    this.#providerResources.set(provider, resource as SharedLocalEmbeddingInferenceResource);
+  }
+
+  resourceFor(provider: object): SharedLocalEmbeddingInferenceResource | undefined {
+    return this.#providerResources.get(provider);
+  }
+
+  async ready(): Promise<void> {
+    await Promise.all(
+      this.#workers.map(async ({ worker }) => await worker.ready()),
+    );
+  }
+
+  async close(): Promise<void> {
+    await Promise.all(
+      this.#workers.map(async ({ worker }) => await worker.close()),
+    );
+  }
+
+  #acquire(
+    profile: DocumentRetrievalEmbeddingProfile,
+    artifactDirectory: string,
+  ): LocalDocumentEmbeddingInferenceResource {
+    if (profile.execution.kind !== "local") {
+      throw new EmbeddingAdapterUnavailableError("document", "local", "Ingestion");
+    }
+    const injected = this.#findInjected(profile.execution);
+    if (injected !== undefined) return injected;
+    const existing = this.#workers.find(
+      (entry) =>
+        entry.artifactDirectory === artifactDirectory &&
+        isDeepStrictEqual(entry.execution, profile.execution),
+    );
+    if (existing !== undefined) return existing.worker;
+    const execution = profile.execution;
+    const worker = new WorkerThreadLocalEmbeddingInferenceResource({
+      artifactDirectory,
+      profile,
+    });
+    this.#workers.push({
+      artifactDirectory,
+      execution,
+      worker,
+    });
+    return worker;
+  }
+
+  #findInjected(execution: unknown): LocalDocumentEmbeddingInferenceResource | undefined {
+    return this.#injected.find((candidate) =>
+      isDeepStrictEqual(candidate.execution, execution),
+    );
+  }
+}
+
+function asCardResource(
+  resource: LocalDocumentEmbeddingInferenceResource,
+): LocalCardEmbeddingInferenceResource {
+  return resource as SharedLocalEmbeddingInferenceResource;
+}
+
 /**
  * Binds the adapters Ingestion ships today.
  *
@@ -88,13 +215,17 @@ export class EmbeddingAdapterUnavailableError extends Error {
 export class IngestionDocumentEmbeddingProviderFactory
   implements DocumentEmbeddingProviderFactory
 {
-  readonly #localResources: readonly LocalDocumentEmbeddingInferenceResource[];
-  readonly #workers: WorkerThreadLocalEmbeddingAdapter[] = [];
+  readonly #resources: LocalEmbeddingInferenceResourcePool;
 
   constructor(
-    localResources: readonly LocalDocumentEmbeddingInferenceResource[] = [],
+    resources:
+      | LocalEmbeddingInferenceResourcePool
+      | readonly LocalDocumentEmbeddingInferenceResource[] = [],
   ) {
-    this.#localResources = localResources;
+    this.#resources =
+      resources instanceof LocalEmbeddingInferenceResourcePool
+        ? resources
+        : new LocalEmbeddingInferenceResourcePool(resources);
   }
 
   createLocal(input: {
@@ -108,22 +239,13 @@ export class IngestionDocumentEmbeddingProviderFactory
         "Ingestion",
       );
     }
-    const profile = input.profile;
-    const resource = this.#localResources.find((candidate) =>
-      isDeepStrictEqual(candidate.execution, profile.execution),
-    );
-    if (resource !== undefined) {
-      return new TransformersJsLocalEmbeddingAdapter({
-        inferenceResource: resource,
-        profile,
-      });
-    }
-    const worker = new WorkerThreadLocalEmbeddingAdapter({
-      artifactDirectory: input.artifactDirectory,
-      profile,
+    const resource = this.#resources.acquireDocument(input);
+    const provider = new TransformersJsLocalEmbeddingAdapter({
+      inferenceResource: resource,
+      profile: input.profile,
     });
-    this.#workers.push(worker);
-    return worker;
+    this.#resources.bindProvider(provider, resource);
+    return provider;
   }
 
   createRemote(input: {
@@ -148,38 +270,48 @@ export class IngestionDocumentEmbeddingProviderFactory
 
   /** Loads every local session before ingress opens. */
   async ready(): Promise<void> {
-    await Promise.all(this.#workers.map(async (worker) => await worker.ready()));
+    await this.#resources.ready();
   }
 
   /** Terminates the persistent execution workers during daemon shutdown. */
   async close(): Promise<void> {
-    await Promise.all(this.#workers.map(async (worker) => await worker.close()));
+    await this.#resources.close();
   }
 }
 
 /**
  * Binds the Card adapters Selection owns and exports.
  *
- * Selection now publishes its OpenAI-compatible remote adapter. The local path
- * still refuses until Selection publishes a local adapter that implements its
- * own port directly; the graph's existing local translation adapter is confined
- * to the compatibility composition in `main.ts` and is being retired rather
- * than extended.
- *
- * Refusing the missing local branch is the correct interim behaviour, not a
- * placeholder. Wrapping Ingestion's port would rebuild the translation being
- * removed, and falling back to the deterministic adapter would put hash vectors
- * in an index whose profile claims a model.
+ * Both branches construct a provider Selection owns and bind its own profile.
+ * A matching local execution may share the daemon-owned physical inference
+ * resource with Ingestion, but no domain port wraps or translates the other.
  */
 export class SelectionCardEmbeddingProviderFactory
   implements CardEmbeddingProviderFactory
 {
+  readonly #resources: LocalEmbeddingInferenceResourcePool;
+
+  constructor(resources = new LocalEmbeddingInferenceResourcePool()) {
+    this.#resources = resources;
+  }
+
   createLocal(input: {
     readonly profile: CardSelectionProfile;
     readonly artifactDirectory: string;
   }): CardEmbeddingPort {
-    void input;
-    throw new EmbeddingAdapterUnavailableError("card", "local", "Selection");
+    if (
+      !isCardSelectionEmbeddingProfile(input.profile) ||
+      input.profile.execution.kind !== "local"
+    ) {
+      throw new EmbeddingAdapterUnavailableError("card", "local", "Selection");
+    }
+    const resource = this.#resources.acquireCard(input);
+    const provider = new TransformersJsLocalCardEmbeddingAdapter({
+      inferenceResource: resource,
+      profile: input.profile,
+    });
+    this.#resources.bindProvider(provider, resource);
+    return provider;
   }
 
   createRemote(input: {
