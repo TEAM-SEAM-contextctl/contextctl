@@ -78,6 +78,14 @@ interface CatalogStatistics {
   readonly averageWeightedLength: number;
 }
 
+interface QueryAnalysis {
+  readonly tokens: readonly string[];
+  /** First occurrence of each token, retained in query order. */
+  readonly uniqueTokens: readonly string[];
+  readonly ngrams: ReadonlySet<string>;
+  readonly sourceIntents: ReadonlySet<SourceIntent>;
+}
+
 /**
  * BM25 corpus statistics belong to an immutable approved-catalog generation,
  * not to a query. A weak key releases them when that generation is retired.
@@ -99,13 +107,17 @@ export function scoreCardsAgainstQuery(
   cards: readonly ApprovedCard[],
 ): readonly CandidateScore[] {
   const query = normalizeText(queryText);
-  const queryTokens = tokenize(query);
-  const queryNgrams = toCharacterNgrams(query);
-  const sourceIntents = inferSourceIntents(queryTokens);
+  const tokens = tokenize(query);
+  const analysis: QueryAnalysis = {
+    tokens,
+    uniqueTokens: uniqueInOrder(tokens),
+    ngrams: toCharacterNgrams(query),
+    sourceIntents: inferSourceIntents(tokens),
+  };
   const statistics = catalogStatistics(cards);
 
   return statistics.cards.map((indexed) =>
-    scoreCard(queryTokens, queryNgrams, sourceIntents, indexed, statistics),
+    scoreCard(analysis, indexed, statistics),
   );
 }
 
@@ -209,28 +221,25 @@ function appendFields(
 }
 
 function scoreCard(
-  queryTokens: readonly string[],
-  queryNgrams: ReadonlySet<string>,
-  sourceIntents: ReadonlySet<SourceIntent>,
+  query: QueryAnalysis,
   indexed: IndexedCard,
   statistics: CatalogStatistics,
 ): CandidateScore {
-  if (queryTokens.length === 0) return emptyScore(indexed.card);
+  if (query.tokens.length === 0) return emptyScore(indexed.card);
 
-  const bm25 = bm25Score(queryTokens, indexed, statistics);
+  const bm25 = bm25Score(query.uniqueTokens, indexed, statistics);
   const normalizedBm25 = normalizeBm25(bm25);
   const directSignals = collectDirectSignals(
-    queryTokens,
+    query,
     indexed,
     statistics,
     normalizedBm25,
-    sourceIntents,
   );
   const direct = directSignals.reduce(
     (maximum, signal) => Math.max(maximum, signal.contribution),
     0,
   );
-  const ngram = bestNgramScore(queryNgrams, indexed.fields);
+  const ngram = bestNgramScore(query.ngrams, indexed.fields);
   const indirect = Math.min(
     MAX_INDIRECT_SCORE,
     BM25_WEIGHT * normalizedBm25 + NGRAM_WEIGHT * ngram.contribution,
@@ -257,15 +266,15 @@ function scoreCard(
 }
 
 function collectDirectSignals(
-  queryTokens: readonly string[],
+  query: QueryAnalysis,
   indexed: IndexedCard,
   statistics: CatalogStatistics,
   normalizedBm25: number,
-  sourceIntents: ReadonlySet<SourceIntent>,
 ): readonly ScoreSignal[] {
   const matched: {
     readonly field: "keyword" | "alias" | "scope";
     readonly text: string;
+    readonly tokens: readonly string[];
     readonly specificity: number;
   }[] = [];
   const matchedDeclarations = new Set<string>();
@@ -273,24 +282,32 @@ function collectDirectSignals(
   for (const field of indexed.fields) {
     if (field.field === "scope") {
       const exactCoordinate =
-        field.tokens.length === queryTokens.length &&
-        field.tokens.every((token, index) => token === queryTokens[index]);
+        field.tokens.length === query.tokens.length &&
+        field.tokens.every((token, index) => token === query.tokens[index]);
       if (exactCoordinate) {
         const declarationKey = `scope-coordinate:${field.tokens.join(" ")}`;
         if (!matchedDeclarations.has(declarationKey)) {
           matchedDeclarations.add(declarationKey);
-          matched.push({ field: "scope", text: field.text, specificity: 1 });
+          matched.push({
+            field: "scope",
+            text: field.text,
+            tokens: field.tokens,
+            specificity: 1,
+          });
         }
         continue;
       }
-      for (const token of new Set(field.tokens)) {
-        if (!queryTokens.includes(token)) continue;
+      for (let index = 0; index < field.tokens.length; index += 1) {
+        const token = field.tokens[index]!;
+        if (field.tokens.indexOf(token) !== index) continue;
+        if (!query.uniqueTokens.includes(token)) continue;
         const declarationKey = `scope:${token}`;
         if (matchedDeclarations.has(declarationKey)) continue;
         matchedDeclarations.add(declarationKey);
         matched.push({
           field: "scope",
           text: token,
+          tokens: [token],
           specificity: declaredSpecificity(
             statistics.cards.length,
             statistics.documentFrequency.get(token) ?? statistics.cards.length,
@@ -300,7 +317,7 @@ function collectDirectSignals(
       continue;
     }
     if (field.field !== "keyword" && field.field !== "alias") continue;
-    if (!field.tokens.every((token) => queryContainsDeclaredToken(queryTokens, token))) {
+    if (!field.tokens.every((token) => queryContainsDeclaredToken(query.tokens, token))) {
       continue;
     }
     const declarationKey = `${field.field}:${field.tokens.join(" ")}`;
@@ -314,18 +331,24 @@ function collectDirectSignals(
         ),
       ),
     );
-    matched.push({ field: field.field, text: field.text, specificity });
+    matched.push({
+      field: field.field,
+      text: field.text,
+      tokens: field.tokens,
+      specificity,
+    });
   }
 
   if (matched.length === 0) return [];
   const strongest = Math.max(...matched.map((entry) => entry.specificity));
-  const contextualOverlap = new Set(
-    queryTokens.filter((queryToken) =>
-      indexedCardContainsQueryToken(indexed, queryToken),
-    ),
-  ).size;
+  let contextualOverlap = 0;
+  for (const queryToken of query.uniqueTokens) {
+    if (indexedCardContainsQueryToken(indexed, queryToken)) {
+      contextualOverlap += 1;
+    }
+  }
   const strongContextPhrase = indexed.fields.some((field) =>
-    hasContiguousTokenMatch(queryTokens, field.tokens, 3),
+    hasContiguousTokenMatch(query.tokens, field.tokens, 3),
   );
   const rawContribution =
     0.42 +
@@ -333,20 +356,20 @@ function collectDirectSignals(
     0.18 * Math.min(matched.length / 2, 1);
   const smallCatalogStrongContext =
     statistics.cards.length <= 3 && contextualOverlap >= 3;
-  const onlyTerm = matched.length === 1 ? tokenize(normalizeText(matched[0]?.text ?? "")) : [];
+  const onlyTerm = matched.length === 1 ? matched[0]!.tokens : [];
   const weakSingleTerm =
     onlyTerm.length === 1 &&
     [...(onlyTerm[0] ?? "")].length <= 2 &&
     contextualOverlap < 3 &&
     !strongContextPhrase &&
-    !isLeadingAliasToken(onlyTerm[0] ?? "", indexed.card.meaning.aliases);
+    !isLeadingAliasToken(onlyTerm[0] ?? "", indexed.fields);
   const exactMultiTokenAlias = matched.some(
-    (entry) => entry.field === "alias" && tokenize(normalizeText(entry.text)).length >= 2,
+    (entry) => entry.field === "alias" && entry.tokens.length >= 2,
   );
   const supportedCommonPhrase = matched.length >= 2 && normalizedBm25 >= 0.6;
   const sourceIntentConflict =
-    sourceIntents.size > 0 &&
-    !indexed.card.scopes.some((scope) => sourceIntents.has(scope.kind));
+    query.sourceIntents.size > 0 &&
+    !indexed.card.scopes.some((scope) => query.sourceIntents.has(scope.kind));
   const commonTermsWithoutContext =
     strongest < 0.85 &&
     contextualOverlap < 3 &&
@@ -421,12 +444,14 @@ function hasContiguousTokenMatch(
 
 function isLeadingAliasToken(
   token: string,
-  aliases: readonly string[],
+  fields: readonly WeightedField[],
 ): boolean {
-  return aliases.some((alias) => {
-    const aliasTokens = tokenize(normalizeText(alias));
-    return aliasTokens.length >= 2 && aliasTokens[0] === token;
-  });
+  return fields.some(
+    (field) =>
+      field.field === "alias" &&
+      field.tokens.length >= 2 &&
+      field.tokens[0] === token,
+  );
 }
 
 function queryContainsDeclaredToken(
@@ -449,13 +474,13 @@ function declaredSpecificity(cardCount: number, frequency: number): number {
 }
 
 function bm25Score(
-  queryTokens: readonly string[],
+  uniqueQueryTokens: readonly string[],
   indexed: IndexedCard,
   statistics: CatalogStatistics,
 ): number {
   if (statistics.cards.length === 0 || statistics.averageWeightedLength === 0) return 0;
   let score = 0;
-  for (const token of new Set(queryTokens)) {
+  for (const token of uniqueQueryTokens) {
     const frequency = indexed.termFrequency.get(token) ?? 0;
     if (frequency === 0) continue;
     const documentFrequency = statistics.documentFrequency.get(token) ?? 0;
@@ -549,6 +574,15 @@ function tokenize(text: string): readonly string[] {
     if (token.length > 0 && !STOP_WORDS.has(token)) tokens.push(token);
   }
   return tokens;
+}
+
+function uniqueInOrder(values: readonly string[]): readonly string[] {
+  if (values.length < 2) return values;
+  const unique: string[] = [];
+  for (const value of values) {
+    if (!unique.includes(value)) unique.push(value);
+  }
+  return unique;
 }
 
 function normalizeKoreanSuffix(value: string): string {
