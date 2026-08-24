@@ -148,6 +148,48 @@ describe("judgeCandidates", () => {
     expect(message).toContain("0.8");
   });
 
+  it("does not allocate finding caches for an ordinary small catalog", () => {
+    const outcomes = judgeCandidates(
+      [candidate("cv_1", 0.1), candidate("cv_2", 0.1)],
+      thresholds,
+    ).outcomes;
+    const first = outcomes[0];
+    const second = outcomes[1];
+
+    expect(first !== undefined && "findings" in first).toBe(true);
+    expect(second !== undefined && "findings" in second).toBe(true);
+    if (
+      first === undefined ||
+      second === undefined ||
+      !("findings" in first) ||
+      !("findings" in second)
+    ) {
+      throw new Error("fixtures must be rejected");
+    }
+    expect(first.findings).not.toBe(second.findings);
+  });
+
+  it("shares identical finding values across a large catalog judgement", () => {
+    const outcomes = judgeCandidates(
+      Array.from({ length: 128 }, (_, index) =>
+        candidate(`cv_${index}`, 0.1),
+      ),
+      thresholds,
+    ).outcomes;
+    const first = outcomes[0];
+    const last = outcomes.at(-1);
+
+    if (
+      first === undefined ||
+      last === undefined ||
+      !("findings" in first) ||
+      !("findings" in last)
+    ) {
+      throw new Error("fixtures must be rejected");
+    }
+    expect(first.findings).toBe(last.findings);
+  });
+
   it("counts every candidate it was given", () => {
     const candidates = [
       candidate("cv_1", 0.9),

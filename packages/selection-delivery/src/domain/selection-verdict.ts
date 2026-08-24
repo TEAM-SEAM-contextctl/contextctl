@@ -97,6 +97,9 @@ interface SelectionFindingCache {
   readonly defer: Map<number, readonly SelectionFinding[]>;
 }
 
+/** Below this size two Maps cost more than the repeated findings they avoid. */
+const FINDING_CACHE_MIN_CANDIDATES = 128;
+
 /**
  * Ranks candidates and decides each one against the threshold band.
  *
@@ -117,24 +120,32 @@ export function judgeCandidates(
   // threshold with the same score. Their audit message is value-identical, so
   // retain one immutable finding per `(verdict, score)` for this judgement
   // instead of allocating one object and one string per Card.
-  const findings: SelectionFindingCache = {
-    reject: new Map(),
-    defer: new Map(),
-  };
+  const findings: SelectionFindingCache | undefined =
+    candidates.length < FINDING_CACHE_MIN_CANDIDATES
+      ? undefined
+      : { reject: new Map(), defer: new Map() };
+  const outcomes = ranked.map((candidate) =>
+    judgeCandidate(candidate, thresholds, findings),
+  );
 
   return {
-    outcomes: ranked.map((candidate) =>
-      judgeCandidate(candidate, thresholds, findings),
-    ),
+    outcomes,
     provenance: {
       policyVersion: SELECTION_RANKING_POLICY_VERSION,
       thresholds,
       tieBreak: "cardVersionId",
       consideredCount: candidates.length,
-      // `ScoredCandidate` and `RankedCandidate` intentionally have the same
-      // public fields. Reusing the sorted records avoids materializing another
-      // catalog-sized audit copy on every query.
-      ranked,
+      // Preserve the narrow audit record at ordinary product scale. At the
+      // 10,000-Card envelope the scored records are structurally identical and
+      // retaining another copy per query materially expands the heap.
+      ranked:
+        findings === undefined
+          ? ranked.map(({ cardId, versionId, score }) => ({
+              cardId,
+              versionId,
+              score,
+            }))
+          : ranked,
     },
   };
 }
@@ -142,7 +153,7 @@ export function judgeCandidates(
 function judgeCandidate(
   candidate: ScoredCandidate,
   thresholds: SelectionThresholds,
-  findingCache: SelectionFindingCache,
+  findingCache: SelectionFindingCache | undefined,
 ): SelectionOutcome {
   const { cardId, versionId, score } = candidate;
 
@@ -172,11 +183,15 @@ function judgeCandidate(
       cardId,
       versionId,
       score,
-      findings: rejectionFindings(
-        findingCache,
-        score,
-        thresholds.reject,
-      ),
+      findings:
+        findingCache === undefined
+          ? [
+              {
+                rule: "score.at.or.below.reject",
+                message: `score ${score} is at or below the reject threshold ${thresholds.reject}`,
+              },
+            ]
+          : rejectionFindings(findingCache, score, thresholds.reject),
     };
   }
   return {
@@ -184,11 +199,15 @@ function judgeCandidate(
     cardId,
     versionId,
     score,
-    findings: deferFindings(
-      findingCache,
-      score,
-      thresholds,
-    ),
+    findings:
+      findingCache === undefined
+        ? [
+            {
+              rule: "score.below.admit",
+              message: `score ${score} is below the admit threshold ${thresholds.admit} and above the reject threshold ${thresholds.reject}`,
+            },
+          ]
+        : deferFindings(findingCache, score, thresholds),
   };
 }
 
@@ -199,12 +218,11 @@ function rejectionFindings(
 ): readonly SelectionFinding[] {
   const existing = cache.reject.get(score);
   if (existing !== undefined) return existing;
-  const findings = Object.freeze([
-    Object.freeze({
-      rule: "score.at.or.below.reject",
-      message: `score ${score} is at or below the reject threshold ${rejectThreshold}`,
-    }),
-  ]);
+  const finding: SelectionFinding = {
+    rule: "score.at.or.below.reject",
+    message: `score ${score} is at or below the reject threshold ${rejectThreshold}`,
+  };
+  const findings = Object.freeze([Object.freeze(finding)]);
   cache.reject.set(score, findings);
   return findings;
 }
@@ -216,12 +234,11 @@ function deferFindings(
 ): readonly SelectionFinding[] {
   const existing = cache.defer.get(score);
   if (existing !== undefined) return existing;
-  const findings = Object.freeze([
-    Object.freeze({
-      rule: "score.below.admit",
-      message: `score ${score} is below the admit threshold ${thresholds.admit} and above the reject threshold ${thresholds.reject}`,
-    }),
-  ]);
+  const finding: SelectionFinding = {
+    rule: "score.below.admit",
+    message: `score ${score} is below the admit threshold ${thresholds.admit} and above the reject threshold ${thresholds.reject}`,
+  };
+  const findings = Object.freeze([Object.freeze(finding)]);
   cache.defer.set(score, findings);
   return findings;
 }
