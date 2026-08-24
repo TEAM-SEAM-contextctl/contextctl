@@ -9,6 +9,7 @@ import {
   EmbeddingCompositionError,
 } from "../../src/embedding/composition.js";
 import {
+  DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE,
   EmbeddingModeProfileMismatchError,
   IngestionDocumentEmbeddingProviderFactory,
   LocalEmbeddingInferenceResourcePool,
@@ -184,6 +185,51 @@ describe("embedding composition", () => {
         key: "query",
         vector: [1, ...new Array(cardProfile.dimensions - 1).fill(0)],
       },
+    ]);
+  });
+
+  it("bounds a non-shared local Card worker at the daemon memory batch", async () => {
+    const profile = localCardProfile();
+    if (
+      !isCardSelectionEmbeddingProfile(profile) ||
+      profile.execution.kind !== "local"
+    ) {
+      throw new Error("Card fixture must use a local production profile");
+    }
+    const batches: number[] = [];
+    const resource = {
+      execution: profile.execution,
+      modelMaxTokens: 32_768,
+      tokenCounts: async (texts: readonly string[]) => texts.map(() => 1),
+      tokenCount: async () => 1,
+      embed: async (texts: readonly string[]) => {
+        batches.push(texts.length);
+        return {
+          dimensions: [texts.length, profile.dimensions],
+          data: texts.flatMap(() => [
+            1,
+            ...new Array(profile.dimensions - 1).fill(0),
+          ]),
+        };
+      },
+    };
+    const provider = new SelectionCardEmbeddingProviderFactory(
+      new LocalEmbeddingInferenceResourcePool([resource]),
+    ).createLocal({ profile, artifactDirectory: "/unused" });
+    const inputCount = DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE * 2 + 1;
+
+    await provider.embed({
+      profile,
+      inputs: Array.from({ length: inputCount }, (_, index) => ({
+        key: `card-${index}`,
+        text: `Card ${index}`,
+      })),
+    });
+
+    expect(batches).toEqual([
+      DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE,
+      DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE,
+      1,
     ]);
   });
 

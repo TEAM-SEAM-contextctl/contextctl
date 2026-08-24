@@ -25,6 +25,19 @@ import type { RemoteEmbeddingBinding } from "./remote-binding.js";
 import { WorkerThreadLocalEmbeddingInferenceResource } from "../runtime/worker-thread-local-embedding-inference-resource.js";
 
 /**
+ * Largest native Card inference batch used when the Card-local worker is not
+ * shared with the document layer.
+ *
+ * A shared worker is already split at the scheduler's background boundary.
+ * Without sharing there is no scheduler wrapper, so leaving the Selection
+ * adapter's library default of 32 here makes one catalog rebuild consume a
+ * materially different memory envelope depending on the document provider.
+ * Four is the release-profile bound exercised by `selection-scale-v1`; it
+ * preserves one logical catalog embedding request and bounded promotion points.
+ */
+export const DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE = 4;
+
+/**
  * How the composition asks for a document embedding provider.
  *
  * A seam rather than a direct constructor call, and the reason is ownership: the
@@ -309,6 +322,7 @@ export class SelectionCardEmbeddingProviderFactory
     const provider = new TransformersJsLocalCardEmbeddingAdapter({
       inferenceResource: resource,
       profile: input.profile,
+      maxBatchSize: DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE,
     });
     this.#resources.bindProvider(provider, resource);
     return provider;
