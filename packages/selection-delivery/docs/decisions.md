@@ -2,7 +2,7 @@
 
 ## 이 문서의 목적
 
-`adr/`에는 기록이 10건 있고 그중 4건(0002·0004·0006·0007)은 0008이 전부 대체했다. 파일을
+`adr/`에는 기록이 12건 있고 그중 5건(0002·0004·0006·0007·0010)은 뒤 기록이 대체했다. 파일을
 번호 순서로 읽으면 대체된 결정을 현행으로 오독하기 쉽다 — 0008이 스스로 적은 위험이고, 각
 파일의 상태 행과 README 표가 막아 주지만 독자가 그것을 먼저 보아야 한다.
 
@@ -59,12 +59,16 @@ ADR 0008은 설계안을 **초안 판본**(`최종설계안.md`, 3,287행 이상
 
 ## 점수 계산
 
-- **`selection-lexical-v1`은 keywords/aliases 부분문자열 포함(0.9 + 0.1 × 비율)과
-  대표질문·설명의 문자 bigram Jaccard(설명 ×0.5)의 `max` 결합이다.** 설계안의 BM25 가중
-  결합이 아니고 전용 임계값도 없다. 토큰은 스키마 v3 리터럴이라 개명하지 않는다. 알려진
-  한계(토큰 경계 없음, IDF 없음, 쌍봉 분포, hybrid가 승계)는 `selection-eval-v1`이 생긴 뒤
-  버전을 올려 교정한다.
-  — [ADR 0010](./adr/0010-lexical-scoring-is-substring-and-bigram-max-not-bm25.md)
+- **`selection-lexical-v2`는 필드 가중 BM25·문자 2·3-gram과 선언 특이성을 결합하고,
+  `selection-hybrid-v2`는 절대 유사도와 1·2위 차이를 함께 사용한다.** 간접 신호와 비선두
+  의미 후보는 거부 영역에 머물고, 흔하고 문맥이 약한 선언은 승인할 수 없다. 두 약한 신호를
+  더하지 않으며 실제 Granite와 고정 `selection-eval-v1`에서 품질·안전 비퇴행을 검증한다.
+  — [ADR 0011](./adr/0011-calibrate-lexical-and-hybrid-scoring-with-selection-eval-v1.md)
+
+- **`selection-scale-v1`의 RSS는 `daemon-runtime-profile-v1`과 같은 `1,536MiB` 상한을 사용한다.**
+  Granite fp32 구성요소 상한 `1,024MiB`보다 작았던 초기 `768MiB` 모순을 제거한 것이며, p95
+  `150ms`와 질의당 임베딩 1회 기준은 그대로 유지한다.
+  — [ADR 0012](./adr/0012-use-the-daemon-rss-limit-for-selection-scale.md)
 
 ## 표면
 
@@ -78,5 +82,6 @@ ADR 0008은 설계안을 **초안 판본**(`최종설계안.md`, 3,287행 이상
 
 ## 더 이상 유효하지 않은 기록
 
-0002·0004·0006·0007. 전부 [ADR 0008](./adr/0008-daemon-orchestrates-managed-document-retrieval.md)이
-대체했다. 무엇이 왜 바뀌었는지는 0008의 맥락과 [README 표](./adr/README.md)에 있다.
+0002·0004·0006·0007은 [ADR 0008](./adr/0008-daemon-orchestrates-managed-document-retrieval.md)이,
+0010은 [ADR 0011](./adr/0011-calibrate-lexical-and-hybrid-scoring-with-selection-eval-v1.md)이
+대체했다. 무엇이 왜 바뀌었는지는 각 후속 기록의 맥락과 [README 표](./adr/README.md)에 있다.

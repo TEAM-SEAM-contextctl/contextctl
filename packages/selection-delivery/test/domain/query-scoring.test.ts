@@ -59,16 +59,15 @@ describe("scoreCardsAgainstQuery", () => {
     // `lexical`, and the name is a claim: everything this file compares is
     // normalized text and character bigrams, so a version that did not name
     // the family could not be paired with `selection.mode` in a response.
-    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-lexical-v1");
+    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-lexical-v2");
   });
 
-  it("reaches the admit band when a declared keyword appears in the query", () => {
+  it("reaches the admit band for a distinctive declared keyword", () => {
     const scored = scoreOne(
-      "환불 규정을 알려줘",
-      cardMeaning({ keywords: ["환불"] }),
+      "운송장번호 규정을 알려줘",
+      cardMeaning({ keywords: ["운송장번호"] }),
     );
 
-    expect(scored.score).toBeGreaterThanOrEqual(0.9);
     expect(scored.score).toBeGreaterThanOrEqual(
       DEFAULT_SELECTION_THRESHOLDS.admit,
     );
@@ -80,10 +79,13 @@ describe("scoreCardsAgainstQuery", () => {
       cardMeaning({ keywords: ["재고"] }),
     );
 
-    expect(scored.score).toBeGreaterThanOrEqual(0.9);
-    expect(scored.signals).toEqual([
-      { field: "keyword", matched: "재고", contribution: scored.score },
-    ]);
+    expect(scored.score).toBeGreaterThan(DEFAULT_SELECTION_THRESHOLDS.reject);
+    expect(scored.score).toBeLessThan(DEFAULT_SELECTION_THRESHOLDS.admit);
+    expect(scored.signals).toContainEqual({
+      field: "keyword",
+      matched: "재고",
+      contribution: scored.score,
+    });
   });
 
   it("matches Latin keywords regardless of case", () => {
@@ -97,19 +99,21 @@ describe("scoreCardsAgainstQuery", () => {
   });
 
   it("scores decomposed and composed Hangul identically", () => {
-    const card = cardMeaning({ keywords: ["환불"] });
-    const composed = "환불이 가능한가요";
+    const card = cardMeaning({ keywords: ["환불정책"] });
+    const composed = "환불정책이 궁금합니다";
     const decomposed = composed.normalize("NFD");
 
     expect(decomposed).not.toBe(composed);
     expect(scoreOne(decomposed, card).score).toBe(scoreOne(composed, card).score);
-    expect(scoreOne(decomposed, card).score).toBeGreaterThanOrEqual(0.9);
+    expect(scoreOne(decomposed, card).score).toBeGreaterThanOrEqual(
+      DEFAULT_SELECTION_THRESHOLDS.admit,
+    );
   });
 
   it("scores a decomposed keyword declaration the same as a composed one", () => {
-    const query = "환불이 가능한가요";
-    const composed = cardMeaning({ keywords: ["환불"] });
-    const decomposed = cardMeaning({ keywords: ["환불".normalize("NFD")] });
+    const query = "환불정책이 궁금합니다";
+    const composed = cardMeaning({ keywords: ["환불정책"] });
+    const decomposed = cardMeaning({ keywords: ["환불정책".normalize("NFD")] });
 
     expect(scoreOne(query, decomposed).score).toBe(
       scoreOne(query, composed).score,
@@ -150,7 +154,11 @@ describe("scoreCardsAgainstQuery", () => {
     );
 
     expect(scored.score).toBe(1);
-    expect(scored.signals).toHaveLength(3);
+    expect(
+      scored.signals.filter(
+        (signal) => signal.field === "keyword" || signal.field === "alias",
+      ),
+    ).toHaveLength(3);
   });
 
   it("ignores an empty declared keyword instead of matching everything", () => {
@@ -190,16 +198,13 @@ describe("scoreCardsAgainstQuery", () => {
       }),
     );
 
-    expect(scored.signals.map((signal) => signal.field)).toEqual([
-      "keyword",
-      "alias",
-      "description",
-    ]);
-    expect(scored.signals.map((signal) => signal.matched)).toEqual([
-      "환불",
-      "환불 정책",
-      "환불 정책 문서",
-    ]);
+    expect(scored.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "keyword", matched: "환불" }),
+        expect.objectContaining({ field: "alias", matched: "환불 정책" }),
+        expect.objectContaining({ field: "bm25", matched: "catalog" }),
+      ]),
+    );
     for (const signal of scored.signals) {
       expect(Number.isFinite(signal.contribution)).toBe(true);
       expect(signal.contribution).toBeGreaterThan(0);

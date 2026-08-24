@@ -53,19 +53,19 @@ function query(
 
 describe("scoreRegression", () => {
   const cards = [
-    card("doc/§a", ["환불"]),
-    card("doc/§b", ["환불", "결제"]),
-    card("doc/§c", ["연차"]),
+    card("doc/§a", ["환불", "환불 승인 정책", "긴급"]),
+    card("doc/§b", ["환불", "환불 승인 정책", "결제"]),
+    card("doc/§c", ["연차", "연차 이월 정책"]),
   ];
 
   it("counts top-1, wrong and forbidden admits, and the margin", () => {
     const report = scoreRegression(cards, [
-      query("q1", "환불은 언제 되나요?", ["doc/§a"], ["doc/§b"]),
+      query("q1", "긴급 환불 승인 정책", ["doc/§a"], ["doc/§b"]),
     ]);
     const [result] = report.queries;
 
-    // Both refund Cards match; §a declares one keyword and §b two, so §a's
-    // coverage ratio is higher and it ranks first by a narrow margin.
+    // Both refund Cards have enough contextual evidence to admit. §a also
+    // declares the distinctive term "긴급", so it ranks first.
     expect(result?.top1).toBe("doc/§a");
     expect(result?.top1Correct).toBe(true);
     expect([...(result?.admitted ?? [])].sort()).toEqual(["doc/§a", "doc/§b"]);
@@ -80,7 +80,7 @@ describe("scoreRegression", () => {
 
   it("does not count an optional Card as wrong", () => {
     const report = scoreRegression(cards, [
-      query("q1", "환불은 언제 되나요?", ["doc/§a"], [], { optional: ["doc/§b"] }),
+      query("q1", "긴급 환불 승인 정책", ["doc/§a"], [], { optional: ["doc/§b"] }),
     ]);
 
     expect(report.metrics.wrongAdmits).toBe(0);
@@ -92,12 +92,12 @@ describe("scoreRegression", () => {
       query("q1", "점심 메뉴", [], [], { category: "no_answer_or_low_confidence", confidence: "none" }),
     ]);
     const noisy = scoreRegression(cards, [
-      query("q2", "환불", [], [], { category: "no_answer_or_low_confidence", confidence: "none" }),
+      query("q2", "연차 이월 정책", [], [], { category: "no_answer_or_low_confidence", confidence: "none" }),
     ]);
 
     expect(quiet.metrics.top1Correct).toBe(1);
     expect(noisy.metrics.top1Correct).toBe(0);
-    expect(noisy.metrics.wrongAdmits).toBe(2);
+    expect(noisy.metrics.wrongAdmits).toBe(1);
     // No margin is read off a query that expected no answer.
     expect(quiet.metrics.marginMedian).toBeNull();
     expect(noisy.metrics.marginMedian).toBeNull();
@@ -105,9 +105,9 @@ describe("scoreRegression", () => {
 
   it("measures full-set recall only over multi-Card queries", () => {
     const report = scoreRegression(cards, [
-      query("m1", "환불하고 연차", ["doc/§a", "doc/§c"], [], { category: "multiple_cards_required" }),
-      query("m2", "환불하고 결제", ["doc/§a", "doc/§b"], [], { category: "multiple_cards_required" }),
-      query("s1", "연차", ["doc/§c"]),
+      query("m1", "긴급 환불 승인 정책과 연차 이월 정책", ["doc/§a", "doc/§c"], [], { category: "multiple_cards_required" }),
+      query("m2", "환불 승인 정책과 결제", ["doc/§a", "doc/§b"], [], { category: "multiple_cards_required" }),
+      query("s1", "연차 이월 정책", ["doc/§c"]),
     ]);
 
     expect(report.metrics.multiQueryCount).toBe(2);

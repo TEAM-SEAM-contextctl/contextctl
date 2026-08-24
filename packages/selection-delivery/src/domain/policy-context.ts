@@ -47,6 +47,12 @@ export interface PolicyApplication {
   readonly excluded: readonly PolicyExclusion[];
 }
 
+/** One immutable catalog generation has the same policy partition every query. */
+const policyApplicationCache = new WeakMap<
+  readonly ApprovedCard[],
+  Map<string, PolicyApplication>
+>();
+
 /**
  * Splits a catalog into the Cards a policy admits to scoring and the ones it
  * keeps out.
@@ -71,6 +77,9 @@ export function applyPolicyContext(
   context: PolicyContext,
 ): PolicyApplication {
   assertValidPolicyContext(context);
+  const cacheKey = `${context.usage}:${context.sensitiveAccess}`;
+  const cached = policyApplicationCache.get(cards)?.get(cacheKey);
+  if (cached !== undefined) return cached;
   validateCatalogPolicies(cards);
 
   const eligible: ApprovedCard[] = [];
@@ -85,7 +94,11 @@ export function applyPolicyContext(
     }
   }
 
-  return { context, eligible, excluded };
+  const application = { context, eligible, excluded };
+  const cache = policyApplicationCache.get(cards) ?? new Map();
+  cache.set(cacheKey, application);
+  policyApplicationCache.set(cards, cache);
+  return application;
 }
 
 function exclusionReason(

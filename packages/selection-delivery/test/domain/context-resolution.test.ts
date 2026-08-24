@@ -201,7 +201,7 @@ describe("ContextResolution serialization", () => {
 
   it("names the policy behind each of the five steps", () => {
     expect(resolution.policy).toMatchObject({
-      scoring: "selection-lexical-v1",
+      scoring: "selection-lexical-v2",
       ranking: "selection-ranking-v2",
       planning: "selection-planning-v1",
       fusion: "rrf-v1",
@@ -215,8 +215,8 @@ describe("ContextResolution serialization", () => {
     // scoring lexically would tell a consumer its ranking used Card embeddings
     // that do not exist.
     const pairs = {
-      hybrid: "selection-hybrid-v1",
-      lexical_degraded: "selection-lexical-v1",
+      hybrid: "selection-hybrid-v2",
+      lexical_degraded: "selection-lexical-v2",
     } as const;
 
     expect(resolution.policy.scoring).toBe(pairs[resolution.selection.mode]);

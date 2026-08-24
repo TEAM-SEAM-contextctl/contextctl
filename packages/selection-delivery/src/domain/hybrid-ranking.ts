@@ -12,14 +12,14 @@ import { SelectionModeInvariantError } from "./errors.js";
  * as a run that had them — even under identical thresholds and an identical
  * catalog.
  */
-export const HYBRID_SCORING_POLICY_VERSION = "selection-hybrid-v1" as const;
+export const HYBRID_SCORING_POLICY_VERSION = "selection-hybrid-v2" as const;
 
 /** Which scoring family produced a ranking. Paired with `scoring` by invariant. */
 export type SelectionMode = "hybrid" | "lexical_degraded";
 
 export type SelectionScoringPolicyVersion =
   | typeof HYBRID_SCORING_POLICY_VERSION
-  | "selection-lexical-v1";
+  | "selection-lexical-v2";
 
 /**
  * The one scoring version each mode is allowed to travel with.
@@ -33,7 +33,7 @@ export function scoringPolicyVersionFor(
 ): SelectionScoringPolicyVersion {
   return mode === "hybrid"
     ? HYBRID_SCORING_POLICY_VERSION
-    : "selection-lexical-v1";
+    : "selection-lexical-v2";
 }
 
 /** Refuses a `(mode, scoring)` pair that names two different families. */
@@ -50,55 +50,28 @@ export function assertSelectionScoringPairing(
 }
 
 /**
- * Below this cosine, a Card contributes no semantic evidence at all.
+ * Below this cosine, an isolated similarity is not evidence for a verdict.
  *
- * The number is high because the model's own range is high, and that is not an
- * intuition. Measured against the installed granite-97m-multilingual-r2 fp32
- * artifact, over Card selection texts and queries from this repository's own
- * fixtures, every pair landed in [0.66, 0.86]:
- *
- *   0.79  a leave query against the leave Card          (the correct pairing)
- *   0.78  the same query against an unrelated refund Card
- *   0.76  the same query against an English C++ question
- *   0.72  the same query against an unrelated shipping Card
- *   0.67  a Korean weather question against an English C++ question
- *
- * Two things follow. The *ordering* is right — the correct pairing is top — so
- * the signal is real and worth using to rank. The *absolute* value carries
- * almost no information: nothing about "0.72" says "unrelated", because two
- * texts with no language, topic or script in common still score 0.67. An
- * encoder whose embeddings occupy a narrow cone does this, and it is why a naive
- * mapping of [-1, 1] onto [0, 1] is wrong here: at a floor of 0.5 the weather
- * question would have scored 0.33 against the refund Card, above the 0.35 reject
- * threshold, and a production catalog would have deferred every Card of every
- * query while rejecting none.
- *
- * At 0.75 the same measurements separate: the correct pairing scores 0.16, the
- * unrelated Card 0.10, and everything below the floor scores exactly 0. The
- * semantic path therefore *ranks* strongly and *admits* rarely on its own, which
- * is the conservative direction — a Card is never admitted because the encoder
- * was vague, only because the two signals agree or the lexical one was decisive.
- *
- * It is calibrated to one model on a handful of texts, which is a starting point
- * and not a tuning, exactly as `DEFAULT_SELECTION_THRESHOLDS` is. It belongs
- * with the profile once there is query data to tune it against; today a second
- * per-profile knob would be a parameter nobody has a number for.
+ * `selection-eval-v1` calibration measured relevant pairs from 0.796 to 0.905,
+ * forbidden pairs up to 0.876 and unrelated pairs up to 0.852. The overlap
+ * means no single lower absolute threshold is safe. A value above this floor is
+ * retained as-is; a lower value can become decisive only through the separate
+ * top-versus-runner-up confidence rule below.
  */
-export const SEMANTIC_SIMILARITY_FLOOR = 0.75;
+export const SEMANTIC_SIMILARITY_FLOOR = 0.85;
 
 /**
- * How much agreement between the two signals is worth.
- *
- * Kept small on purpose: the combination below is "the stronger signal decides,
- * and agreement adds a little", not an average. An average is the obvious rule
- * and it is the wrong one here, because it makes each signal able to veto the
- * other — a Card that literally declares the query's words would be denied
- * admission by a mediocre cosine, and the direct-match guarantee
- * `query-scoring.ts` builds its whole score around (a declared term match lands
- * at or above 0.9, which is above the 0.85 admit threshold) would stop holding
- * the moment embeddings were switched on.
+ * v2 gives no numerical bonus merely because two weak signals coexist.
+ * The former 0.1 bonus admitted forbidden Cards in the fixed Granite corpus.
+ * Kept as an exported policy value so a report can state the rule explicitly.
  */
-export const HYBRID_AGREEMENT_BONUS = 0.1;
+export const HYBRID_AGREEMENT_BONUS = 0;
+
+/** A non-leading semantic neighbour may reorder, but cannot defer or admit alone. */
+export const SEMANTIC_SECONDARY_SCORE_CEILING = 0.34;
+export const SEMANTIC_CONFIDENT_SIMILARITY_FLOOR = 0.8;
+export const SEMANTIC_CONFIDENT_MARGIN = 0.03;
+export const SEMANTIC_CONFIDENT_SCORE = 0.85;
 
 /** One Card's two signals and what they combined to. */
 export interface HybridCandidateScore extends CandidateScore {
@@ -111,28 +84,21 @@ export interface HybridCandidateScore extends CandidateScore {
 }
 
 /**
- * Maps a raw cosine onto the [0, 1] band the thresholds are stated on.
- *
- * Linear above the floor, so a similarity of exactly 1 — the most the model can
- * say — maps onto 1, which is the same place a perfect lexical match lands.
- * That is the property that makes a semantic-only Card admissible at all: if the
- * top of the semantic range fell short of the admit threshold, the semantic path
- * could rank Cards but never admit one, and "reachable by meaning" would be a
- * claim the code did not actually support.
+ * Keeps a raw cosine only when its absolute value cleared calibration.
+ * Rescaling the narrow Granite cone made ordinary neighbours look decisive;
+ * preserving the cosine keeps the output auditable and bounded.
  */
 export function semanticScoreFor(similarity: number): number {
   if (!Number.isFinite(similarity) || similarity <= SEMANTIC_SIMILARITY_FLOOR) {
     return 0;
   }
-  const scaled =
-    (similarity - SEMANTIC_SIMILARITY_FLOOR) / (1 - SEMANTIC_SIMILARITY_FLOOR);
-  return Math.min(Math.max(scaled, 0), 1);
+  return Math.min(Math.max(similarity, 0), 1);
 }
 
 /**
  * The combined score, and the whole of the hybrid rule.
  *
- *     combined = clamp01( max(lexical, semantic) + 0.1 × min(lexical, semantic) )
+ *     combined = clamp01(max(lexical, semantic))
  *
  * Three things follow from it, and each one is a requirement rather than a
  * pleasant consequence:
@@ -143,8 +109,8 @@ export function semanticScoreFor(similarity: number): number {
  * 2. A Card that shares no term with the query reaches exactly its semantic
  *    score, so a paraphrase or a synonym can admit a Card that lexical matching
  *    cannot see. This is the case the whole step exists for.
- * 3. Two Cards that agree on both signals outrank one that is strong on a single
- *    signal, without either signal being able to veto the other.
+ * 3. Two sub-threshold signals cannot add up to an admission. This is what keeps
+ *    a common term plus an ordinary cosine from widening access.
  *
  * Symmetric in the two signals by construction, monotone in both, and total —
  * there is no input for which it is undefined, and a non-finite input scores 0
@@ -157,10 +123,7 @@ export function combineHybridScore(
   const lexical = clampToUnitInterval(lexicalScore);
   const semantic = clampToUnitInterval(semanticScore);
 
-  return clampToUnitInterval(
-    Math.max(lexical, semantic) +
-      HYBRID_AGREEMENT_BONUS * Math.min(lexical, semantic),
-  );
+  return clampToUnitInterval(Math.max(lexical, semantic));
 }
 
 export interface HybridRankingInput {
@@ -196,6 +159,18 @@ export function rankHybridCandidates(
   const similarityByVersionId = new Map(
     input.semantic.map((entry) => [entry.cardVersionId, entry.similarity]),
   );
+  const orderedSemantic = [...input.semantic]
+    .sort((left, right) => {
+      if (left.similarity !== right.similarity) return right.similarity - left.similarity;
+      return left.cardVersionId < right.cardVersionId
+        ? -1
+        : left.cardVersionId > right.cardVersionId
+          ? 1
+          : 0;
+    });
+  const leadingSemantic = orderedSemantic[0];
+  const runnerUpSemantic = orderedSemantic[1];
+  const leadingSemanticVersionId = leadingSemantic?.cardVersionId;
   const union = new Set<string>(similarityByVersionId.keys());
   for (const candidate of topLexical(input.lexical, input.lexicalTopK)) {
     union.add(candidate.versionId);
@@ -206,8 +181,17 @@ export function rankHybridCandidates(
     const similarity = reached
       ? similarityByVersionId.get(candidate.versionId)
       : undefined;
-    const semanticScore =
+    const rawSemanticScore =
       similarity === undefined ? 0 : semanticScoreFor(similarity);
+    const semanticScore =
+      candidate.versionId === leadingSemanticVersionId &&
+      leadingSemantic !== undefined
+        ? confidentLeadingSemanticScore(
+            rawSemanticScore,
+            leadingSemantic.similarity,
+            runnerUpSemantic?.similarity,
+          )
+        : Math.min(rawSemanticScore, SEMANTIC_SECONDARY_SCORE_CEILING);
 
     return {
       cardId: candidate.cardId,
@@ -221,25 +205,58 @@ export function rankHybridCandidates(
   });
 }
 
+function confidentLeadingSemanticScore(
+  rawScore: number,
+  similarity: number,
+  runnerUpSimilarity: number | undefined,
+): number {
+  const margin = similarity - (runnerUpSimilarity ?? 0);
+  if (
+    similarity >= SEMANTIC_CONFIDENT_SIMILARITY_FLOOR &&
+    margin >= SEMANTIC_CONFIDENT_MARGIN
+  ) {
+    return Math.max(rawScore, SEMANTIC_CONFIDENT_SCORE);
+  }
+  return rawScore;
+}
+
 /** The strongest `limit` lexical candidates, ties broken on `versionId`. */
 function topLexical(
   candidates: readonly CandidateScore[],
   limit: number,
 ): readonly CandidateScore[] {
-  if (limit <= 0) {
-    return [];
+  if (limit <= 0 || Number.isNaN(limit)) return [];
+  const strongest: CandidateScore[] = [];
+  for (const candidate of candidates) {
+    if (
+      strongest.length === limit &&
+      compareLexical(candidate, strongest[strongest.length - 1]!) >= 0
+    ) {
+      continue;
+    }
+    let low = 0;
+    let high = strongest.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (compareLexical(candidate, strongest[middle]!) < 0) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    strongest.splice(low, 0, candidate);
+    if (strongest.length > limit) strongest.pop();
   }
-  return [...candidates]
-    .sort((left, right) => {
-      if (left.score !== right.score) {
-        return right.score - left.score;
-      }
-      if (left.versionId < right.versionId) {
-        return -1;
-      }
-      return left.versionId > right.versionId ? 1 : 0;
-    })
-    .slice(0, limit);
+  return strongest;
+}
+
+function compareLexical(
+  left: CandidateScore,
+  right: CandidateScore,
+): number {
+  if (left.score !== right.score) return right.score - left.score;
+  if (left.versionId < right.versionId) return -1;
+  return left.versionId > right.versionId ? 1 : 0;
 }
 
 function clampToUnitInterval(value: number): number {

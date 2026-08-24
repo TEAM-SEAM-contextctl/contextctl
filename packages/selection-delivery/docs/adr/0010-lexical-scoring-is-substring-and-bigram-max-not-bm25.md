@@ -1,6 +1,6 @@
 # 0010. `selection-lexical-v1`은 부분문자열 포함과 문자 bigram Jaccard의 max 결합이며, 이름을 바꾸지 않는다
 
-- 상태: Accepted
+- 상태: Superseded by 0011
 - 날짜: 2026-08-21
 - 범위: selection
 

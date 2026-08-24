@@ -1,57 +1,54 @@
-import type { ApprovedCard, ApprovedCardMeaning } from "./card-catalog.js";
+import type {
+  ApprovedCard,
+  ApprovedScope,
+} from "./card-catalog.js";
 
-/**
- * Identifies the scoring rules a candidate score was produced under.
- *
- * `lexical`, and the name is a claim about what this file does rather than a
- * label. Everything below compares normalized text and character bigrams; no
- * Card embedding exists, so nothing here can contribute a vector signal. The
- * previous `selection-scoring-v1` said only "version one of whatever scoring
- * is", which a consumer could not compare against a later hybrid run — and the
- * response's `selection.mode` is paired with exactly this value, so a name that
- * did not state the family would have made the pairing unverifiable.
- */
-export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v1" as const;
+/** Identifies the lexical rules that produced a candidate score. */
+export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v2" as const;
 
-/**
- * A direct match always lands at or above this floor, which is above the admit
- * threshold in `selection-verdict.ts`. That is the whole point of the split
- * between direct and indirect signals: a Card that literally declares the words
- * of the query is admitted, and a Card that merely reads similarly is not. The
- * threshold band therefore stays a single number the repository already agreed
- * on, instead of gaining a second, scoring-specific one.
- */
-const DIRECT_MATCH_FLOOR = 0.9;
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+const BM25_WEIGHT = 0.75;
+const NGRAM_WEIGHT = 0.25;
+/** Fuzzy evidence alone must remain on the rejecting side of the band. */
+const MAX_INDIRECT_SCORE = 0.34;
+/** A declared but non-distinctive term may defer, but never admit by itself. */
+const MAX_WEAK_DIRECT_SCORE = 0.84;
 
-/** How much of [0.9, 1] the declared-term coverage ratio is allowed to move. */
-const DIRECT_MATCH_RANGE = 0.1;
+const FIELD_WEIGHTS = {
+  keyword: 3,
+  alias: 2.5,
+  representative_question: 1.5,
+  description: 0.75,
+  scope: 2,
+} as const;
 
-/**
- * A description is prose about the Card, not a phrasing a user would type, so
- * its similarity is halved. Even a perfect description overlap stays at 0.5,
- * safely inside the defer band: prose alone never admits.
- */
-const DESCRIPTION_DAMPING = 0.5;
+const STOP_WORDS = new Set([
+  "a", "an", "and", "are", "for", "how", "is", "of", "or", "the", "to",
+  "what", "when", "where", "which", "with", "궁금해", "되나요", "어떻게",
+  "알려줘", "알려주세요", "하나요",
+]);
 
-/** Which part of a Card's meaning produced a score, and by how much. */
+type SourceIntent = ApprovedScope["kind"];
+
+const SOURCE_INTENT_TOKENS: Readonly<Record<SourceIntent, ReadonlySet<string>>> = {
+  managed_document: new Set(["document", "guide", "policy", "규정", "문서", "안내", "절차"]),
+  sql_source: new Set(["data", "log", "record", "records", "table", "데이터", "로그", "테이블"]),
+  http_source: new Set(["api", "endpoint", "live", "실시간", "추적", "호출"]),
+};
+
 export interface ScoreSignal {
   readonly field:
     | "keyword"
     | "alias"
     | "representative_question"
-    | "description";
+    | "description"
+    | "bm25"
+    | "scope";
   readonly matched: string;
   readonly contribution: number;
 }
 
-/**
- * One Card scored against a query.
- *
- * A structural superset of `ScoredCandidate` in `selection-verdict.ts`, so the
- * result feeds `judgeCandidates` unchanged. Scoring stays separate from
- * judgement on purpose: ranking may only compare numbers, and the explanation
- * of where a number came from travels alongside it rather than inside it.
- */
 export interface CandidateScore {
   readonly cardId: string;
   readonly versionId: string;
@@ -59,205 +56,536 @@ export interface CandidateScore {
   readonly signals: readonly ScoreSignal[];
 }
 
+interface WeightedField {
+  readonly field: Exclude<ScoreSignal["field"], "bm25">;
+  readonly text: string;
+  readonly weight: number;
+  readonly tokens: readonly string[];
+  readonly ngrams: ReadonlySet<string>;
+}
+
+interface IndexedCard {
+  readonly card: ApprovedCard;
+  readonly fields: readonly WeightedField[];
+  readonly termFrequency: ReadonlyMap<string, number>;
+  readonly weightedLength: number;
+}
+
+interface CatalogStatistics {
+  readonly cards: readonly IndexedCard[];
+  readonly documentFrequency: ReadonlyMap<string, number>;
+  readonly declaredTermFrequency: ReadonlyMap<string, number>;
+  readonly averageWeightedLength: number;
+}
+
 /**
- * Scores every Card against one query, in the caller's order.
+ * BM25 corpus statistics belong to an immutable approved-catalog generation,
+ * not to a query. A weak key releases them when that generation is retired.
+ */
+const catalogStatisticsCache = new WeakMap<
+  readonly ApprovedCard[],
+  CatalogStatistics
+>();
+
+/**
+ * Scores every approved Card against one query.
  *
- * Ordering is left alone because ranking belongs to `judgeCandidates`; this
- * function only observes. No LLM, no clock, no randomness, no locale-sensitive
- * operation is involved, so the same query and the same Cards always produce
- * the same numbers on any machine.
+ * v2 computes catalog statistics once. A term shared by many Cards is weak
+ * evidence; a distinctive declared term is strong evidence. This removes
+ * v1's 0.9 floor for every substring while retaining deterministic scores.
  */
 export function scoreCardsAgainstQuery(
   queryText: string,
   cards: readonly ApprovedCard[],
 ): readonly CandidateScore[] {
   const query = normalizeText(queryText);
-  const queryBigrams = toBigrams(query);
+  const queryTokens = tokenize(query);
+  const queryNgrams = toCharacterNgrams(query);
+  const sourceIntents = inferSourceIntents(queryTokens);
+  const statistics = catalogStatistics(cards);
 
-  return cards.map((card) => scoreCard(query, queryBigrams, card));
+  return statistics.cards.map((indexed) =>
+    scoreCard(queryTokens, queryNgrams, sourceIntents, indexed, statistics),
+  );
 }
 
-function scoreCard(
-  query: string,
-  queryBigrams: ReadonlySet<string>,
-  card: ApprovedCard,
-): CandidateScore {
-  const directSignals = collectDirectSignals(query, card.meaning);
-  const indirectSignal = findBestIndirectSignal(queryBigrams, card.meaning);
+function catalogStatistics(cards: readonly ApprovedCard[]): CatalogStatistics {
+  const cached = catalogStatisticsCache.get(cards);
+  if (cached !== undefined) return cached;
+  const statistics = buildCatalogStatistics(cards);
+  catalogStatisticsCache.set(cards, statistics);
+  return statistics;
+}
 
-  const direct = directSignals[0]?.contribution ?? 0;
-  const indirect = indirectSignal?.contribution ?? 0;
+function buildCatalogStatistics(
+  cards: readonly ApprovedCard[],
+): CatalogStatistics {
+  const indexedCards = cards.map(indexCard);
+  const documentFrequency = new Map<string, number>();
+  const declaredTermFrequency = new Map<string, number>();
 
+  for (const indexed of indexedCards) {
+    for (const token of indexed.termFrequency.keys()) {
+      documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+    }
+    const declared = new Set(
+      [...indexed.card.meaning.keywords, ...indexed.card.meaning.aliases]
+        .flatMap((term) => tokenize(normalizeText(term))),
+    );
+    for (const token of declared) {
+      declaredTermFrequency.set(
+        token,
+        (declaredTermFrequency.get(token) ?? 0) + 1,
+      );
+    }
+  }
+
+  const totalLength = indexedCards.reduce(
+    (sum, indexed) => sum + indexed.weightedLength,
+    0,
+  );
   return {
-    cardId: card.cardId,
-    versionId: card.versionId,
-    score: clampToUnitInterval(Math.max(direct, indirect)),
-    signals:
-      indirectSignal === undefined
-        ? directSignals
-        : [...directSignals, indirectSignal],
+    cards: indexedCards,
+    documentFrequency,
+    declaredTermFrequency,
+    averageWeightedLength:
+      indexedCards.length === 0 ? 0 : totalLength / indexedCards.length,
   };
 }
 
-/**
- * Substring containment, not token equality: Korean attaches particles to the
- * noun, so the keyword "재고" appears inside "재고를" and a tokenizing match
- * would miss it. The cost is that a short keyword can match inside an unrelated
- * word, which is accepted here because Card keywords are curated, not mined.
- *
- * Every matched term shares one contribution, because the score is a property
- * of the Card's overall coverage of its own declared vocabulary rather than of
- * any single term.
- */
+function indexCard(card: ApprovedCard): IndexedCard {
+  const fields: WeightedField[] = [];
+  appendFields(fields, "keyword", card.meaning.keywords, FIELD_WEIGHTS.keyword);
+  appendFields(fields, "alias", card.meaning.aliases, FIELD_WEIGHTS.alias);
+  appendFields(
+    fields,
+    "representative_question",
+    card.meaning.representativeQuestions,
+    FIELD_WEIGHTS.representative_question,
+  );
+  appendFields(
+    fields,
+    "description",
+    [card.meaning.description],
+    FIELD_WEIGHTS.description,
+  );
+  appendFields(
+    fields,
+    "scope",
+    card.scopes.flatMap(scopeSearchValues),
+    FIELD_WEIGHTS.scope,
+  );
+
+  const termFrequency = new Map<string, number>();
+  let weightedLength = 0;
+  for (const field of fields) {
+    weightedLength += field.tokens.length * field.weight;
+    for (const token of field.tokens) {
+      termFrequency.set(token, (termFrequency.get(token) ?? 0) + field.weight);
+    }
+  }
+  return { card, fields, termFrequency, weightedLength };
+}
+
+function appendFields(
+  target: WeightedField[],
+  field: WeightedField["field"],
+  values: readonly string[],
+  weight: number,
+): void {
+  for (const text of values) {
+    const normalized = normalizeText(text);
+    const tokens = tokenize(normalized);
+    if (tokens.length > 0) {
+      target.push({
+        field,
+        text,
+        weight,
+        tokens,
+        ngrams: toCharacterNgrams(normalized),
+      });
+    }
+  }
+}
+
+function scoreCard(
+  queryTokens: readonly string[],
+  queryNgrams: ReadonlySet<string>,
+  sourceIntents: ReadonlySet<SourceIntent>,
+  indexed: IndexedCard,
+  statistics: CatalogStatistics,
+): CandidateScore {
+  if (queryTokens.length === 0) return emptyScore(indexed.card);
+
+  const bm25 = bm25Score(queryTokens, indexed, statistics);
+  const normalizedBm25 = normalizeBm25(bm25);
+  const directSignals = collectDirectSignals(
+    queryTokens,
+    indexed,
+    statistics,
+    normalizedBm25,
+    sourceIntents,
+  );
+  const direct = directSignals.reduce(
+    (maximum, signal) => Math.max(maximum, signal.contribution),
+    0,
+  );
+  const ngram = bestNgramScore(queryNgrams, indexed.fields);
+  const indirect = Math.min(
+    MAX_INDIRECT_SCORE,
+    BM25_WEIGHT * normalizedBm25 + NGRAM_WEIGHT * ngram.contribution,
+  );
+  const signals: ScoreSignal[] = [...directSignals];
+  if (bm25 > 0) {
+    signals.push({ field: "bm25", matched: "catalog", contribution: normalizedBm25 });
+  }
+  if (
+    ngram.contribution > 0 &&
+    !signals.some(
+      (signal) => signal.field === ngram.field && signal.matched === ngram.matched,
+    )
+  ) {
+    signals.push(ngram);
+  }
+
+  return {
+    cardId: indexed.card.cardId,
+    versionId: indexed.card.versionId,
+    score: clampToUnitInterval(Math.max(direct, indirect)),
+    signals,
+  };
+}
+
 function collectDirectSignals(
-  query: string,
-  meaning: ApprovedCardMeaning,
+  queryTokens: readonly string[],
+  indexed: IndexedCard,
+  statistics: CatalogStatistics,
+  normalizedBm25: number,
+  sourceIntents: ReadonlySet<SourceIntent>,
 ): readonly ScoreSignal[] {
-  // Guards the ratio below: a Card that declares nothing would otherwise divide
-  // zero by zero and carry a NaN all the way into the verdict.
-  const declaredCount = meaning.keywords.length + meaning.aliases.length;
-  if (declaredCount === 0) {
-    return [];
-  }
+  const matched: {
+    readonly field: "keyword" | "alias" | "scope";
+    readonly text: string;
+    readonly specificity: number;
+  }[] = [];
+  const matchedDeclarations = new Set<string>();
 
-  const matched: { readonly field: "keyword" | "alias"; readonly term: string }[] =
-    [];
-
-  for (const keyword of meaning.keywords) {
-    if (containsTerm(query, keyword)) {
-      matched.push({ field: "keyword", term: keyword });
+  for (const field of indexed.fields) {
+    if (field.field === "scope") {
+      const exactCoordinate =
+        field.tokens.length === queryTokens.length &&
+        field.tokens.every((token, index) => token === queryTokens[index]);
+      if (exactCoordinate) {
+        const declarationKey = `scope-coordinate:${field.tokens.join(" ")}`;
+        if (!matchedDeclarations.has(declarationKey)) {
+          matchedDeclarations.add(declarationKey);
+          matched.push({ field: "scope", text: field.text, specificity: 1 });
+        }
+        continue;
+      }
+      for (const token of new Set(field.tokens)) {
+        if (!queryTokens.includes(token)) continue;
+        const declarationKey = `scope:${token}`;
+        if (matchedDeclarations.has(declarationKey)) continue;
+        matchedDeclarations.add(declarationKey);
+        matched.push({
+          field: "scope",
+          text: token,
+          specificity: declaredSpecificity(
+            statistics.cards.length,
+            statistics.documentFrequency.get(token) ?? statistics.cards.length,
+          ),
+        });
+      }
+      continue;
     }
-  }
-  for (const alias of meaning.aliases) {
-    if (containsTerm(query, alias)) {
-      matched.push({ field: "alias", term: alias });
+    if (field.field !== "keyword" && field.field !== "alias") continue;
+    if (!field.tokens.every((token) => queryContainsDeclaredToken(queryTokens, token))) {
+      continue;
     }
+    const declarationKey = `${field.field}:${field.tokens.join(" ")}`;
+    if (matchedDeclarations.has(declarationKey)) continue;
+    matchedDeclarations.add(declarationKey);
+    const specificity = Math.max(
+      ...field.tokens.map((token) =>
+        declaredSpecificity(
+          statistics.cards.length,
+          statistics.declaredTermFrequency.get(token) ?? statistics.cards.length,
+        ),
+      ),
+    );
+    matched.push({ field: field.field, text: field.text, specificity });
   }
 
-  if (matched.length === 0) {
-    return [];
-  }
-
-  const contribution =
-    DIRECT_MATCH_FLOOR + DIRECT_MATCH_RANGE * (matched.length / declaredCount);
-
-  return matched.map(({ field, term }) => ({
-    field,
-    matched: term,
+  if (matched.length === 0) return [];
+  const strongest = Math.max(...matched.map((entry) => entry.specificity));
+  const contextualOverlap = new Set(
+    queryTokens.filter((queryToken) =>
+      indexedCardContainsQueryToken(indexed, queryToken),
+    ),
+  ).size;
+  const strongContextPhrase = indexed.fields.some((field) =>
+    hasContiguousTokenMatch(queryTokens, field.tokens, 3),
+  );
+  const rawContribution =
+    0.42 +
+    0.4 * strongest +
+    0.18 * Math.min(matched.length / 2, 1);
+  const smallCatalogStrongContext =
+    statistics.cards.length <= 3 && contextualOverlap >= 3;
+  const onlyTerm = matched.length === 1 ? tokenize(normalizeText(matched[0]?.text ?? "")) : [];
+  const weakSingleTerm =
+    onlyTerm.length === 1 &&
+    [...(onlyTerm[0] ?? "")].length <= 2 &&
+    contextualOverlap < 3 &&
+    !strongContextPhrase &&
+    !isLeadingAliasToken(onlyTerm[0] ?? "", indexed.card.meaning.aliases);
+  const exactMultiTokenAlias = matched.some(
+    (entry) => entry.field === "alias" && tokenize(normalizeText(entry.text)).length >= 2,
+  );
+  const supportedCommonPhrase = matched.length >= 2 && normalizedBm25 >= 0.6;
+  const sourceIntentConflict =
+    sourceIntents.size > 0 &&
+    !indexed.card.scopes.some((scope) => sourceIntents.has(scope.kind));
+  const commonTermsWithoutContext =
+    strongest < 0.85 &&
+    contextualOverlap < 3 &&
+    !strongContextPhrase &&
+    !exactMultiTokenAlias &&
+    !supportedCommonPhrase;
+  const contribution = clampToUnitInterval(
+    weakSingleTerm || commonTermsWithoutContext || (sourceIntentConflict && strongest < 0.85)
+      ? Math.min(rawContribution, MAX_WEAK_DIRECT_SCORE)
+      : smallCatalogStrongContext || strongContextPhrase
+        ? Math.max(rawContribution, 0.91)
+        : rawContribution,
+  );
+  return matched.map((entry) => ({
+    field: entry.field,
+    matched: entry.text,
     contribution,
   }));
 }
 
-function containsTerm(query: string, term: string): boolean {
-  const normalized = normalizeText(term);
-
-  // An empty declared term is contained in every string, so it would admit
-  // every query. It is treated as "declared but unusable" instead.
-  if (normalized.length === 0) {
-    return false;
-  }
-  return query.includes(normalized);
-}
-
-/**
- * The strongest resemblance between the query and the Card's prose, if any.
- *
- * Ties keep the first candidate in declaration order — representative questions
- * before the description — so the reported signal is reproducible.
- */
-function findBestIndirectSignal(
-  queryBigrams: ReadonlySet<string>,
-  meaning: ApprovedCardMeaning,
-): ScoreSignal | undefined {
-  let best: ScoreSignal | undefined;
-
-  for (const question of meaning.representativeQuestions) {
-    const contribution = bigramJaccard(
-      queryBigrams,
-      toBigrams(normalizeText(question)),
-    );
-    if (contribution > 0 && contribution > (best?.contribution ?? 0)) {
-      best = {
-        field: "representative_question",
-        matched: question,
-        contribution,
-      };
+function indexedCardContainsQueryToken(
+  indexed: IndexedCard,
+  queryToken: string,
+): boolean {
+  if (indexed.termFrequency.has(queryToken)) return true;
+  if (!/[가-힣]/u.test(queryToken)) return false;
+  for (const declaredToken of indexed.termFrequency.keys()) {
+    if (
+      /[가-힣]/u.test(declaredToken) &&
+      [...declaredToken].length >= 2 &&
+      queryToken.startsWith(declaredToken)
+    ) {
+      return true;
     }
   }
+  return false;
+}
 
-  const description =
-    bigramJaccard(queryBigrams, toBigrams(normalizeText(meaning.description))) *
-    DESCRIPTION_DAMPING;
-  if (description > 0 && description > (best?.contribution ?? 0)) {
-    best = {
-      field: "description",
-      matched: meaning.description,
-      contribution: description,
-    };
+function inferSourceIntents(tokens: readonly string[]): ReadonlySet<SourceIntent> {
+  const intents = new Set<SourceIntent>();
+  for (const [kind, markers] of Object.entries(SOURCE_INTENT_TOKENS) as readonly (
+    readonly [SourceIntent, ReadonlySet<string>]
+  )[]) {
+    if (tokens.some((token) => markers.has(token))) intents.add(kind);
   }
+  return intents;
+}
 
+function hasContiguousTokenMatch(
+  queryTokens: readonly string[],
+  fieldTokens: readonly string[],
+  minimumLength: number,
+): boolean {
+  if (queryTokens.length < minimumLength || fieldTokens.length < minimumLength) {
+    return false;
+  }
+  for (let queryStart = 0; queryStart <= queryTokens.length - minimumLength; queryStart += 1) {
+    for (let fieldStart = 0; fieldStart <= fieldTokens.length - minimumLength; fieldStart += 1) {
+      let matched = 0;
+      while (
+        queryStart + matched < queryTokens.length &&
+        fieldStart + matched < fieldTokens.length &&
+        queryTokens[queryStart + matched] === fieldTokens[fieldStart + matched]
+      ) {
+        matched += 1;
+        if (matched >= minimumLength) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function isLeadingAliasToken(
+  token: string,
+  aliases: readonly string[],
+): boolean {
+  return aliases.some((alias) => {
+    const aliasTokens = tokenize(normalizeText(alias));
+    return aliasTokens.length >= 2 && aliasTokens[0] === token;
+  });
+}
+
+function queryContainsDeclaredToken(
+  queryTokens: readonly string[],
+  declaredToken: string,
+): boolean {
+  return queryTokens.some((queryToken) => {
+    if (queryToken === declaredToken) return true;
+    return (
+      /[가-힣]/u.test(declaredToken) &&
+      [...declaredToken].length >= 2 &&
+      queryToken.startsWith(declaredToken)
+    );
+  });
+}
+
+function declaredSpecificity(cardCount: number, frequency: number): number {
+  if (cardCount <= 1) return 1;
+  return Math.log1p(cardCount / Math.max(frequency, 1)) / Math.log1p(cardCount);
+}
+
+function bm25Score(
+  queryTokens: readonly string[],
+  indexed: IndexedCard,
+  statistics: CatalogStatistics,
+): number {
+  if (statistics.cards.length === 0 || statistics.averageWeightedLength === 0) return 0;
+  let score = 0;
+  for (const token of new Set(queryTokens)) {
+    const frequency = indexed.termFrequency.get(token) ?? 0;
+    if (frequency === 0) continue;
+    const documentFrequency = statistics.documentFrequency.get(token) ?? 0;
+    const idf = Math.log(
+      1 +
+        (statistics.cards.length - documentFrequency + 0.5) /
+          (documentFrequency + 0.5),
+    );
+    const denominator =
+      frequency +
+      BM25_K1 *
+        (1 - BM25_B + BM25_B * (indexed.weightedLength / statistics.averageWeightedLength));
+    score += idf * ((frequency * (BM25_K1 + 1)) / denominator);
+  }
+  return score;
+}
+
+function normalizeBm25(value: number): number {
+  return value <= 0 ? 0 : value / (value + 2);
+}
+
+function bestNgramScore(
+  queryNgrams: ReadonlySet<string>,
+  fields: readonly WeightedField[],
+): ScoreSignal & { readonly field: Exclude<ScoreSignal["field"], "bm25"> } {
+  let best: ScoreSignal & { field: Exclude<ScoreSignal["field"], "bm25"> } = {
+    field: "description",
+    matched: "",
+    contribution: 0,
+  };
+  for (const field of fields) {
+    const similarity = ngramDice(queryNgrams, field.ngrams);
+    const contribution = similarity * Math.min(field.weight / FIELD_WEIGHTS.keyword, 1);
+    if (contribution > best.contribution) {
+      best = { field: field.field, matched: field.text, contribution };
+    }
+  }
   return best;
 }
 
-/**
- * The one text shape everything downstream compares.
- *
- * NFKC first, so the same Hangul syllable written composed or decomposed is one
- * string and full-width Latin folds onto ASCII. `toLowerCase` rather than
- * `toLocaleLowerCase`, and no `localeCompare` anywhere: a locale-sensitive
- * operation resolves against the runtime's locale, which would make the same
- * query score differently on two machines. `selection-verdict.ts` avoids
- * `localeCompare` in its tie-break for exactly this reason.
- */
+function scopeSearchValues(scope: ApprovedScope): readonly string[] {
+  switch (scope.kind) {
+    case "managed_document":
+      return [
+        scope.reference.scopeId,
+        scope.reference.scopeVersion,
+        scope.documentIndex.documentId,
+        scope.documentIndex.documentIndexId,
+        ...(scope.selection.kind === "semantic_units"
+          ? scope.selection.semanticUnitIds
+          : ["document"]),
+      ];
+    case "sql_source":
+      return [
+        scope.reference.scopeId,
+        scope.reference.scopeVersion,
+        scope.connector,
+        scope.schema,
+        scope.table,
+        ...scope.columns,
+      ];
+    case "http_source":
+      return [
+        scope.reference.scopeId,
+        scope.reference.scopeVersion,
+        scope.connector,
+        scope.method,
+        scope.path,
+        scope.operationId ?? "",
+        ...scope.parameters.flatMap((parameter) => [
+          parameter.location,
+          parameter.name,
+        ]),
+      ];
+  }
+}
+
+function emptyScore(card: ApprovedCard): CandidateScore {
+  return { cardId: card.cardId, versionId: card.versionId, score: 0, signals: [] };
+}
+
 function normalizeText(text: string): string {
   return text.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
-/**
- * The set of adjacent character pairs.
- *
- * Character bigrams rather than word tokens because Korean is not
- * whitespace-delimited at the morpheme level, so word splitting would need a
- * tokenizer this domain deliberately does not depend on. A string shorter than
- * two characters has no pair and yields the empty set.
- */
-function toBigrams(text: string): ReadonlySet<string> {
-  const bigrams = new Set<string>();
-
-  for (let index = 0; index + 2 <= text.length; index += 1) {
-    bigrams.add(text.slice(index, index + 2));
+function tokenize(text: string): readonly string[] {
+  const raw = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const tokens: string[] = [];
+  for (const value of raw) {
+    const token = normalizeKoreanSuffix(value);
+    if (token.length > 0 && !STOP_WORDS.has(token)) tokens.push(token);
   }
-  return bigrams;
+  return tokens;
 }
 
-function bigramJaccard(
-  left: ReadonlySet<string>,
-  right: ReadonlySet<string>,
-): number {
-  // An empty set on either side makes the union zero or the overlap
-  // meaningless, so similarity is defined as absent rather than divided.
-  if (left.size === 0 || right.size === 0) {
-    return 0;
-  }
-
-  let intersection = 0;
-  for (const bigram of left) {
-    if (right.has(bigram)) {
-      intersection += 1;
+function normalizeKoreanSuffix(value: string): string {
+  if (!/[가-힣]/u.test(value) || value.length < 3) return value;
+  for (const suffix of [
+    "에서는", "으로는", "에게는", "부터는", "까지는", "이라는", "라고는",
+    "으로", "에서", "에게", "까지", "부터", "처럼", "보다", "이나", "거나",
+    "은", "는", "이", "가", "을", "를", "에", "의", "도", "로", "와", "과", "랑",
+  ]) {
+    if (value.endsWith(suffix) && value.length > suffix.length + 1) {
+      return value.slice(0, -suffix.length);
     }
   }
-
-  return intersection / (left.size + right.size - intersection);
+  return value;
 }
 
-/**
- * Keeps the score inside the [0, 1] range `DEFAULT_SELECTION_THRESHOLDS` is
- * tuned for, and turns a non-finite value into 0 rather than letting it reach
- * the verdict, where every comparison against it would be false.
- */
-function clampToUnitInterval(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
+function toCharacterNgrams(text: string): ReadonlySet<string> {
+  const compact = text.replace(/\s+/gu, "");
+  const ngrams = new Set<string>();
+  for (const size of [2, 3]) {
+    for (let index = 0; index + size <= compact.length; index += 1) {
+      ngrams.add(compact.slice(index, index + size));
+    }
   }
+  return ngrams;
+}
+
+function ngramDice(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  const [smaller, larger] =
+    left.size <= right.size ? [left, right] : [right, left];
+  let intersection = 0;
+  for (const ngram of smaller) if (larger.has(ngram)) intersection += 1;
+  return (2 * intersection) / (left.size + right.size);
+}
+
+function clampToUnitInterval(value: number): number {
+  if (!Number.isFinite(value)) return 0;
   return Math.min(Math.max(value, 0), 1);
 }

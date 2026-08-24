@@ -17,10 +17,14 @@ const targets = Object.freeze({
     requiredEnvironment: Object.freeze([
       "CONTEXTCTL_GRANITE_ASSET_DIRECTORY",
       "CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH",
+      "CONTEXTCTL_SELECTION_EVAL_RESULT_PATH",
+      "CONTEXTCTL_SELECTION_SCALE_RESULT_PATH",
     ]),
     testFiles: Object.freeze([
       "packages/ingestion-indexing/test/local-embedding-adapter.integration.test.ts",
       "apps/contextctl-daemon/test/embedding-runtime-load.integration.test.ts",
+      "apps/contextctl-daemon/test/selection-eval.integration.test.ts",
+      "apps/contextctl-daemon/test/selection-scale.integration.test.ts",
     ]),
     isolateTestFiles: true,
   }),
