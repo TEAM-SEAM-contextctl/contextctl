@@ -19,8 +19,13 @@ import {
 import { InMemoryCardCatalog } from "../../src/infrastructure/in-memory-card-catalog.js";
 import { createDemoCardSet, createRefundPolicyCard, DEMO_QUERY } from "../fixtures/approved-card.fixture.js";
 
-/** Every Card built here declares the query's one word, so every one is admitted. */
-const QUERY = "환불";
+/**
+ * Every Card built here declares the query as a strong contextual phrase, so
+ * every one is admitted. The fixture deliberately avoids relying on the
+ * lexical policy's treatment of a catalog-wide single-word keyword: these
+ * tests are about planning ceilings, not scoring calibration.
+ */
+const QUERY = "환불 계획 한도";
 
 function managedScope(index: number): ApprovedScope {
   return {
@@ -52,7 +57,12 @@ function card(index: number, scopes: readonly ApprovedScope[]): ApprovedCard {
     ...createRefundPolicyCard(),
     cardId: `card_${index}`,
     versionId: `cardv_${index}`,
-    meaning: { description: "환불", representativeQuestions: ["환불?"], aliases: [], keywords: [QUERY] },
+    meaning: {
+      description: QUERY,
+      representativeQuestions: [`${QUERY}?`],
+      aliases: [],
+      keywords: [QUERY],
+    },
     scopes,
   };
 }

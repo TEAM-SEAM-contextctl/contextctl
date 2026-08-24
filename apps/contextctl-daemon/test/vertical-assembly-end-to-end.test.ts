@@ -358,7 +358,7 @@ describe("daemon vertical assembly", () => {
     // The other half of the invariant, on the wire rather than in a unit test:
     // a response may not name a mode and a scoring family that disagree.
     expect((payload["policy"] as { readonly scoring: string }).scoring).toBe(
-      "selection-hybrid-v1",
+      "selection-hybrid-v2",
     );
 
     // The retrieved text, not merely a well-formed envelope. Only the sentence

@@ -36,14 +36,14 @@ describe("the scoring family a response reports", () => {
     const resolution = assembleContext(await planFor(true), []);
 
     expect(resolution.selection.mode).toBe("hybrid");
-    expect(resolution.policy.scoring).toBe("selection-hybrid-v1");
+    expect(resolution.policy.scoring).toBe("selection-hybrid-v2");
   });
 
   it("reports lexical_degraded and its paired scoring version together", async () => {
     const resolution = assembleContext(await planFor(false), []);
 
     expect(resolution.selection.mode).toBe("lexical_degraded");
-    expect(resolution.policy.scoring).toBe("selection-lexical-v1");
+    expect(resolution.policy.scoring).toBe("selection-lexical-v2");
   });
 
   /**
@@ -63,7 +63,7 @@ describe("the scoring family a response reports", () => {
 
     expect(assembleContext(relabelled, []).selection.mode).toBe("hybrid");
     expect(assembleContext(relabelled, []).policy.scoring).toBe(
-      "selection-hybrid-v1",
+      "selection-hybrid-v2",
     );
   });
 

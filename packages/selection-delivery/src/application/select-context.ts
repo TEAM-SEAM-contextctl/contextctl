@@ -273,6 +273,26 @@ interface ScoredCandidates {
   readonly candidates: readonly CandidateScore[];
 }
 
+interface PreparedSemanticCatalog {
+  readonly entries: readonly CardSelectionEntry[];
+  readonly snapshots: WeakMap<CardSelectionProfile, string>;
+}
+
+/**
+ * Canonical Card text and its snapshot digest are generation assets. Keeping
+ * them behind a weak catalog key avoids rebuilding 10,000 digests per request
+ * without retaining a retired Registry generation.
+ */
+const preparedSemanticCatalogs = new WeakMap<
+  readonly ApprovedCard[],
+  PreparedSemanticCatalog
+>();
+
+const eligibleVersionIdsByCatalog = new WeakMap<
+  readonly ApprovedCard[],
+  ReadonlySet<string>
+>();
+
 /**
  * Adds the semantic signal to the lexical scores, or states why it could not.
  *
@@ -328,8 +348,13 @@ async function scoreWithSemantics(
     // set it would be rebuilt — every Card re-embedded — each time the policy
     // changed, and `covers` could no longer say whether this snapshot is
     // current. The policy is applied at search time instead, below.
-    const entries = catalog.map(buildCardSelectionEntry);
-    const snapshotVersion = catalogSnapshotVersion(entries, semantic.profile);
+    const prepared = prepareSemanticCatalog(catalog);
+    const entries = prepared.entries;
+    let snapshotVersion = prepared.snapshots.get(semantic.profile);
+    if (snapshotVersion === undefined) {
+      snapshotVersion = catalogSnapshotVersion(entries, semantic.profile);
+      prepared.snapshots.set(semantic.profile, snapshotVersion);
+    }
     const index = await semantic.index.acquire({
       entries,
       catalogSnapshotVersion: snapshotVersion,
@@ -341,12 +366,15 @@ async function scoreWithSemantics(
     // rather than trusting it, because an index that is merely *stale* produces
     // no error at all — the Cards it is missing simply never appear in a
     // ranking, which is indistinguishable from Cards that scored badly.
-    const uncovered = entries.filter(
-      (entry) => !index.covers(entry.cardVersionId, entry.selectionTextDigest),
-    );
-    if (uncovered.length > 0) {
+    let uncovered = 0;
+    for (const entry of entries) {
+      if (!index.covers(entry.cardVersionId, entry.selectionTextDigest)) {
+        uncovered += 1;
+      }
+    }
+    if (uncovered > 0) {
       return degrade(
-        `the candidate index does not cover ${uncovered.length} approved Card version(s) of this snapshot`,
+        `the candidate index does not cover ${uncovered} approved Card version(s) of this snapshot`,
       );
     }
 
@@ -364,9 +392,7 @@ async function scoreWithSemantics(
           queryVector,
           degradation.semanticTopK ?? DEFAULT_SEMANTIC_TOP_K,
           {
-            eligibleVersionIds: new Set(
-              policy.eligible.map((card) => card.versionId),
-            ),
+            eligibleVersionIds: eligibleVersionIds(policy.eligible),
           },
         ),
         lexicalTopK: degradation.lexicalTopK ?? DEFAULT_LEXICAL_TOP_K,
@@ -389,6 +415,29 @@ async function scoreWithSemantics(
     }
     return degrade(describeEmbeddingFailure(cause));
   }
+}
+
+function eligibleVersionIds(
+  eligible: readonly ApprovedCard[],
+): ReadonlySet<string> {
+  const cached = eligibleVersionIdsByCatalog.get(eligible);
+  if (cached !== undefined) return cached;
+  const versionIds = new Set(eligible.map((card) => card.versionId));
+  eligibleVersionIdsByCatalog.set(eligible, versionIds);
+  return versionIds;
+}
+
+function prepareSemanticCatalog(
+  catalog: readonly ApprovedCard[],
+): PreparedSemanticCatalog {
+  const cached = preparedSemanticCatalogs.get(catalog);
+  if (cached !== undefined) return cached;
+  const prepared: PreparedSemanticCatalog = {
+    entries: catalog.map(buildCardSelectionEntry),
+    snapshots: new WeakMap(),
+  };
+  preparedSemanticCatalogs.set(catalog, prepared);
+  return prepared;
 }
 
 /**

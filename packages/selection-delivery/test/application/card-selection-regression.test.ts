@@ -26,12 +26,9 @@ import {
  *    policy versions and thresholds they were measured under. Changing a
  *    threshold without changing the version fails here first (SOT L794; §6.2:
  *    an input-side defect is not to be hidden by moving a threshold).
- * 3. Targets — the design's own criteria (SOT L1452), written as `it.fails`.
- *    Each one fails today for a reason stated beside it; the day the scorer
- *    reaches it, the `it.fails` wrapper breaks and the case is promoted to a
- *    plain assertion. Nothing below asserts that the current margins or the
- *    current share of wrong admits are acceptable — they are recorded, not
- *    defended (ADR 0010).
+ * 3. Quality gates — the design's criteria that lexical v2 now meets. These
+ *    stay as ordinary assertions so a later scorer cannot restore v1's broad
+ *    substring admission or collapse the defer band.
  *
  * Lexical path only. The hybrid path needs the installed model and is outside
  * `npm test`; see the dataset README.
@@ -135,41 +132,26 @@ describe.each(GENERATORS)("card-selection-regression-v1 · %s snapshot", (genera
       expect(report.metrics.wrongAdmitRatio).not.toBeNull();
       expect(report.metrics.wrongAdmitRatio as number).toBeLessThanOrEqual(recorded as number);
     });
+
+    it("reproduces the recorded v2 baseline exactly", () => {
+      expect(report.metrics).toEqual(baseline.snapshots[generator].metrics);
+      expect(report.byCategory).toEqual(baseline.snapshots[generator].byCategory);
+    });
   });
 
-  describe("targets the scorer does not meet yet", () => {
-    // Each case is `it.fails`: it passes while the assertion fails, and breaks
-    // the day the assertion holds — which is the signal to promote it to a
-    // plain `it` and re-measure the baseline.
-
-    it.fails("admits no forbidden Card (SOT L1452: 금지된 Card 수용 0)", () => {
-      // Why it fails today: every section Card of one document shares the
-      // document's title words, the scorer matches keywords by substring
-      // with a 0.9 floor and no IDF, so a query for one section admits its
-      // neighbours too — 25 (LLM) and 26 (deterministic) forbidden admits over
-      // 25 queries. SEAM-100; ADR 0010 "토큰 경계를 보지 않는다", "IDF가 없다".
+  describe("lexical v2 quality gates", () => {
+    it("admits no forbidden Card (SOT L1452: 금지된 Card 수용 0)", () => {
       expect(report.metrics.forbiddenAdmits).toBe(0);
     });
 
-    it.fails("keeps the share of wrong admits at or under 0.10 (SOT L1452)", () => {
-      // Why it fails today: 0.603 (LLM) and 0.635 (deterministic). Six of ten
-      // admitted Cards are not an answer to the query. Same cause as above;
-      // SEAM-100, ADR 0010.
+    it("keeps the share of wrong admits at or under 0.10 (SOT L1452)", () => {
       expect(report.metrics.wrongAdmitRatio).not.toBeNull();
       expect(report.metrics.wrongAdmitRatio as number).toBeLessThanOrEqual(
         TARGET_WRONG_ADMIT_RATIO,
       );
     });
 
-    it.fails("places some verdicts in the defer band", () => {
-      // Why it fails today: the score distribution is bimodal — a declared
-      // term match lands at or above 0.9, anything else at or below ~0.28 —
-      // so no (Card, query) pair ever falls between reject 0.35 and admit
-      // 0.85. The defer ratio is exactly 0 on both snapshots, which is the
-      // shortest statement of ADR 0010's "분포가 쌍봉이다": the dedicated
-      // threshold SOT L1404 asks for has nothing to separate. Stated as a
-      // distribution property rather than a margin number on purpose — no
-      // margin value has a basis in the design.
+    it("places ambiguous evidence in the defer band", () => {
       expect(report.metrics.deferRatio).toBeGreaterThan(0);
     });
   });

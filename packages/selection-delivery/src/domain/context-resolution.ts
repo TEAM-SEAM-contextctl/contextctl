@@ -51,11 +51,10 @@ export interface SelectionSummary {
    * Which scoring family produced the ranking behind `selected`.
    *
    * Paired with `ResolutionPolicy.scoring` by invariant — `hybrid` requires
-   * `selection-hybrid-v1`, `lexical_degraded` requires `selection-lexical-v1`,
-   * and any other combination is refused before assembly. Card embeddings are
-   * not wired yet, so every response is `lexical_degraded` today; the field
-   * exists rather than being implied so that the day they are, a consumer can
-   * tell the two runs apart without comparing policy strings.
+   * `selection-hybrid-v2`, `lexical_degraded` requires `selection-lexical-v2`,
+   * and any other combination is refused before assembly. The field is explicit
+   * rather than inferred from scores so a consumer can tell a full hybrid run
+   * from an allowed lexical degradation without guessing.
    */
   readonly mode: "hybrid" | "lexical_degraded";
   /** The admitted Cards, in rank order. Deferred and rejected Cards are absent. */
@@ -101,7 +100,7 @@ export interface ResolutionPolicy {
    * `QUERY_SCORING_POLICY_VERSION`, and the other half of the invariant
    * `SelectionSummary.mode` states — see that field.
    */
-  readonly scoring: "selection-hybrid-v1" | "selection-lexical-v1";
+  readonly scoring: "selection-hybrid-v2" | "selection-lexical-v2";
   /** `SELECTION_RANKING_POLICY_VERSION`. */
   readonly ranking: "selection-ranking-v2";
   /** `SELECTION_PLANNING_POLICY_VERSION`. */

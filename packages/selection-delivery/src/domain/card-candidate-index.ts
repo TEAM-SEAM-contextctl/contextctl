@@ -96,6 +96,11 @@ export class CardCandidateIndex {
   readonly profileVersion: string;
   readonly dimensions: number;
   readonly #records: readonly CardCandidateRecord[];
+  readonly #recordMagnitudes: readonly number[];
+  readonly #selectionDigestsByVersionId: ReadonlyMap<
+    string,
+    ReadonlySet<string>
+  >;
 
   constructor(input: {
     readonly catalogSnapshotVersion: string;
@@ -141,6 +146,17 @@ export class CardCandidateIndex {
     this.profileVersion = input.profile.version;
     this.dimensions = input.profile.dimensions;
     this.#records = [...input.records];
+    this.#recordMagnitudes = this.#records.map((record) =>
+      vectorMagnitude(record.embedding),
+    );
+    const selectionDigestsByVersionId = new Map<string, Set<string>>();
+    for (const record of this.#records) {
+      const digests =
+        selectionDigestsByVersionId.get(record.cardVersionId) ?? new Set();
+      digests.add(record.selectionTextDigest);
+      selectionDigestsByVersionId.set(record.cardVersionId, digests);
+    }
+    this.#selectionDigestsByVersionId = selectionDigestsByVersionId;
   }
 
   get size(): number {
@@ -149,10 +165,10 @@ export class CardCandidateIndex {
 
   /** Whether this index holds a current vector for the given Card Version. */
   covers(cardVersionId: string, selectionTextDigest: string): boolean {
-    return this.#records.some(
-      (record) =>
-        record.cardVersionId === cardVersionId &&
-        record.selectionTextDigest === selectionTextDigest,
+    return (
+      this.#selectionDigestsByVersionId
+        .get(cardVersionId)
+        ?.has(selectionTextDigest) ?? false
     );
   }
 
@@ -182,7 +198,7 @@ export class CardCandidateIndex {
     limit: number,
     options: { readonly eligibleVersionIds?: ReadonlySet<string> } = {},
   ): readonly CardSimilarity[] {
-    if (limit <= 0) {
+    if (limit <= 0 || Number.isNaN(limit)) {
       return [];
     }
     if (queryVector.length !== this.dimensions) {
@@ -192,20 +208,52 @@ export class CardCandidateIndex {
     }
 
     const eligible = options.eligibleVersionIds;
-    const searched =
-      eligible === undefined
-        ? this.#records
-        : this.#records.filter((record) => eligible.has(record.cardVersionId));
+    const queryMagnitude = vectorMagnitude(queryVector);
+    const closest: CardSimilarity[] = [];
 
-    return searched
-      .map((record) => ({
+    for (let index = 0; index < this.#records.length; index += 1) {
+      const record = this.#records[index]!;
+      if (eligible !== undefined && !eligible.has(record.cardVersionId)) continue;
+      const candidate: CardSimilarity = {
         cardId: record.cardId,
         cardVersionId: record.cardVersionId,
-        similarity: cosineSimilarity(queryVector, record.embedding),
-      }))
-      .sort(compareBySimilarity)
-      .slice(0, limit);
+        similarity: cosineSimilarityWithMagnitudes(
+          queryVector,
+          record.embedding,
+          queryMagnitude,
+          this.#recordMagnitudes[index] ?? 0,
+        ),
+      };
+      insertClosest(closest, candidate, limit);
+    }
+
+    return closest;
   }
+}
+
+function insertClosest(
+  closest: CardSimilarity[],
+  candidate: CardSimilarity,
+  limit: number,
+): void {
+  if (
+    closest.length === limit &&
+    compareBySimilarity(candidate, closest[closest.length - 1]!) >= 0
+  ) {
+    return;
+  }
+  let low = 0;
+  let high = closest.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (compareBySimilarity(candidate, closest[middle]!) < 0) {
+      high = middle;
+    } else {
+      low = middle + 1;
+    }
+  }
+  closest.splice(low, 0, candidate);
+  if (closest.length > limit) closest.pop();
 }
 
 function compareBySimilarity(
@@ -241,19 +289,29 @@ export function cosineSimilarity(
   left: readonly number[],
   right: readonly number[],
 ): number {
+  return cosineSimilarityWithMagnitudes(
+    left,
+    right,
+    vectorMagnitude(left),
+    vectorMagnitude(right),
+  );
+}
+
+function cosineSimilarityWithMagnitudes(
+  left: readonly number[],
+  right: readonly number[],
+  leftMagnitude: number,
+  rightMagnitude: number,
+): number {
   let dot = 0;
-  let leftSquares = 0;
-  let rightSquares = 0;
 
   for (let index = 0; index < left.length; index += 1) {
     const leftComponent = left[index] ?? 0;
     const rightComponent = right[index] ?? 0;
     dot += leftComponent * rightComponent;
-    leftSquares += leftComponent * leftComponent;
-    rightSquares += rightComponent * rightComponent;
   }
 
-  const magnitude = Math.sqrt(leftSquares) * Math.sqrt(rightSquares);
+  const magnitude = leftMagnitude * rightMagnitude;
   if (magnitude === 0 || !Number.isFinite(magnitude)) {
     return 0;
   }
@@ -261,4 +319,10 @@ export function cosineSimilarity(
   // 1, and a similarity above 1 would move a score past a threshold that was
   // tuned on the closed interval.
   return Math.min(Math.max(dot / magnitude, -1), 1);
+}
+
+function vectorMagnitude(vector: readonly number[]): number {
+  let squares = 0;
+  for (const component of vector) squares += component * component;
+  return Math.sqrt(squares);
 }
