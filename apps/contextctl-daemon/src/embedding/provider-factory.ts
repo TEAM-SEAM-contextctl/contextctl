@@ -10,6 +10,7 @@ import {
 } from "@contextctl/ingestion-indexing";
 import {
   isCardSelectionEmbeddingProfile,
+  OpenAiCompatibleCardEmbeddingAdapter,
   type CardEmbeddingPort,
   type CardSelectionProfile,
 } from "@contextctl/selection-delivery";
@@ -157,20 +158,18 @@ export class IngestionDocumentEmbeddingProviderFactory
 }
 
 /**
- * Binds the Card adapters, as far as Selection has shipped them.
+ * Binds the Card adapters Selection owns and exports.
  *
- * Both branches currently refuse. Selection owns `CardEmbeddingPort` and has not
- * published a provider that implements it directly for either execution mode —
- * the local path in the graph today runs through a translation adapter this
- * package still holds, which is being retired rather than extended, and there is
- * no remote Card adapter at all.
+ * Selection now publishes its OpenAI-compatible remote adapter. The local path
+ * still refuses until Selection publishes a local adapter that implements its
+ * own port directly; the graph's existing local translation adapter is confined
+ * to the compatibility composition in `main.ts` and is being retired rather
+ * than extended.
  *
- * Refusing is the correct interim behaviour, not a placeholder. Every other
- * option available here is one of the things the composition is forbidden to do:
- * wrapping Ingestion's port would rebuild the translation being removed, and
- * falling back to the deterministic adapter would put hash vectors in an index
- * whose profile claims a model. A composition that needs Card embedding before
- * Selection ships its adapters injects one through this interface.
+ * Refusing the missing local branch is the correct interim behaviour, not a
+ * placeholder. Wrapping Ingestion's port would rebuild the translation being
+ * removed, and falling back to the deterministic adapter would put hash vectors
+ * in an index whose profile claims a model.
  */
 export class SelectionCardEmbeddingProviderFactory
   implements CardEmbeddingProviderFactory
@@ -187,8 +186,19 @@ export class SelectionCardEmbeddingProviderFactory
     readonly profile: CardSelectionProfile;
     readonly binding: RemoteEmbeddingBinding;
   }): CardEmbeddingPort {
-    void input;
-    throw new EmbeddingAdapterUnavailableError("card", "remote", "Selection");
+    if (
+      !isCardSelectionEmbeddingProfile(input.profile) ||
+      input.profile.execution.kind !== "remote"
+    ) {
+      throw new EmbeddingAdapterUnavailableError("card", "remote", "Selection");
+    }
+    return new OpenAiCompatibleCardEmbeddingAdapter({
+      endpoint: input.binding.endpoint,
+      profile: input.profile,
+      headers: {
+        authorization: `Bearer ${input.binding.credential.reveal()}`,
+      },
+    });
   }
 }
 

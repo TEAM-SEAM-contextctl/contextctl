@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { EmbeddingProviderFault } from "@contextctl/ingestion-indexing";
 
@@ -10,6 +10,7 @@ import {
 import {
   EmbeddingModeProfileMismatchError,
   IngestionDocumentEmbeddingProviderFactory,
+  SelectionCardEmbeddingProviderFactory,
 } from "../../src/embedding/provider-factory.js";
 import { RemoteEmbeddingBindingError } from "../../src/embedding/remote-binding.js";
 import {
@@ -28,13 +29,12 @@ import {
 /**
  * The four ways a deployment can bind its two embedding layers.
  *
- * Written against injected fakes rather than the shipped adapters, and that is
- * the point rather than a shortcut: neither domain has published its final
- * remote provider, and the composition's job — choose a binding per layer,
- * refuse a contradiction, read local assets only when something needs them — is
- * decided before any adapter is constructed. Testing it through a real adapter
- * would mean testing it through a 390MB download and an HTTP endpoint, so the
- * cases that matter would be the ones never covered.
+ * Written against injected fakes rather than only the shipped adapters. The
+ * composition's job — choose a binding per layer, refuse a contradiction, read
+ * local assets only when something needs them — is decided before any adapter
+ * is constructed. Testing every case only through a real adapter would require
+ * both a 390MB download and hosted endpoints; the concrete remote bindings are
+ * covered above and by the release product gate.
  *
  * Each combination asserts the two layers separately. A test that only checked
  * "it assembled" would pass on a composition that had quietly bound both layers
@@ -50,6 +50,52 @@ describe("embedding composition", () => {
 
     expect(provider.providerKind).toBe("remote");
     expect(provider.embeddingProfile).toEqual(profile);
+  });
+
+  it("binds Selection's concrete remote adapter to its own endpoint and credential", async () => {
+    const profile = remoteCardProfile();
+    const fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          model: profile.model,
+          data: [
+            {
+              index: 0,
+              embedding: [1, ...new Array<number>(profile.dimensions - 1).fill(0)],
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const provider = new SelectionCardEmbeddingProviderFactory().createRemote({
+        profile,
+        binding: remoteBinding("card"),
+      });
+
+      expect(provider.providerKind).toBe("remote");
+      expect(provider.profile).toEqual(profile);
+      await expect(
+        provider.embed({
+          profile,
+          inputs: [{ key: "card-query", text: "배송 조회" }],
+        }),
+      ).resolves.toHaveLength(1);
+      expect(fetch).toHaveBeenCalledWith(
+        "https://cards.example/v1/embeddings",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            authorization: "Bearer key-for-card",
+            "content-type": "application/json",
+          },
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("injects a verified physical resource without reopening its asset path", async () => {
