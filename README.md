@@ -188,8 +188,8 @@ output extensively.
 | | |
 |---|---|
 | [CLI 레퍼런스](docs/cli.md) | Every command, flag and exit code |
-| [설정](docs/configuration.md) | Environment variables, embedding model, meaning generator |
-| [운영](docs/operations.md) | Status checks, reachability, index rebuild, uninstall |
+| [설정](docs/configuration.md) | Environment variables, state identity, HTTP surface, embedding, meaning generator |
+| [운영](docs/operations.md) | Status checks, reachability, backup and restore, index rebuild, uninstall |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, branch and review rules |
 
 In a terminal the CLI tells you itself.
