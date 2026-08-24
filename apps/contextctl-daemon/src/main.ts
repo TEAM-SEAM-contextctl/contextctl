@@ -467,6 +467,18 @@ export interface DaemonRuntime {
 export function createDaemonRuntime(
   options: DaemonRuntimeOptions,
 ): DaemonRuntime {
+  const legacyIdentity = options as DaemonRuntimeOptions & {
+    readonly securityDomain?: unknown;
+    readonly stateNamespaceId?: unknown;
+  };
+  if (
+    "securityDomain" in legacyIdentity ||
+    "stateNamespaceId" in legacyIdentity
+  ) {
+    throw new TypeError(
+      "state identity must be supplied as one stateIdentity object",
+    );
+  }
   if (options.vectorIndex === undefined) {
     throw new TypeError("an explicit vector index is required");
   }

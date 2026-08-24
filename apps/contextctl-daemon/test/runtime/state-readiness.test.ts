@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type {
-  IndexPublicationStore,
-  PublishedIndexVersion,
-  VectorIndexConnectorResolver,
-  VectorIndexPort,
+import {
+  VectorIndexFault,
+  type IndexPublicationStore,
+  type PublishedIndexVersion,
+  type VectorIndexConnectorResolver,
+  type VectorIndexPort,
 } from "@contextctl/ingestion-indexing";
 import type {
   ApprovedCard,
@@ -207,6 +208,21 @@ describe("daemon state readiness", () => {
     );
     expect(String(error)).not.toContain("secret endpoint and handle");
     expect(String(error)).not.toContain("private-binding");
+  });
+
+  it("preserves a vector adapter's non-retriable compatibility verdict", async () => {
+    const input = dependencies({
+      publication: publishedIndex(),
+      rehydrate: async () => {
+        throw new VectorIndexFault("invalid_request", false);
+      },
+    });
+
+    await expect(assertDaemonStateReady(input)).rejects.toMatchObject({
+      code: "index_binding_unavailable",
+      area: "vector_index",
+      retriable: false,
+    });
   });
 
   it("does not touch the Index Catalog or Qdrant when no managed Scope is approved", async () => {

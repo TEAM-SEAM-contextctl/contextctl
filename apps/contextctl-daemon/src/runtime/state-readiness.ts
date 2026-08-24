@@ -1,7 +1,8 @@
-import type {
-  IndexPublicationStore,
-  VectorIndexCompatibility,
-  VectorIndexConnectorResolver,
+import {
+  VectorIndexFault,
+  type IndexPublicationStore,
+  type VectorIndexCompatibility,
+  type VectorIndexConnectorResolver,
 } from "@contextctl/ingestion-indexing";
 import type { ApprovedCardCatalog } from "@contextctl/selection-delivery";
 
@@ -127,12 +128,12 @@ export async function assertDaemonStateReady(
           compatibility,
           signal,
         });
-      } catch {
+      } catch (error) {
         if (signal.aborted) signal.throwIfAborted();
         throw new DaemonStateReadinessError(
           "index_binding_unavailable",
           "vector_index",
-          true,
+          error instanceof VectorIndexFault ? error.retriable : true,
         );
       }
       checkedBindings.add(key);
