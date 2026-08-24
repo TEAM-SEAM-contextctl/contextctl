@@ -7,6 +7,7 @@ import {
   type CardCandidateIndexStore,
   type CardEmbeddingPort,
 } from "@contextctl/selection-delivery";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -45,8 +46,10 @@ function card(version: string): ApprovedCard {
 
 class MutableCatalog implements ApprovedCardCatalog {
   cards: readonly ApprovedCard[] = [];
+  calls = 0;
 
   async listApprovedCards(): Promise<readonly ApprovedCard[]> {
+    this.calls += 1;
     return this.cards;
   }
 }
@@ -134,6 +137,51 @@ describe("PreparedApprovedCardCatalog", () => {
       lastFailureCode: "card_candidate_refresh_failed",
     });
     expect(await prepared.listApprovedCards()).toEqual([]);
+  });
+
+  it("coalesces passive polling while explicit refresh remains immediate", async () => {
+    const upstream = new MutableCatalog();
+    const index = new ControlledIndexStore();
+    let now = 1_000;
+    const prepared = new PreparedApprovedCardCatalog({
+      upstream,
+      index,
+      profile: DETERMINISTIC_CARD_SELECTION_PROFILE,
+      embedding,
+      passiveRefreshIntervalMs: 250,
+      now: () => now,
+    });
+
+    upstream.cards = [card("cv_1")];
+    await prepared.refresh();
+    expect(upstream.calls).toBe(1);
+    await prepared.listApprovedCards();
+    await prepared.listApprovedCards();
+    expect(upstream.calls).toBe(1);
+
+    now += 249;
+    await prepared.listApprovedCards();
+    expect(upstream.calls).toBe(1);
+    now += 1;
+    await prepared.listApprovedCards();
+    await yieldToEventLoop();
+    expect(upstream.calls).toBe(2);
+
+    await prepared.refresh();
+    expect(upstream.calls).toBe(3);
+  });
+
+  it("refuses an invalid passive refresh interval", () => {
+    expect(
+      () =>
+        new PreparedApprovedCardCatalog({
+          upstream: new MutableCatalog(),
+          index: new ControlledIndexStore(),
+          profile: DETERMINISTIC_CARD_SELECTION_PROFILE,
+          embedding,
+          passiveRefreshIntervalMs: -1,
+        }),
+    ).toThrow(/non-negative/);
   });
 });
 
