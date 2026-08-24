@@ -38,7 +38,11 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
 
     beforeAll(async () => {
       const peak = trackPeakRss();
+      const memorySamples: Record<string, MemorySample> = {
+        started: sampleMemory(),
+      };
       const cards = createScaleCards();
+      memorySamples.cardsCreated = sampleMemory();
       const datasetDigest = canonicalDigest({
         benchmarkId: "selection-scale-v1",
         cardCount: CARD_COUNT,
@@ -52,6 +56,7 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
       });
       await resource.ready();
       const modelLoadMs = performance.now() - modelStarted;
+      memorySamples.modelLoaded = sampleMemory();
       if (CARD_SELECTION_EMBEDDING_PROFILE.execution.kind !== "local") {
         throw new Error("the production Card profile must be local");
       }
@@ -88,6 +93,7 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
       const indexStarted = performance.now();
       await selectContext(ports, QUERY);
       const indexBuildMs = performance.now() - indexStarted;
+      memorySamples.indexBuilt = sampleMemory();
       const indexBuildEmbeddingCalls = embeddingCalls;
       const catalogSnapshotVersion = index.current?.catalogSnapshotVersion;
       if (catalogSnapshotVersion === undefined) {
@@ -97,6 +103,7 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
       for (let index = 0; index < WARMUP_QUERIES; index += 1) {
         await selectContext(ports, QUERY);
       }
+      memorySamples.queriesWarmed = sampleMemory();
       embeddingCalls = 0;
       const latencies: number[] = [];
       for (let index = 0; index < MEASURED_QUERIES; index += 1) {
@@ -104,6 +111,7 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         await selectContext(ports, QUERY);
         latencies.push(performance.now() - started);
       }
+      memorySamples.queriesMeasured = sampleMemory();
       const peakRssMiB = peak.stop();
       const p95LatencyMs = percentile95(latencies);
       report = {
@@ -126,6 +134,7 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         queryEmbeddingCalls: embeddingCalls,
         maxEmbeddingCallsPerQuery: embeddingCalls / MEASURED_QUERIES,
         peakRssMiB,
+        memorySamples,
         gates: {
           latencyMs: LATENCY_GATE_MS,
           maxEmbeddingCallsPerQuery: 1,
@@ -172,6 +181,7 @@ interface SelectionScaleReport {
   readonly queryEmbeddingCalls: number;
   readonly maxEmbeddingCallsPerQuery: number;
   readonly peakRssMiB: number;
+  readonly memorySamples: Readonly<Record<string, MemorySample>>;
   readonly gates: {
     readonly latencyMs: number;
     readonly maxEmbeddingCallsPerQuery: number;
@@ -182,6 +192,14 @@ interface SelectionScaleReport {
     readonly platform: NodeJS.Platform;
     readonly architecture: string;
   };
+}
+
+interface MemorySample {
+  readonly rssMiB: number;
+  readonly heapUsedMiB: number;
+  readonly heapTotalMiB: number;
+  readonly externalMiB: number;
+  readonly arrayBuffersMiB: number;
 }
 
 function createScaleCards(): readonly ApprovedCard[] {
@@ -250,6 +268,17 @@ function trackPeakRss(): { stop(): number } {
       peak = Math.max(peak, process.memoryUsage.rss());
       return peak / 1024 / 1024;
     },
+  };
+}
+
+function sampleMemory(): MemorySample {
+  const usage = process.memoryUsage();
+  return {
+    rssMiB: usage.rss / 1024 / 1024,
+    heapUsedMiB: usage.heapUsed / 1024 / 1024,
+    heapTotalMiB: usage.heapTotal / 1024 / 1024,
+    externalMiB: usage.external / 1024 / 1024,
+    arrayBuffersMiB: usage.arrayBuffers / 1024 / 1024,
   };
 }
 

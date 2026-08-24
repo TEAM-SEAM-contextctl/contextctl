@@ -16,7 +16,7 @@ import {
 } from "../domain/errors.js";
 import {
   HYBRID_SCORING_POLICY_VERSION,
-  rankHybridCandidates,
+  rankHybridCandidateScores,
   type SelectionMode,
 } from "../domain/hybrid-ranking.js";
 import {
@@ -382,7 +382,7 @@ async function scoreWithSemantics(
 
     return {
       mode: "hybrid",
-      candidates: rankHybridCandidates({
+      candidates: rankHybridCandidateScores({
         lexical,
         // Pre-filtered inside the exact scan, before the cut: an ineligible
         // Card is never compared, so it cannot hold one of the `semanticTopK`

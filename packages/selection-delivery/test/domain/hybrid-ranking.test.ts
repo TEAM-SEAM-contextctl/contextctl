@@ -6,6 +6,7 @@ import {
   combineHybridScore,
   HYBRID_AGREEMENT_BONUS,
   HYBRID_SCORING_POLICY_VERSION,
+  rankHybridCandidateScores,
   rankHybridCandidates,
   scoringPolicyVersionFor,
   SEMANTIC_SIMILARITY_FLOOR,
@@ -190,6 +191,19 @@ describe("rankHybridCandidates", () => {
 
     expect(outsider?.semanticSimilarity).toBeUndefined();
     expect(outsider?.score).toBe(0.4);
+  });
+
+  it("reuses an unchanged base candidate in the SelectionPlan projection", () => {
+    const projected = rankHybridCandidateScores({
+      lexical,
+      semantic: [{ cardId: "card_a", cardVersionId: "a", similarity: 1 }],
+      lexicalTopK: 1,
+    });
+
+    expect(projected[0]).not.toBe(lexical[0]);
+    expect(projected[0]?.score).toBe(1);
+    expect(projected[1]).toBe(lexical[1]);
+    expect(projected[2]).toBe(lexical[2]);
   });
 
   it("returns every scored Card, union or not", () => {

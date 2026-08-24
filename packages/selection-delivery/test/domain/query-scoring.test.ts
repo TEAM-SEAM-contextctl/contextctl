@@ -135,6 +135,28 @@ describe("scoreCardsAgainstQuery", () => {
     expect(scored.signals).toEqual([]);
   });
 
+  it("drops incidental character overlap below the indirect evidence floor", () => {
+    const cards = Array.from({ length: 128 }, (_, index) =>
+      cardMeaning(
+        {
+          representativeQuestions: [
+            `Where is synthetic topic ${String(index).padStart(5, "0")}?`,
+          ],
+        },
+        `cardv_noise_${String(index)}`,
+      ),
+    );
+    const scored = scoreCardsAgainstQuery(
+      "What is today's dollar exchange rate?",
+      cards,
+    );
+
+    expect(scored.every((candidate) => candidate.score === 0)).toBe(true);
+    expect(scored.every((candidate) => candidate.signals.length === 0)).toBe(
+      true,
+    );
+  });
+
   it("stays finite when the Card declares no keywords and no aliases", () => {
     const scored = scoreOne(
       "환불이 가능한가요",

@@ -63,6 +63,7 @@ ADR 0008은 설계안을 **초안 판본**(`최종설계안.md`, 3,287행 이상
   `selection-hybrid-v2`는 절대 유사도와 1·2위 차이를 함께 사용한다.** 간접 신호와 비선두
   의미 후보는 거부 영역에 머물고, 흔하고 문맥이 약한 선언은 승인할 수 없다. 두 약한 신호를
   더하지 않으며 실제 Granite와 고정 `selection-eval-v1`에서 품질·안전 비퇴행을 검증한다.
+  Card 128개 이상에서는 `0.05` 미만의 간접 점수를 우연한 문자 겹침으로 0 처리한다.
   — [ADR 0011](./adr/0011-calibrate-lexical-and-hybrid-scoring-with-selection-eval-v1.md)
 
 - **`selection-scale-v1`의 RSS는 `daemon-runtime-profile-v1`과 같은 `1,536MiB` 상한을 사용한다.**
