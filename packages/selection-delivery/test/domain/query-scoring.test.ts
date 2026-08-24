@@ -155,6 +155,12 @@ describe("scoreCardsAgainstQuery", () => {
     expect(scored.every((candidate) => candidate.signals.length === 0)).toBe(
       true,
     );
+
+    const repeated = scoreCardsAgainstQuery(
+      "What is today's dollar exchange rate?",
+      cards,
+    );
+    expect(repeated[0]).toBe(scored[0]);
   });
 
   it("stays finite when the Card declares no keywords and no aliases", () => {
