@@ -3,8 +3,8 @@
 | 찾는 것 | 문서 |
 | -- | -- |
 | 명령, 플래그, 스크립트가 분기할 종료 코드 | [CLI 레퍼런스](cli.md) |
-| 환경변수, 임베딩 모델, Card 의미 생성기 | [설정](configuration.md) |
-| 밀렸는지 확인, 검색이 안 될 때, 지우기 | [운영](operations.md) |
+| 환경변수 — 경로, 상태 식별, HTTP 표면, 접근 정책, 임베딩, Card 의미 생성기 | [설정](configuration.md) |
+| 밀렸는지 확인, 문서를 지웠을 때, 백업과 복원, 검색이 안 될 때, 지우기 | [운영](operations.md) |
 | 처음 설치하고 한 번 돌려보기 | [README](../README.ko.md) |
 | 개발 환경, 브랜치와 리뷰 규칙 | [CONTRIBUTING](../CONTRIBUTING.md) |
 
