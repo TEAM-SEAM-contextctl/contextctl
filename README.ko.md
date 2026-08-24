@@ -16,7 +16,8 @@ MCP 가 외부 데이터를 AI 에 연결해 준다면, contextctl 은 연결된
 
 MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습니다.
 
-> 검증 범위: **darwin arm64 에서 검증됨. Linux / WSL 미검증.**
+> 검증 범위: **Linux x64 는 필수 CI 에서 배포 tarball 설치부터 Qdrant·Granite 연동과 제품
+> 수명주기까지 검증됩니다.** macOS arm64 는 수동 검증이고, Windows·WSL 은 미검증입니다.
 
 ---
 
