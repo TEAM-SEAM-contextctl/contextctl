@@ -21,7 +21,9 @@ It also runs as an MCP server, so an agent like Claude Code can use it.
 > diagnostics and the reference docs are Korean. Locale support is planned, not
 > implemented.
 
-> Verified on **darwin arm64**. Linux and WSL are untested.
+> **Verified on Linux x64** — required CI installs the release tarballs and runs
+> the product lifecycle against real Qdrant and Granite. macOS arm64 is verified
+> by hand; Windows and WSL are untested.
 
 ---
 
@@ -167,19 +169,10 @@ For Claude Code, in the project's `.mcp.json`:
 > that `contextctl serve` works as an MCP stdio server, but we have not
 > registered it in Claude Code with the `.mcp.json` above.
 
-HTTP 질의 표면은 기본으로 꺼져 있습니다. 필요한 경우에만 포트를 지정합니다.
-
-```bash
-CONTEXTCTL_HTTP_PORT=8080 contextctl serve
-```
-
-v1 HTTP에는 인증 계층이 없으므로 기본 주소는 `127.0.0.1`이고, `CONTEXTCTL_HTTP_HOST`도
-`127.0.0.0/8` 또는 `::1`의 숫자 loopback 주소만 허용합니다. `0.0.0.0`, `::`, 외부 주소와
-`localhost` 같은 호스트명으로는 시작하지 않습니다. 인터넷이나 사내망에 공개하려면 인증과
-TLS를 제공하는 별도 프록시 뒤에 두고, daemon 자체는 loopback에 유지하십시오.
-
-MCP·HTTP·`query` 요청은 UTF-8 `64KiB`, 최종 응답은 UTF-8 `2MiB`를 넘을 수 없습니다.
-초과 응답을 맞추기 위해 문서 청크를 임의로 자르거나 부분 성공을 전송하지 않습니다.
+The HTTP query surface is off unless a port is set, and it binds to loopback
+only — v1 ships no authentication layer. Request and response ceilings apply on
+every surface. Both are covered in
+[설정 / Configuration](docs/configuration.md#http-질의-표면) (Korean).
 
 ---
 
