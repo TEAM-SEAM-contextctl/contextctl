@@ -1,6 +1,6 @@
 {
   "name": "@contextctl/ingestion-indexing",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24.0.0" },
@@ -15,7 +15,7 @@
     "!dist/.tsbuildinfo"
   ],
   "dependencies": {
-    "@contextctl/contracts": "0.1.0",
+    "@contextctl/contracts": "1.0.0",
     "@huggingface/transformers": "4.2.0",
     "@qdrant/js-client-rest": "1.19.0",
     "mdast-util-to-string": "4.0.0",
