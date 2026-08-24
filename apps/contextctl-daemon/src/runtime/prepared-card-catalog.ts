@@ -9,6 +9,7 @@ import {
   type CardEmbeddingPort,
   type CardSelectionProfile,
 } from "@contextctl/selection-delivery";
+import { performance } from "node:perf_hooks";
 
 /**
  * Keeps the two most recent immutable candidate indexes addressable.
@@ -62,7 +63,13 @@ export interface PreparedApprovedCardCatalogOptions {
   readonly index: CardCandidateIndexStore;
   readonly profile: CardSelectionProfile;
   readonly embedding: CardEmbeddingPort;
+  /** How often query traffic may poll for out-of-process Registry writes. */
+  readonly passiveRefreshIntervalMs?: number;
+  /** Monotonic clock injection for deterministic interval tests. */
+  readonly now?: () => number;
 }
+
+const DEFAULT_PASSIVE_REFRESH_INTERVAL_MS = 250;
 
 /**
  * Moves the approved catalog and its candidate index as one prepared asset.
@@ -78,17 +85,27 @@ export class PreparedApprovedCardCatalog implements ApprovedCardCatalog {
   readonly #index: CardCandidateIndexStore;
   readonly #profile: CardSelectionProfile;
   readonly #embedding: CardEmbeddingPort;
+  readonly #passiveRefreshIntervalMs: number;
+  readonly #now: () => number;
   #active: readonly ApprovedCard[] = [];
   #activeVersion: string | undefined;
   #pending: Promise<void> | undefined;
   #refreshRequested = false;
   #lastFailureCode: string | undefined;
+  #lastRefreshStartedAt = Number.NEGATIVE_INFINITY;
 
   constructor(options: PreparedApprovedCardCatalogOptions) {
     this.#upstream = options.upstream;
     this.#index = options.index;
     this.#profile = options.profile;
     this.#embedding = options.embedding;
+    const interval =
+      options.passiveRefreshIntervalMs ?? DEFAULT_PASSIVE_REFRESH_INTERVAL_MS;
+    if (!Number.isFinite(interval) || interval < 0) {
+      throw new TypeError("passive Card catalog refresh interval must be non-negative");
+    }
+    this.#passiveRefreshIntervalMs = interval;
+    this.#now = options.now ?? (() => performance.now());
   }
 
   get status(): {
@@ -108,7 +125,13 @@ export class PreparedApprovedCardCatalog implements ApprovedCardCatalog {
   }
 
   async listApprovedCards(): Promise<readonly ApprovedCard[]> {
-    void this.refresh().catch(() => undefined);
+    if (
+      this.#pending === undefined &&
+      this.#now() - this.#lastRefreshStartedAt >=
+        this.#passiveRefreshIntervalMs
+    ) {
+      void this.refresh().catch(() => undefined);
+    }
     return this.#active;
   }
 
@@ -133,6 +156,7 @@ export class PreparedApprovedCardCatalog implements ApprovedCardCatalog {
   }
 
   async #refresh(): Promise<void> {
+    this.#lastRefreshStartedAt = this.#now();
     try {
       const approved = await this.#upstream.listApprovedCards();
       const entries = approved.map(buildCardSelectionEntry);
