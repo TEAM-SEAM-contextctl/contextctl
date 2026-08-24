@@ -16,8 +16,9 @@ import {
 } from "@contextctl/selection-delivery";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { WorkerThreadLocalEmbeddingInferenceResource } from "../src/runtime/worker-thread-local-embedding-inference-resource.js";
+import { DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE } from "../src/embedding/provider-factory.js";
 import { EMBEDDING_RUNTIME_SCHEDULER_V1 } from "../src/runtime/embedding-runtime-scheduler.js";
+import { WorkerThreadLocalEmbeddingInferenceResource } from "../src/runtime/worker-thread-local-embedding-inference-resource.js";
 
 const artifactDirectory = process.env.CONTEXTCTL_GRANITE_ASSET_DIRECTORY;
 const resultPath = process.env.CONTEXTCTL_SELECTION_SCALE_RESULT_PATH;
@@ -64,6 +65,10 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
       const actualEmbedding = new TransformersJsLocalCardEmbeddingAdapter({
         inferenceResource: cardResource,
         profile: CARD_SELECTION_EMBEDDING_PROFILE,
+        // Match the non-shared Card-local production composition. The shared
+        // local/local path is even more conservative because the scheduler
+        // splits background work one input at a time.
+        maxBatchSize: DAEMON_LOCAL_CARD_EMBEDDING_BATCH_SIZE,
       });
       let embeddingCalls = 0;
       const embedding: CardEmbeddingPort = {
