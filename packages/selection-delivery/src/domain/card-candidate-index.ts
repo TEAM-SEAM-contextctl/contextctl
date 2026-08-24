@@ -99,7 +99,7 @@ export class CardCandidateIndex {
   readonly #recordMagnitudes: readonly number[];
   readonly #selectionDigestsByVersionId: ReadonlyMap<
     string,
-    ReadonlySet<string>
+    string | ReadonlySet<string>
   >;
 
   constructor(input: {
@@ -149,12 +149,27 @@ export class CardCandidateIndex {
     this.#recordMagnitudes = this.#records.map((record) =>
       vectorMagnitude(record.embedding),
     );
-    const selectionDigestsByVersionId = new Map<string, Set<string>>();
+    const selectionDigestsByVersionId = new Map<
+      string,
+      string | Set<string>
+    >();
     for (const record of this.#records) {
-      const digests =
-        selectionDigestsByVersionId.get(record.cardVersionId) ?? new Set();
-      digests.add(record.selectionTextDigest);
-      selectionDigestsByVersionId.set(record.cardVersionId, digests);
+      const known = selectionDigestsByVersionId.get(record.cardVersionId);
+      if (known === undefined) {
+        selectionDigestsByVersionId.set(
+          record.cardVersionId,
+          record.selectionTextDigest,
+        );
+      } else if (typeof known === "string") {
+        if (known !== record.selectionTextDigest) {
+          selectionDigestsByVersionId.set(
+            record.cardVersionId,
+            new Set([known, record.selectionTextDigest]),
+          );
+        }
+      } else {
+        known.add(record.selectionTextDigest);
+      }
     }
     this.#selectionDigestsByVersionId = selectionDigestsByVersionId;
   }
@@ -165,11 +180,10 @@ export class CardCandidateIndex {
 
   /** Whether this index holds a current vector for the given Card Version. */
   covers(cardVersionId: string, selectionTextDigest: string): boolean {
-    return (
-      this.#selectionDigestsByVersionId
-        .get(cardVersionId)
-        ?.has(selectionTextDigest) ?? false
-    );
+    const known = this.#selectionDigestsByVersionId.get(cardVersionId);
+    return typeof known === "string"
+      ? known === selectionTextDigest
+      : (known?.has(selectionTextDigest) ?? false);
   }
 
   /**

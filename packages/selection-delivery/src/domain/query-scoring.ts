@@ -12,8 +12,13 @@ const BM25_WEIGHT = 0.75;
 const NGRAM_WEIGHT = 0.25;
 /** Fuzzy evidence alone must remain on the rejecting side of the band. */
 const MAX_INDIRECT_SCORE = 0.34;
+/** Incidental character overlap below this score is not large-catalog evidence. */
+const LARGE_CATALOG_MIN_INDIRECT_SCORE = 0.05;
+const LARGE_CATALOG_MIN_CANDIDATES = 128;
 /** A declared but non-distinctive term may defer, but never admit by itself. */
 const MAX_WEAK_DIRECT_SCORE = 0.84;
+
+const NO_SCORE_SIGNALS: readonly ScoreSignal[] = Object.freeze([]);
 
 const FIELD_WEIGHTS = {
   keyword: 3,
@@ -259,10 +264,23 @@ function scoreCard(
     0,
   );
   const ngram = bestNgramScore(query.ngrams, indexed.fields);
-  const indirect = Math.min(
+  const rawIndirect = Math.min(
     MAX_INDIRECT_SCORE,
     BM25_WEIGHT * normalizedBm25 + NGRAM_WEIGHT * ngram.contribution,
   );
+  const indirect =
+    statistics.cards.length >= LARGE_CATALOG_MIN_CANDIDATES &&
+    rawIndirect < LARGE_CATALOG_MIN_INDIRECT_SCORE
+      ? 0
+      : rawIndirect;
+  if (direct === 0 && indirect === 0) {
+    return {
+      cardId: indexed.card.cardId,
+      versionId: indexed.card.versionId,
+      score: 0,
+      signals: NO_SCORE_SIGNALS,
+    };
+  }
   const signals: ScoreSignal[] = [...directSignals];
   if (bm25 > 0) {
     signals.push({
@@ -362,7 +380,7 @@ function collectDirectSignals(
     });
   }
 
-  if (matched.length === 0) return [];
+  if (matched.length === 0) return NO_SCORE_SIGNALS;
   const strongest = Math.max(...matched.map((entry) => entry.specificity));
   let contextualOverlap = 0;
   for (const queryToken of query.uniqueTokens) {
@@ -582,7 +600,12 @@ function scopeSearchValues(scope: ApprovedScope): readonly string[] {
 }
 
 function emptyScore(card: ApprovedCard): CandidateScore {
-  return { cardId: card.cardId, versionId: card.versionId, score: 0, signals: [] };
+  return {
+    cardId: card.cardId,
+    versionId: card.versionId,
+    score: 0,
+    signals: NO_SCORE_SIGNALS,
+  };
 }
 
 function normalizeText(text: string): string {

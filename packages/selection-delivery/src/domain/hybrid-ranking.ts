@@ -156,6 +156,55 @@ export interface HybridRankingInput {
 export function rankHybridCandidates(
   input: HybridRankingInput,
 ): readonly HybridCandidateScore[] {
+  const context = prepareHybridRanking(input);
+
+  return input.lexical.map((candidate) => {
+    const similarity = semanticSimilarityForCandidate(candidate, context);
+    const semantic = semanticScoreForCandidate(candidate, context, similarity);
+    return {
+      cardId: candidate.cardId,
+      versionId: candidate.versionId,
+      score: combineHybridScore(candidate.score, semantic),
+      signals: candidate.signals,
+      lexicalScore: candidate.score,
+      semanticSimilarity: similarity,
+      semanticScore: semantic,
+    };
+  });
+}
+
+/**
+ * Produces the SelectionPlan's declared base candidate shape without copying
+ * every lexical-only record into a wider diagnostic object.
+ *
+ * `rankHybridCandidates` above remains the detailed audit API. The application
+ * plan promises only `CandidateScore`, and an entry whose hybrid score did not
+ * move is already that exact value. Reusing it avoids one catalog-sized object
+ * population on every Resolve while preserving order, identity fields, score
+ * and signals.
+ */
+export function rankHybridCandidateScores(
+  input: HybridRankingInput,
+): readonly CandidateScore[] {
+  const context = prepareHybridRanking(input);
+
+  return input.lexical.map((candidate) => {
+    const similarity = semanticSimilarityForCandidate(candidate, context);
+    const semantic = semanticScoreForCandidate(candidate, context, similarity);
+    const score = combineHybridScore(candidate.score, semantic);
+    return score === candidate.score ? candidate : { ...candidate, score };
+  });
+}
+
+interface PreparedHybridRanking {
+  readonly similarityByVersionId: ReadonlyMap<string, number>;
+  readonly leadingSemanticVersionId: string | undefined;
+  readonly leadingSemanticSimilarity: number | undefined;
+  readonly runnerUpSemanticSimilarity: number | undefined;
+  readonly union: ReadonlySet<string>;
+}
+
+function prepareHybridRanking(input: HybridRankingInput): PreparedHybridRanking {
   const similarityByVersionId = new Map(
     input.semantic.map((entry) => [entry.cardVersionId, entry.similarity]),
   );
@@ -169,33 +218,39 @@ export function rankHybridCandidates(
     union.add(candidate.versionId);
   }
 
-  return input.lexical.map((candidate) => {
-    const reached = union.has(candidate.versionId);
-    const similarity = reached
-      ? similarityByVersionId.get(candidate.versionId)
-      : undefined;
-    const rawSemanticScore =
-      similarity === undefined ? 0 : semanticScoreFor(similarity);
-    const semanticScore =
-      candidate.versionId === leadingSemanticVersionId &&
-      leadingSemantic !== undefined
-        ? confidentLeadingSemanticScore(
-            rawSemanticScore,
-            leadingSemantic.similarity,
-            runnerUpSemantic?.similarity,
-          )
-        : Math.min(rawSemanticScore, SEMANTIC_SECONDARY_SCORE_CEILING);
+  return {
+    similarityByVersionId,
+    leadingSemanticVersionId,
+    leadingSemanticSimilarity: leadingSemantic?.similarity,
+    runnerUpSemanticSimilarity: runnerUpSemantic?.similarity,
+    union,
+  };
+}
 
-    return {
-      cardId: candidate.cardId,
-      versionId: candidate.versionId,
-      score: combineHybridScore(candidate.score, semanticScore),
-      signals: candidate.signals,
-      lexicalScore: candidate.score,
-      semanticSimilarity: similarity,
-      semanticScore,
-    };
-  });
+function semanticSimilarityForCandidate(
+  candidate: CandidateScore,
+  context: PreparedHybridRanking,
+): number | undefined {
+  return context.union.has(candidate.versionId)
+    ? context.similarityByVersionId.get(candidate.versionId)
+    : undefined;
+}
+
+function semanticScoreForCandidate(
+  candidate: CandidateScore,
+  context: PreparedHybridRanking,
+  similarity: number | undefined,
+): number {
+  const rawSemanticScore =
+    similarity === undefined ? 0 : semanticScoreFor(similarity);
+  return candidate.versionId === context.leadingSemanticVersionId &&
+    context.leadingSemanticSimilarity !== undefined
+    ? confidentLeadingSemanticScore(
+        rawSemanticScore,
+        context.leadingSemanticSimilarity,
+        context.runnerUpSemanticSimilarity,
+      )
+    : Math.min(rawSemanticScore, SEMANTIC_SECONDARY_SCORE_CEILING);
 }
 
 function confidentLeadingSemanticScore(
