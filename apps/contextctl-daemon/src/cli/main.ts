@@ -43,6 +43,7 @@ import { readSourcesFile, SourcesFileError, toSourceConfigurations } from "./sou
 import { resolveCardMeaningBackend } from "./meaning-generator.js";
 import { resolveVectorBackend } from "../vector-backend.js";
 import { runStateBackupCommand } from "./state-backup-command.js";
+import { createCliTerminal } from "./terminal.js";
 
 /**
  * The command line entry point.
@@ -90,6 +91,7 @@ export async function runCli(input: {
   readonly environment: Readonly<Partial<Record<string, string>>>;
   readonly stdout: (text: string) => void;
   readonly stderr: (text: string) => void;
+  readonly progress?: (text: string) => void;
   readonly workingDirectory?: string;
 }): Promise<number> {
   const parsed = parseCliArguments(input.argv);
@@ -135,7 +137,7 @@ export async function runCli(input: {
         command,
         environment: input.environment,
         workingDirectory,
-        progress: input.stderr,
+        progress: input.progress ?? input.stderr,
         ...(shouldPromptForConsent(command.yes)
           ? { confirm: () => promptForConsent(input.stderr) }
           : {}),
@@ -478,9 +480,22 @@ function describeFailure(error: unknown): string {
  * script, a shim on Windows, `npm exec`. A `bin` entry is by definition an
  * execution, so the honest form is to have no condition.
  */
-process.exitCode = await runCli({
-  argv: process.argv.slice(2),
+const terminal = createCliTerminal({
+  writeStdout: (text) => process.stdout.write(text),
+  writeStderr: (text) => process.stderr.write(text),
+  stdoutIsTTY: process.stdout.isTTY === true,
+  stderrIsTTY: process.stderr.isTTY === true,
   environment: process.env,
-  stdout: (text) => process.stdout.write(`${text}\n`),
-  stderr: (text) => process.stderr.write(`${text}\n`),
 });
+
+try {
+  process.exitCode = await runCli({
+    argv: process.argv.slice(2),
+    environment: process.env,
+    stdout: terminal.stdout,
+    stderr: terminal.stderr,
+    progress: terminal.progress,
+  });
+} finally {
+  terminal.finish();
+}

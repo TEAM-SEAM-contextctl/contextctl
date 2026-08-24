@@ -20,11 +20,10 @@ import type {
  * asserted in a test without capturing stdout, and what keeps a formatting
  * change from being able to break a command's exit code.
  *
- * No ANSI escapes anywhere. The demo's own verification step is `contextctl
- * query ... > out.txt` followed by reading the file, and colour codes would put
- * control bytes in the middle of every line an operator is asked to read. A
- * terminal that supports colour loses nothing it can use; a file gains a
- * payload it cannot.
+ * No ANSI escapes anywhere. The interactive terminal adapter may decorate
+ * known labels after rendering, but redirected output and these pure renderers
+ * stay byte-stable. That keeps `contextctl query ... > out.txt` free of control
+ * bytes while still allowing a real TTY to present status and progress clearly.
  *
  * Labels are Korean because a person reads them. Field values — `mode`,
  * `scoring`, `status`, a failure `code`, a policy version — are printed exactly
