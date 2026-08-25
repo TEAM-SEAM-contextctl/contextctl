@@ -187,9 +187,10 @@ output extensively.
 
 | | |
 |---|---|
+| [구조](docs/architecture.md) | The whole flow, workspaces, execution lanes |
 | [CLI 레퍼런스](docs/cli.md) | Every command, flag and exit code |
 | [설정](docs/configuration.md) | Environment variables, state identity, HTTP surface, embedding, meaning generator |
-| [운영](docs/operations.md) | Status checks, reachability, backup and restore, index rebuild, uninstall |
+| [운영](docs/operations.md) | Troubleshooting, status checks, backup and restore, index rebuild, uninstall |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, branch and review rules |
 
 In a terminal the CLI tells you itself.

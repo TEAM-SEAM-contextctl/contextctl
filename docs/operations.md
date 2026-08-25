@@ -5,12 +5,32 @@
 
 설치가 제대로 됐는지 확인하려는 것이라면 `contextctl doctor` 와 [설정](configuration.md) 쪽입니다.
 
+- [문제 해결](#문제-해결) — 증상에서 조치로 바로
 - [status](#status) — 실행 영역별로 지금 일을 할 수 있는가
 - [reachability](#reachability) — 인덱싱됐는데 도달할 수 없는 범위
 - [문서에서 내용을 지웠을 때](#문서에서-내용을-지웠을-때) — Card 가 자동으로 내려가는 이유
 - [백업과 복원](#백업과-복원) — 무엇을 함께 묶어야 하는가
 - [색인이 비었을 때](#색인이-비었을-때) — 승인 Card 는 있는데 검색이 안 되는 경우
 - [제거](#제거) — 무엇을 지우면 무엇이 사라지는가
+
+## 문제 해결
+
+| 증상 | 원인 | 조치 |
+|---|---|---|
+| `ingest` / `query` / `serve` 가 `qdrant_endpoint_required` 로 실패 | `CONTEXTCTL_QDRANT_URL` 이 없음. 데이터베이스를 열기 전에 거부합니다 | Qdrant 를 띄우고 `export CONTEXTCTL_QDRANT_URL=http://localhost:6333` |
+| `query` 가 빈 결과 — `판정 집계: 승인 0 · 보류 0 · 기각 N` | Card 의미 생성기가 설정되지 않아 결정적 생성기가 만든 키워드에 자연어와 겹치는 말이 없음 | `CONTEXTCTL_CARD_MEANING_BASE_URL` / `_MODEL` / `_API_KEY` 를 설정하고 **다시 `ingest`** (의미는 수집 시점에 굳습니다) |
+| 의미 생성 엔드포인트에서 **404** | `BASE_URL` 이 `/v1` 로 끝나 `/v1/v1/chat/completions` 가 됨 | `BASE_URL` 에서 `/v1` 을 떼십시오. `contextctl doctor` 가 실제 요청 URL 을 보여줍니다 |
+| `stderr` 에 `ExperimentalWarning: SQLite is an experimental feature …` | Registry·Ingestion 저장소가 Node 내장 `node:sqlite` 를 사용 | 무해합니다. 억제하지 마십시오 — 끄면 중요한 경고도 함께 사라집니다 |
+| 설치 후 `contextctl` 을 찾을 수 없음 | `fnm`/`nvm`/`asdf` 가 **활성 Node 버전의 `bin`** 에만 설치했거나 그 경로가 `PATH` 에 없음 | `contextctl paths` 로 어느 Node 아래 있는지 확인하고 `npm prefix -g` 의 `bin` 이 `PATH` 에 있는지 확인 |
+| `doctor` 가 `[FAIL] embedding-assets` — 파일은 `~/.contextctl/embedding-assets` 에 있음 | `active.json` 이 없는 옛 평면 레이아웃 | `contextctl install-assets` 를 다시 실행 (`revisions/<sha>/` + `active.json` 으로 배치) |
+| 상태 식별 불일치로 시작 거부 | `CONTEXTCTL_STATE_NAMESPACE_ID` / `CONTEXTCTL_SECURITY_DOMAIN` 이 DB 에 기록된 값과 다름 | 값을 되돌리거나, 다른 영역이 필요하면 **별도 `CONTEXTCTL_HOME`** 과 daemon 을 사용 |
+| `ingest` 가 종료 코드 `4` | 선행 Publication 을 아직 소비하지 않아 보류 | `contextctl ingest` 를 **다시 실행**하면 해소됩니다 |
+| `ingest` 가 종료 코드 `5` | Source 의 Publication 체인이 갈라짐 | 재시도로 해소되지 않습니다. **사람이** 어느 Publication 을 따를지 결정해야 합니다 |
+| `status` 가 종료 코드 `6` | `not_ready` 인 실행 영역이 있음 | 각 영역 `detail` 에 적힌 명령(`install-assets`, `CONTEXTCTL_QDRANT_URL` 설정 등)을 따르십시오 |
+| `status` 가 `degraded` 인데 종료 코드 `0` | 정상입니다. 승인된 Card 는 계속 서비스되고 Registry/Ingestion 이 밀려 있을 뿐 | 재시작하지 말고 `contextctl ingest` 를 다시 실행하거나 기다리십시오. 승인 Card 가 없으면 `cards approve <id>` |
+| `query` 가 종료 코드 `7` | 과부하 또는 시간 초과로 요청이 거절됨 | 같은 요청을 다시 보내십시오 |
+
+---
 
 ---
 

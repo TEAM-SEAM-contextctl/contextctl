@@ -19,12 +19,30 @@ and the rule that external document text is never read as instruction.
 
 Tests that need a real Qdrant or the real Granite artifact are kept out of
 `npm test`, because a suite that cannot run without a 396 MiB download and a
-running server is a suite that stops being run. They are
-`test:integration:qdrant` and `test:integration:granite`.
+running server is a suite that stops being run.
+
+```bash
+npm run test:integration:qdrant     # against a real Qdrant
+npm run test:integration:granite    # against the real Granite assets
+```
+
+Release verification packs the five workspaces and installs them into an empty
+prefix, which is the only path that exercises the published artefacts rather
+than the working tree.
+
+| Script | Environment |
+|---|---|
+| `npm run test:release-package` | — |
+| `npm run test:release-product` | `CONTEXTCTL_RELEASE_E2E_QDRANT_URL` (`…_QDRANT_API_KEY` if the server needs one) |
+| `npm run test:release-product-local` | the two above plus `CONTEXTCTL_RELEASE_E2E_ASSET_ROOT` |
 
 Development pins Node **24.18.0** and npm **11.16.0** exactly — `.nvmrc` and CI
 say so. The published packages declare only a floor (`>=24.0.0`): the exact pin
 exists to make a build reproducible, not to make it usable.
+
+CI pins Qdrant to an image digest (v1.15.5). The `docker run qdrant/qdrant` line
+in the user documentation is an unpinned tag, so reproduce a CI failure with the
+image in `.github/workflows/ci.yml` rather than with that line.
 
 ## Workspaces
 
