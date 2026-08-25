@@ -114,6 +114,7 @@ describe.skipIf(artifactDirectory === undefined)("selection-eval-v1 · Granite f
           },
           lexical: lexical.holdout,
           hybrid: hybrid.holdout,
+          cases: hybrid.cases,
           gate,
         }, null, 2)}\n`,
         "utf8",

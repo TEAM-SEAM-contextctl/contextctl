@@ -75,7 +75,7 @@ export class CardCandidateIndexInvariantError extends Error {
  * Thrown when a response's `mode` and `scoring` do not name the same family.
  *
  * The pair is an invariant rather than two independent fields: `hybrid` requires
- * `selection-hybrid-v2` and `lexical_degraded` requires `selection-lexical-v2`.
+ * `selection-hybrid-v3` and `lexical_degraded` requires `selection-lexical-v3`.
  * A response carrying any other combination claims a ranking it did not produce,
  * so it is refused before assembly rather than emitted for a consumer to
  * discover.

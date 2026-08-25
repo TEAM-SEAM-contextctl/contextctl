@@ -25,7 +25,7 @@ export const TEST_CARD_PROFILE: CardSelectionProfile = {
   dimensions: 4,
   distance: "cosine",
   normalization: "l2",
-  selectionTextSchemaVersion: 2,
+  selectionTextSchemaVersion: 3,
   admissionLimits: DEFAULT_CARD_ADMISSION_LIMITS,
 };
 
@@ -46,8 +46,8 @@ export const TEST_PRODUCTION_CARD_PROFILE: CardSelectionEmbeddingProfile = {
     precision: "fp32",
   },
   pooling: "cls",
-  cardInputTransformVersion: "card-selection-text-v2",
-  queryInputTransformVersion: "card-selection-text-v2",
+  cardInputTransformVersion: "card-selection-text-v3",
+  queryInputTransformVersion: "card-selection-text-v3",
 };
 
 /** One meaning, and the surface forms that express it. */

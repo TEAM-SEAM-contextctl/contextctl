@@ -60,7 +60,7 @@ export interface CardSelectionProfile {
   readonly dimensions: number;
   readonly distance: "cosine";
   readonly normalization: "l2";
-  readonly selectionTextSchemaVersion: 2;
+  readonly selectionTextSchemaVersion: 3;
   readonly admissionLimits: CardAdmissionLimits;
 }
 
@@ -274,7 +274,7 @@ export interface RemoteCardSelectionProfileInput {
  * not about this code (SOT L599: no floating model alias under a production
  * index). What this package can fix is the part that is the same for every
  * remote family: `provider_defined` pooling, L2 normalization, cosine distance,
- * the `card-selection-text-v2` input transform on both sides, and the admission
+ * the `card-selection-text-v3` input transform on both sides, and the admission
  * limits. The result is validated before it is returned, so a caller cannot
  * hold an unusable profile.
  */
@@ -296,9 +296,9 @@ export function createRemoteCardSelectionProfile(
     pooling: "provider_defined" as const,
     normalization: "l2" as const,
     distance: "cosine" as const,
-    selectionTextSchemaVersion: 2 as const,
-    cardInputTransformVersion: "card-selection-text-v2",
-    queryInputTransformVersion: "card-selection-text-v2",
+    selectionTextSchemaVersion: 3 as const,
+    cardInputTransformVersion: "card-selection-text-v3",
+    queryInputTransformVersion: "card-selection-text-v3",
     admissionLimits: input.admissionLimits ?? DEFAULT_CARD_ADMISSION_LIMITS,
   });
   assertValidCardSelectionProfile(profile);

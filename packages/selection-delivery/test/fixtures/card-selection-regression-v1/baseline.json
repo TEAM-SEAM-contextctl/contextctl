@@ -1,9 +1,9 @@
 {
   "datasetId": "card-selection-regression-v1",
   "version": "1",
-  "measuredAt": "2026-08-24",
-  "note": "selection-lexical-v2의 기준선이다. 카탈로그 IDF를 반영한 BM25와 문자 n-gram 결합으로 재측정했으며, 정책이나 데이터셋이 바뀌면 버전을 올리고 다시 측정한다.",
-  "scoringPolicyVersion": "selection-lexical-v2",
+  "measuredAt": "2026-08-25",
+  "note": "selection-lexical-v3의 기준선이다. 좁은 선언 어휘는 복합 질의 재현율을 보존하고 넓은 자동 파생 어휘는 추가 근거를 요구한다. 정책이나 데이터셋이 바뀌면 버전을 올리고 다시 측정한다.",
+  "scoringPolicyVersion": "selection-lexical-v3",
   "rankingPolicyVersion": "selection-ranking-v2",
   "thresholds": {
     "admit": 0.85,

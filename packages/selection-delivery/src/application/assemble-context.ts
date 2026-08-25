@@ -57,8 +57,8 @@ export interface AssembleContextOptions {
  * ports knows which happened.
  *
  * `mode` and `ResolutionPolicy.scoring` are the two halves of one invariant:
- * `hybrid` pairs with `selection-hybrid-v2`, `lexical_degraded` with
- * `selection-lexical-v2`, and no other combination is a valid response. Deriving
+ * `hybrid` pairs with `selection-hybrid-v3`, `lexical_degraded` with
+ * `selection-lexical-v3`, and no other combination is a valid response. Deriving
  * the second from the first makes the pair unbreakable by construction, and the
  * assertion below is what catches a later edit that reintroduces two independent
  * assignments — it turns that edit into a `selection_invariant_violation` before

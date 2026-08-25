@@ -97,10 +97,13 @@ describe("DeterministicCardMeaningGenerator", () => {
         origin: { generator: "deterministic" },
       }).verdict,
     ).toBe("validated");
-    expect(meaning.description).toContain("doc_payments");
+    expect(meaning.description).not.toContain("doc_payments");
     expect(meaning.description).toContain(
       "Failed payments are retried after five minutes.",
     );
+    expect(meaning.representativeQuestions).toEqual([
+      "Failed payments are retried after five minutes?",
+    ]);
   });
 
   it("produces meaning that passes grounding for a table coordinate", async () => {
@@ -331,18 +334,16 @@ describe("keywords and aliases carry the words a person wrote", () => {
     expect(meaning.keywords.some((keyword) => /^\p{N}+$/u.test(keyword))).toBe(false);
   });
 
-  it("adds the section label and document title as aliases after the coordinate's own", async () => {
+  it("uses human document names as aliases without opaque coordinates", async () => {
     const { meaning } = await generator.generate({
       coordinate: documentCoordinate,
       facts: sectionFacts,
     });
 
-    expect(meaning.aliases).toEqual([
-      "doc_payments",
-      "unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd",
-      "결제 운영 안내",
-      "환불 처리",
-    ]);
+    expect(meaning.aliases).toEqual(["결제 운영 안내", "환불 처리"]);
+    expect(meaning.representativeQuestions).toEqual(["환불 처리?"]);
+    expect(meaning.description).toBe("결제 운영 안내 · 환불 처리");
+    expect(meaning.description).not.toContain("structure.block_count");
   });
 
   it("still takes a table's schema, name and columns as keywords", async () => {

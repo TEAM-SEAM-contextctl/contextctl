@@ -269,7 +269,7 @@ describe("CLI runtime options", () => {
       "document-granite-97m-multilingual-r2-fp32-v1",
     );
     expect(options.cardSelectionProfile?.id).toBe(
-      "card-granite-97m-multilingual-r2-fp32-v1",
+      "card-granite-97m-multilingual-r2-fp32-v2",
     );
     // The resolved revision directory, never the managed root. The adapter reads
     // its manifest directly out of whatever it is handed, so the root would send

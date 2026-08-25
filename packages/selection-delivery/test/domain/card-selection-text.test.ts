@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -47,10 +49,12 @@ describe("buildCardSelectionText", () => {
     // republication, and a Card's vector must not be invalidated because a
     // document it points at was reindexed.
     expect(serialized).not.toContain("idxv_0001");
-    // What does travel.
-    expect(serialized).toContain("src_policy_docs");
-    expect(serialized).toContain("doc_refund_policy");
-    expect(serialized).toContain("scope_refund_policy_doc");
+    // Opaque managed-document identity remains on the approved Scope, not in
+    // the semantic model input. The Card's declared language does travel.
+    expect(serialized).not.toContain("src_policy_docs");
+    expect(serialized).not.toContain("doc_refund_policy");
+    expect(serialized).not.toContain("scope_refund_policy_doc");
+    expect(serialized).toContain("환불 정책 문서");
   });
 
   it("normalizes to NFKC, collapses whitespace and trims", () => {
@@ -134,16 +138,14 @@ describe("buildCardSelectionText", () => {
   });
 
   it("invents no field a Scope does not declare", () => {
-    const serialized = cardSelectionTextPayload(
-      buildCardSelectionText(createPaymentsTableCard()),
-    );
+    const text = buildCardSelectionText(createPaymentsTableCard());
 
     // Exhaustive rather than a containment check, and that is the whole test:
     // every field of the published SQL branch is either transcribed from a
     // field the approved read model declares, or it is not here at all. A
     // placeholder for one the model has no counterpart for would be a fact
     // nobody stated, embedded into a vector that outlives the Card.
-    expect(JSON.parse(serialized).scopes[0]).toEqual({
+    expect(text.scopes[0]).toEqual({
       kind: "sql",
       scopeId: "scope_payments_table",
       scopeVersion: "scopev_0001",
@@ -155,11 +157,9 @@ describe("buildCardSelectionText", () => {
   });
 
   it("keeps an HTTP Scope to the coordinates the read model carries", () => {
-    const serialized = cardSelectionTextPayload(
-      buildCardSelectionText(createPaymentApiCard()),
-    );
+    const text = buildCardSelectionText(createPaymentApiCard());
 
-    expect(JSON.parse(serialized).scopes[0]).toEqual({
+    expect(text.scopes[0]).toEqual({
       kind: "http",
       scopeId: "scope_payment_get",
       scopeVersion: "scopev_0001",
@@ -212,16 +212,20 @@ describe("cardSelectionTextDigest", () => {
 
     expect(entry.payload).toBe(cardSelectionTextPayload(text));
     expect(entry.selectionTextDigest).toBe(cardSelectionTextDigest(text));
+    expect(entry.selectionTextDigest).toBe(
+      `sha256:${createHash("sha256").update(entry.payload, "utf8").digest("hex")}`,
+    );
     expect(entry.units).toBe([...entry.payload].length);
   });
 
-  it("serializes object keys in canonical order regardless of build path", () => {
+  it("embeds normalized semantic lines without opaque schema syntax", () => {
     const payload = cardSelectionTextPayload(
       buildCardSelectionText(createRefundPolicyCard()),
     );
 
-    expect(payload.startsWith('{"aliases":')).toBe(true);
-    expect(payload).toContain('"schema":"card-selection-text-v2"');
+    expect(payload.startsWith("환불 정책 문서")).toBe(true);
+    expect(payload).not.toContain("card-selection-text-v3");
+    expect(payload).not.toContain("scope_refund_policy_doc");
   });
 });
 
@@ -321,12 +325,11 @@ describe("Scope coordinate identity", () => {
       ...createRefundPolicyCard(),
       scopes: [httpScopeOf(undefined, [PAYMENT_ID_PARAMETER])],
     });
-    const [scope] = JSON.parse(entry.payload).scopes as readonly object[];
+    const [scope] = entry.text.scopes;
 
-    // A source that names no operations and one whose operation is called ""
-    // are different facts. RFC 8785 serializes the two differently, so writing
-    // the second where the first is meant would put a name in the vector that
-    // nobody declared — and would still be a name the consumer cannot look up.
+    // A source that names no operation and one whose operation is called ""
+    // are different logical records. Writing the second where the first is
+    // meant would put a value in the vector that nobody declared.
     expect(Object.keys(scope as object)).not.toContain("operationId");
     expect(entry.payload).not.toContain("operationId");
     expect(entry.selectionTextDigest).not.toBe(

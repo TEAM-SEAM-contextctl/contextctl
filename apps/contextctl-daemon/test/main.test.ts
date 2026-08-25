@@ -501,7 +501,7 @@ describe("createDaemonRuntime", () => {
       // Two ids, so the two families stay separately versionable and a Card
       // vector is never comparable against a document index by accident.
       expect(runtime.cardSelectionProfile.id).toBe(
-        "card-granite-97m-multilingual-r2-fp32-v1",
+        "card-granite-97m-multilingual-r2-fp32-v2",
       );
       expect(runtime.cardSelectionProfile.id).not.toBe(
         runtime.embeddingProfile.id,

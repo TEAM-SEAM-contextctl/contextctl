@@ -112,6 +112,7 @@ jobs:
           CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
           CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH: ${{ runner.temp }}/embedding-runtime-load.json
           CONTEXTCTL_SELECTION_EVAL_RESULT_PATH: ${{ runner.temp }}/selection-eval.json
+          CONTEXTCTL_GENERATED_CARD_SELECTION_RESULT_PATH: ${{ runner.temp }}/generated-card-selection.json
           CONTEXTCTL_SELECTION_SCALE_RESULT_PATH: ${{ runner.temp }}/selection-scale.json
         run: npm run test:integration:granite
       - name: Wait for Qdrant product dependency
@@ -151,5 +152,13 @@ jobs:
         with:
           name: selection-scale-${{ github.sha }}
           path: ${{ runner.temp }}/selection-scale.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload generated Card selection result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generated-card-selection-${{ github.sha }}
+          path: ${{ runner.temp }}/generated-card-selection.json
           if-no-files-found: error
           retention-days: 30
