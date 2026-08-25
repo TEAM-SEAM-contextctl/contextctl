@@ -89,8 +89,9 @@ contextctl install-assets
 # 3. 설치를 점검합니다
 contextctl doctor
 
-# 4. 문서를 등록하고 수집합니다
-contextctl source add ./docs/leave.md
+# 4. 데모 문서를 준비하고 등록합니다 (자기 문서가 있으면 그 경로를 쓰면 됩니다)
+contextctl demo init
+contextctl source add ./contextctl-demo/leave.md
 contextctl ingest
 
 # 5. 눈으로 확인하고 승인합니다
@@ -98,7 +99,7 @@ contextctl cards list
 contextctl cards approve <cardId>
 
 # 6. 질의합니다
-contextctl query "반차는 어떻게 써?"
+contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
 
 4번에서 이렇게 나옵니다.
@@ -134,10 +135,10 @@ Card 버전 4개가 승인을 기다린다. 다음: contextctl cards list
 승인하지 않으면 되고, 이미 승인한 것도 `cards disable` 로 내렸다가 다시 승인할 수 있습니다
 (다시 수집할 필요는 없습니다).
 
-> ★ **Card 의미 생성기를 설정하십시오.** 설정하지 않으면 관측된 사실을 되풀어 적는 생성기가
-> 대신 쓰입니다. 간단한 질문에는 답하지만 Card 설명이 문장이 아니라 필드 값 목록이 됩니다.
-> 두 생성기가 실제로 무엇을 만드는지는
-> [설정 문서](docs/configuration.md#card-의미-생성기--설정을-권장합니다)에 실측과 함께 있습니다.
+> **Card 의미 생성기는 선택입니다.** 기본값인 결정적 생성기가 제목·섹션 라벨과 파생 키워드로
+> Card 의미를 만들기 때문에 위 흐름은 외부 LLM 없이 그대로 돌아갑니다. 모델을 붙이면 설명과
+> 대표 질문이 문장이 됩니다 — 두 생성기가 무엇을 만드는지는
+> [설정 문서](docs/configuration.md#card-의미-생성기-선택)에 있습니다.
 
 ---
 

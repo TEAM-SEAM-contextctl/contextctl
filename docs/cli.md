@@ -16,7 +16,7 @@ contextctl help cards approve   # 한 명령
 그렇게 정해졌는지.
 
 - [명령 한눈에](#명령-한눈에)
-- [설치와 점검](#설치와-점검) — `install-assets`, `paths`, `doctor`
+- [설치와 점검](#설치와-점검) — `install-assets`, `demo init`, `paths`, `doctor`
 - [지식 등록과 수집](#지식-등록과-수집) — `source`, `ingest`
 - [승인과 되돌리기](#승인과-되돌리기) — `cards`
 - [질의](#질의) — `query`, `serve`
@@ -29,6 +29,7 @@ contextctl help cards approve   # 한 명령
 
 ```
 contextctl install-assets [--yes] [--target <dir>] [--source-directory <dir>]
+contextctl demo init [<directory>]
 contextctl paths
 contextctl doctor [--deep]
 contextctl source add <path> [--name <ref>] [--display-name <text>]
@@ -64,6 +65,17 @@ contextctl --version
 SHA-256 검증을 통과해야 하므로** 다른 모델을 넣는 우회로는 아닙니다.
 
 `--target` 은 설치 위치만 바꿉니다.
+
+### `demo init`
+
+설치된 패키지에 들어 있는 예제 문서 다섯 개(`leave`·`payment`·`refund`·`shipping`·`expense`)를
+현재 디렉터리의 `contextctl-demo/` 로 복사합니다. 인자로 다른 디렉터리를 줄 수 있습니다.
+
+**이미 있는 디렉터리는 덮어쓰지 않고 실패합니다.** 자기 문서를 넣어 둔 곳을 데모로 되돌리는 사고를
+막기 위해서입니다.
+
+패키지 안의 파일을 직접 등록하지 않고 복사하는 이유는, 등록한 소스가 **사용자가 소유한 경로**여야
+하기 때문입니다. `npm` 이 관리하는 디렉터리를 가리키면 재설치할 때 그 아래가 통째로 바뀝니다.
 
 ### `paths`
 
