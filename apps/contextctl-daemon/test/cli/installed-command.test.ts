@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,6 +101,20 @@ describe("the installed contextctl command", () => {
     // environment this suite runs in.
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("등록된 Source가 없습니다");
+  });
+
+  it("exports demo documents through the installed command", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "contextctl-installed-demo-"));
+    directories.push(parent);
+    const destination = join(parent, "demo");
+
+    const result = await run(["demo", "init", destination]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("데모 문서 5개를 준비했다");
+    await expect(readFile(join(destination, "leave.md"), "utf8")).resolves.toContain(
+      "반차는 오전 반차와 오후 반차로 나뉘며 연차 0.5일을 차감합니다.",
+    );
   });
 
   it("persists a registered Source across two invocations", async () => {

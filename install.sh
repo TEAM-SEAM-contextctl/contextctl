@@ -180,6 +180,7 @@ next_steps() {
   say "다음 단계:"
   say "  1. contextctl install-assets   임베딩 모델 설치 (약 415MB, 동의를 묻습니다)"
   say "  2. contextctl doctor           설치 상태 점검"
+  say "  3. contextctl demo init        데모 문서 5개를 새 디렉터리에 준비"
   say ""
   say "설치된 경로를 보려면: contextctl paths"
   # `install-assets` is not run here. It downloads 415MB, and consent obtained

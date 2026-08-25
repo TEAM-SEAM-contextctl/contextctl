@@ -102,6 +102,28 @@ describe("source list and remove", () => {
   });
 });
 
+describe("demo init", () => {
+  it("uses a stable default directory", () => {
+    expect(commandOf(["demo", "init"])).toEqual({
+      kind: "demo_init",
+      destination: "contextctl-demo",
+    });
+  });
+
+  it("takes one explicit destination", () => {
+    expect(commandOf(["demo", "init", "./demo-for-video"])).toEqual({
+      kind: "demo_init",
+      destination: "./demo-for-video",
+    });
+  });
+
+  it("rejects ambiguous or unknown operations", () => {
+    expect(statusOf(["demo"])).toBe("usage_error");
+    expect(statusOf(["demo", "init", "one", "two"])).toBe("usage_error");
+    expect(statusOf(["demo", "replace"])).toBe("usage_error");
+  });
+});
+
 describe("ingest", () => {
   it("omits the reference when none was given", () => {
     const command = commandOf(["ingest"]);
@@ -355,6 +377,7 @@ describe("help", () => {
 
 describe("usageText", () => {
   const COMMAND_LINES = [
+    "contextctl demo init [<directory>]",
     "contextctl source add <path> [--name <ref>] [--display-name <text>]",
     "contextctl source list",
     "contextctl source remove <ref>",

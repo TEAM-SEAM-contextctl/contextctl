@@ -27,6 +27,7 @@ export type CliCommand =
     }
   | { readonly kind: "source_list" }
   | { readonly kind: "source_remove"; readonly reference: string }
+  | { readonly kind: "demo_init"; readonly destination: string }
   | { readonly kind: "ingest"; readonly reference?: string }
   | { readonly kind: "cards_list"; readonly json: boolean }
   /**
@@ -131,6 +132,12 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
     line: "contextctl doctor [--deep]",
     summary:
       "설치 상태를 점검하고 다음에 할 일을 알려준다. --deep 은 모델 파일 전체를 다시 검증한다(느리다).",
+  },
+  {
+    topic: "demo init",
+    line: "contextctl demo init [<directory>]",
+    summary:
+      "설치된 패키지의 데모 문서를 새 디렉터리에 복사한다. 기본 디렉터리는 ./contextctl-demo 이다.",
   },
   {
     topic: "source add",
@@ -266,6 +273,8 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
   switch (first) {
     case "source":
       return parseSourceCommand(argv.slice(1));
+    case "demo":
+      return parseDemoCommand(argv.slice(1));
     case "cards":
       return parseCardsCommand(argv.slice(1));
     case "backup":
@@ -361,10 +370,11 @@ export function usageText(topic?: string): string {
     "처음이라면 이 순서로 실행하십시오:",
     "  1. contextctl install-assets    임베딩 모델 설치 (약 415MB)",
     "  2. contextctl doctor            설치 상태 점검",
-    "  3. contextctl source add <path> 문서 등록",
-    "  4. contextctl ingest            카드 후보 생성",
-    "  5. contextctl cards approve <id> 카드 승인",
-    "  6. contextctl query \"<질문>\"     질의",
+    "  3. contextctl demo init         데모 문서 준비",
+    "  4. contextctl source add <path> 문서 등록",
+    "  5. contextctl ingest            카드 후보 생성",
+    "  6. contextctl cards approve <id> 카드 승인",
+    "  7. contextctl query \"<질문>\"     질의",
     "",
     "사용법:",
     ...COMMAND_USAGES.flatMap(renderUsage),
@@ -373,6 +383,27 @@ export function usageText(topic?: string): string {
 
 function renderUsage(usage: CommandUsage): readonly string[] {
   return [`  ${usage.line}`, `      ${usage.summary}`];
+}
+
+function parseDemoCommand(rest: readonly string[]): ParsedArguments {
+  const subcommand = rest[0];
+  if (subcommand !== "init") {
+    return usageError(
+      subcommand === undefined
+        ? "demo 에는 하위 명령이 필요합니다: init"
+        : `알 수 없는 하위 명령입니다: demo ${subcommand}`,
+      "demo",
+    );
+  }
+  const outcome = tokenize(rest.slice(1), {}, "demo init");
+  if (outcome.status === "usage_error") return outcome;
+  if (outcome.positionals.length > 1) {
+    return usageError("demo init 은 디렉터리를 하나만 받습니다.", "demo init");
+  }
+  return ok({
+    kind: "demo_init",
+    destination: outcome.positionals[0] ?? "contextctl-demo",
+  });
 }
 
 function parseSourceCommand(rest: readonly string[]): ParsedArguments {
