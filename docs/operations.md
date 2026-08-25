@@ -18,7 +18,7 @@
 | 증상 | 원인 | 조치 |
 |---|---|---|
 | `ingest` / `query` / `serve` 가 `qdrant_endpoint_required` 로 실패 | `CONTEXTCTL_QDRANT_URL` 이 없음. 데이터베이스를 열기 전에 거부합니다 | Qdrant 를 띄우고 `export CONTEXTCTL_QDRANT_URL=http://localhost:6333` |
-| `query` 가 빈 결과 — `판정 집계: 승인 0 · 보류 0 · 기각 N` | Card 의미 생성기가 설정되지 않아 결정적 생성기가 만든 키워드에 자연어와 겹치는 말이 없음 | `CONTEXTCTL_CARD_MEANING_BASE_URL` / `_MODEL` / `_API_KEY` 를 설정하고 **다시 `ingest`** (의미는 수집 시점에 굳습니다) |
+| `query` 가 승인 0 — `판정 집계: 승인 0 · 보류 N · 기각 N` | 질문의 말이 Card 키워드·별칭과 겹치지 않음. Card 의미 생성기를 설정하지 않았다면 그 어휘가 원문에서 잘라낸 조각뿐이라 더 자주 어긋납니다 | 질문을 문서의 말로 바꿔 보고, 그래도 안 잡히면 `CONTEXTCTL_CARD_MEANING_BASE_URL` / `_MODEL` / `_API_KEY` 를 설정하고 **다시 `ingest`** (의미는 수집 시점에 굳습니다) → [설정](configuration.md#card-의미-생성기--설정을-권장합니다) |
 | 의미 생성 엔드포인트에서 **404** | `BASE_URL` 이 `/v1` 로 끝나 `/v1/v1/chat/completions` 가 됨 | `BASE_URL` 에서 `/v1` 을 떼십시오. `contextctl doctor` 가 실제 요청 URL 을 보여줍니다 |
 | `stderr` 에 `ExperimentalWarning: SQLite is an experimental feature …` | Registry·Ingestion 저장소가 Node 내장 `node:sqlite` 를 사용 | 무해합니다. 억제하지 마십시오 — 끄면 중요한 경고도 함께 사라집니다 |
 | 설치 후 `contextctl` 을 찾을 수 없음 | `fnm`/`nvm`/`asdf` 가 **활성 Node 버전의 `bin`** 에만 설치했거나 그 경로가 `PATH` 에 없음 | `contextctl paths` 로 어느 Node 아래 있는지 확인하고 `npm prefix -g` 의 `bin` 이 `PATH` 에 있는지 확인 |
