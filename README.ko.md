@@ -174,9 +174,10 @@ Claude Code 라면 프로젝트 루트 `.mcp.json` 에 이렇게 씁니다.
 
 | | |
 |---|---|
+| [구조](docs/architecture.md) | 전체 흐름, 워크스페이스, 실행 영역 |
 | [CLI 레퍼런스](docs/cli.md) | 명령 전체, 플래그, 종료 코드 |
 | [설정](docs/configuration.md) | 환경변수, 상태 식별, HTTP 표면, 임베딩, Card 의미 생성기 |
-| [운영](docs/operations.md) | 상태 점검, 도달 가능성, 백업·복원, 색인 복구, 제거 |
+| [운영](docs/operations.md) | 문제 해결, 상태 점검, 백업·복원, 색인 복구, 제거 |
 | [CONTRIBUTING](CONTRIBUTING.md) | 개발 환경, 브랜치와 리뷰 규칙 |
 
 터미널에서는 CLI 가 직접 알려줍니다.
