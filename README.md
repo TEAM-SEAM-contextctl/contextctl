@@ -97,8 +97,9 @@ contextctl install-assets
 # 3. Check the installation
 contextctl doctor
 
-# 4. Register a document and capture it
-contextctl source add ./docs/leave.md
+# 4. Lay down the demo documents, then register one (your own path works too)
+contextctl demo init
+contextctl source add ./contextctl-demo/leave.md
 contextctl ingest
 
 # 5. Read what was produced, then approve it
@@ -106,7 +107,7 @@ contextctl cards list
 contextctl cards approve <cardId>
 
 # 6. Ask
-contextctl query "How do I take a half day?"
+contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
 
 Step 6 answers like this — what it chose, and why you can trust it, together.
@@ -136,12 +137,11 @@ marked `untrusted` — data, not instruction.)
 nothing. A Card you do not approve is never used, and one you did approve can be
 withdrawn with `cards disable` and approved again later — without re-capturing.
 
-> ★ **Configure a Card meaning generator.** Without one, capture falls back to a
-> generator that restates the observed facts — it answers simple questions, but a
-> Card's description reads as a list of field values rather than a sentence about
-> the area. What each generator produces, measured, is in
-> [설정 / Configuration](docs/configuration.md#card-의미-생성기--설정을-권장합니다)
-> (Korean).
+> **A Card meaning generator is optional.** The default one is deterministic —
+> it builds a Card's meaning from titles, section labels and derived keywords —
+> so the run above needs no external LLM. Attaching a model turns descriptions
+> and representative questions into sentences; what each one produces is in
+> [설정 / Configuration](docs/configuration.md#card-의미-생성기-선택) (Korean).
 
 ---
 
