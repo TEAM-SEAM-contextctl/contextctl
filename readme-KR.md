@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node ≥ 24](https://img.shields.io/badge/Node-%E2%89%A5%2024-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![CI](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml/badge.svg)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
-[![검증 플랫폼: darwin arm64](https://img.shields.io/badge/%EA%B2%80%EC%A6%9D%20%ED%94%8C%EB%9E%AB%ED%8F%BC-darwin%20arm64-blue)](https://github.com/TEAM-SEAM-contextctl/contextctl)
+[![검증 플랫폼: Ubuntu 24.04](https://img.shields.io/badge/%EA%B2%80%EC%A6%9D%20%ED%94%8C%EB%9E%AB%ED%8F%BC-Ubuntu%2024.04-blue)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 
 문서를 등록하면 **승인된 것만** 검색되는 컨텍스트 제어 도구입니다.
 
@@ -17,16 +17,16 @@
 - **MCP**: `contextctl serve` 는 stdin/stdout 으로 MCP 를 말하며, 에이전트에 노출되는 도구는
   **`resolve_context` 하나**뿐입니다. 승인·거부 같은 제어 명령은 의도적으로 MCP 에 없습니다 —
   승인은 사람의 손에 남깁니다.
-- **벡터 색인**: Qdrant 가 필수입니다. 임베딩 모델(Granite 97m, ONNX)은 로컬에서 실행됩니다.
+- **벡터 색인**: Qdrant 가 필수입니다. 두 임베딩 계층은 로컬 Granite 또는 OpenAI 호환 원격 제공자를 독립적으로 선택합니다.
 
-> 검증 범위: **darwin arm64 에서 검증됨. Linux / WSL 미검증.**
+> 검증 범위: 배포 tarball 설치와 실제 Qdrant·Granite 제품 경로는 **Ubuntu 24.04 필수 CI**에서 검증합니다.
+> macOS는 수동 검증하며 Windows와 WSL은 아직 검증하지 않았습니다.
 
 ---
 
 ## 60초 퀵스타트
 
-아래 블록을 순서대로 실행하면 됩니다. 데모 문서는 저장소의
-`apps/contextctl-daemon/demo/docs/` 아래에 있습니다(`leave.md`, `payment.md`, `refund.md`, `shipping.md`, `expense.md`).
+아래 블록을 순서대로 실행하면 됩니다. 데모 문서는 설치 패키지에서 사용자가 소유한 디렉터리로 복사합니다.
 
 ```bash
 # 1. Qdrant 를 띄우고 주소를 알립니다
@@ -42,8 +42,9 @@ contextctl install-assets
 # 4. 설치 점검
 contextctl doctor
 
-# 5. 문서 등록 · 수집
-contextctl source add apps/contextctl-daemon/demo/docs/leave.md
+# 5. 설치된 패키지에서 데모 문서 5개를 복사한 뒤 등록 · 수집
+contextctl demo init
+contextctl source add ./contextctl-demo/leave.md
 contextctl ingest
 
 # 6. Card 확인 · 승인
@@ -51,17 +52,12 @@ contextctl cards list
 contextctl cards approve <cardId>
 
 # 7. 질의
-contextctl query "반차는 어떻게 써?"
+contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
 
-> ★ **Card 의미 생성기를 설정하지 않으면 7번에서 빈 결과가 나옵니다.**
-> `CONTEXTCTL_CARD_MEANING_BASE_URL` / `CONTEXTCTL_CARD_MEANING_MODEL` / `CONTEXTCTL_CARD_MEANING_API_KEY`
-> 를 설정하지 않은 기본값은 모델을 쓰지 않는 결정적 생성기이고, 그것이 만드는 키워드는
-> 스키마 필드 이름과 식별자뿐이라 자연어 질의와 겹치는 말이 없습니다.
->
-> **의미는 수집 시점에 굳습니다.** 생성기를 나중에 설정했다면 **다시 `ingest` 해야** 합니다.
-> 그리고 **`BASE_URL` 에 `/v1` 을 붙이지 마십시오** — 클라이언트가 `/v1/chat/completions` 를 직접 붙입니다.
-> 자세한 내용은 [설정 → Card 의미 생성기](#-card-의미-생성기--설정을-권장합니다) 를 보십시오.
+> 기본 결정적 생성기가 제목·섹션 라벨과 `keywords.derived`로 Card 의미를 만들므로
+> 이 데모에는 외부 LLM이 필요하지 않습니다. 선택적 생성기를 나중에 설정했다면 의미를 다시 만들기 위해
+> `ingest`를 다시 실행해야 합니다.
 
 모든 명령이 `stderr` 로 `ExperimentalWarning: SQLite is an experimental feature …` 두 줄을 냅니다.
 Registry 와 Ingestion 저장소가 Node 내장 `node:sqlite` 를 쓰기 때문이고, 무해합니다.
@@ -193,7 +189,7 @@ daemon을 사용하십시오.
 MCP·HTTP·`query` 는 같은 정책으로 답합니다. `contextctl doctor` 가 `policy-context` 줄에서 현재 값을
 보여주며, `allow` 면 경고로 표시합니다.
 
-### ★ Card 의미 생성기 — 설정을 권장합니다
+### Card 의미 생성기 (선택)
 
 ```bash
 export CONTEXTCTL_CARD_MEANING_BASE_URL=https://your-endpoint
@@ -203,23 +199,16 @@ export CONTEXTCTL_CARD_MEANING_API_KEY=...
 
 | 변수 | 필수 | 뜻 |
 |---|---|---|
-| `CONTEXTCTL_CARD_MEANING_BASE_URL` | 권장 | OpenAI 호환 엔드포인트의 기본 URL. **`/v1` 을 붙이지 마십시오** |
-| `CONTEXTCTL_CARD_MEANING_MODEL` | 권장 | 사용할 모델 이름 |
-| `CONTEXTCTL_CARD_MEANING_API_KEY` | 권장 | 엔드포인트 API 키 |
+| `CONTEXTCTL_CARD_MEANING_BASE_URL` | 선택 | OpenAI 호환 엔드포인트의 기본 URL. **`/v1` 을 붙이지 마십시오** |
+| `CONTEXTCTL_CARD_MEANING_MODEL` | 선택 | 사용할 모델 이름 |
+| `CONTEXTCTL_CARD_MEANING_API_KEY` | 선택 | 엔드포인트 API 키 |
 | `CONTEXTCTL_CARD_MEANING_TIMEOUT_MS` | 선택 | 요청 시간 제한 |
 | `CONTEXTCTL_CARD_MEANING_CONTEXT_TOKENS` | 선택 | 컨텍스트 토큰 한도 |
 | `CONTEXTCTL_CARD_MEANING_MAX_OUTPUT_TOKENS` | 선택 | 출력 토큰 한도 |
 
-**설정하지 않으면 어떻게 되는가.** 기본값은 모델을 쓰지 않는 결정적 생성기입니다.
-그것이 만드는 Card 의 키워드는 스키마 필드 이름과 식별자뿐이라
-(`block`, `count`, `section`, `title`, `unit`, base32 ID …) **자연어 질의와 겹치는 말이 없습니다.**
-
-실측입니다. 결정적 생성기로 만든 Card 4개에 `"반차는 어떻게 써?"` 를 물으면
-`판정 집계: 승인 0 · 보류 0 · 기각 4` 로 아무것도 선택되지 않습니다. 최고 점수가 0.138 이고
-기각 임계값이 0.35 입니다. 임계값 문제가 아니라 **Card 에 매칭될 말이 없는 것**입니다.
-모델을 붙이면 같은 질의가 `승인 1 · 기각 3` 으로 답하고
-`"반차는 오전 반차와 오후 반차로 나뉘며 연차 0.5일을 차감합니다."` 가 실제로 반환됩니다.
-무관한 질의(`"점심 메뉴 추천해줘"`)는 승인 0 으로 아무것도 주지 않습니다.
+설정하지 않으면 제목·섹션 라벨과 본문에서 제한적으로 파생한 `keywords.derived`를 사용하는
+결정적 생성기가 Card 의미를 만듭니다. OpenAI 호환 생성기는 설명과 예시 질의를 더 풍부하게
+만들고 싶을 때 선택적으로 사용합니다.
 
 > ★ **`BASE_URL` 에 `/v1` 을 붙이지 마십시오.** 클라이언트가 `/v1/chat/completions` 를
 > 직접 붙입니다. `https://host/v1` 을 주면 `https://host/v1/v1/chat/completions` 가 되어
@@ -243,6 +232,7 @@ export CONTEXTCTL_CARD_MEANING_API_KEY=...
 
 ```bash
 contextctl install-assets [--yes] [--target <dir>] [--source-directory <dir>]
+contextctl demo init [<directory>]
 contextctl paths
 contextctl doctor [--deep]
 contextctl source add <path> [--name <ref>] [--display-name <text>]
@@ -394,7 +384,7 @@ Claude Code 에 붙이려면 프로젝트 루트 `.mcp.json` 에:
 | 증상 | 원인 | 조치 |
 |---|---|---|
 | `ingest` / `query` / `serve` 가 `qdrant_endpoint_required` 로 실패 | `CONTEXTCTL_QDRANT_URL` 이 없음. 데이터베이스를 열기 전에 거부합니다 | Qdrant 를 띄우고 `export CONTEXTCTL_QDRANT_URL=http://localhost:6333` |
-| `query` 가 빈 결과 — `판정 집계: 승인 0 · 보류 0 · 기각 N` | Card 의미 생성기가 설정되지 않아 결정적 생성기가 만든 키워드에 자연어와 겹치는 말이 없음 | `CONTEXTCTL_CARD_MEANING_BASE_URL` / `_MODEL` / `_API_KEY` 를 설정하고 **다시 `ingest`** (의미는 수집 시점에 굳습니다) |
+| `query` 가 빈 결과 — `판정 집계: 승인 0 · 보류 0 · 기각 N` | 승인된 Card가 없거나 질의와 관련된 Card가 판정 기준을 넘지 못함 | `contextctl cards list`와 `contextctl status`로 승인·준비 상태를 확인하고 질의가 문서 표현과 관련 있는지 점검하십시오 |
 | 의미 생성 엔드포인트에서 **404** | `BASE_URL` 이 `/v1` 로 끝나 `/v1/v1/chat/completions` 가 됨 | `BASE_URL` 에서 `/v1` 을 떼십시오. `contextctl doctor` 가 실제 요청 URL 을 보여줍니다 |
 | `stderr` 에 `ExperimentalWarning: SQLite is an experimental feature …` | Registry·Ingestion 저장소가 Node 내장 `node:sqlite` 를 사용 | 무해합니다. 억제하지 마십시오 — 끄면 중요한 경고도 함께 사라집니다 |
 | 설치 후 `contextctl` 을 찾을 수 없음 | `fnm`/`nvm`/`asdf` 가 **활성 Node 버전의 `bin`** 에만 설치했거나 그 경로가 `PATH` 에 없음 | `contextctl paths` 로 어느 Node 아래 있는지 확인하고 `npm prefix -g` 의 `bin` 이 `PATH` 에 있는지 확인 |

@@ -15,6 +15,7 @@ import { parseCliArguments, usageText, type CliCommand } from "./arguments.js";
 import {
   failed,
   runCardsDecision,
+  runDemoInit,
   runReachability,
   runCardsList,
   runDoctor,
@@ -268,6 +269,8 @@ async function runWithoutRuntime(
   switch (command.kind) {
     case "source_add":
       return runSourceAdd(command, sourcesFile, workingDirectory);
+    case "demo_init":
+      return runDemoInit(command, workingDirectory);
     case "source_list":
       return runSourceList(sourcesFile);
     case "source_remove":

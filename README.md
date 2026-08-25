@@ -6,7 +6,8 @@
 
 MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습니다.
 
-> 검증 범위: **darwin arm64 에서 검증됨. Linux / WSL 미검증.**
+> 검증 범위: 배포 tarball 설치와 실제 Qdrant·Granite 제품 경로는 **Ubuntu 24.04 필수 CI**에서 검증합니다.
+> macOS는 수동 검증하며 Windows와 WSL은 아직 검증하지 않았습니다.
 
 ---
 
@@ -100,10 +101,19 @@ contextctl doctor
 `doctor` 는 **설치가 제대로 됐는지**를 봅니다. 쓰기 시작한 뒤에 **어느 실행 영역이 지금
 일을 못 하는지**를 알고 싶으면 `contextctl status` 입니다 ([아래](#status)).
 
-### 4. 문서를 등록하고 수집합니다
+### 4. 데모 문서를 준비합니다
 
 ```bash
-contextctl source add ./docs/leave.md
+contextctl demo init
+```
+
+설치된 패키지의 예제 다섯 개를 현재 디렉터리의 `contextctl-demo/`에 복사합니다.
+이미 있는 디렉터리는 덮어쓰지 않습니다.
+
+### 5. 문서를 등록하고 수집합니다
+
+```bash
+contextctl source add ./contextctl-demo/leave.md
 contextctl ingest
 ```
 
@@ -115,7 +125,7 @@ source.leave: published
 Card 버전 4개가 승인을 기다린다. 다음: contextctl cards list
 ```
 
-### 5. 승인합니다
+### 6. 승인합니다
 
 ```bash
 contextctl cards list          # description 과 keywords 를 눈으로 확인
@@ -135,13 +145,11 @@ contextctl cards rollback <cardId> <versionId>   # 이전 버전으로 되돌린
 
 `disable` 한 Card 는 다시 승인하면 복구됩니다. 다시 수집할 필요가 없습니다.
 
-### 6. 질의합니다
+### 7. 질의합니다
 
 ```bash
-contextctl query "반차는 어떻게 써?"
+contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
-
-★ **아래 5번(모델 설정)을 하지 않으면 이 단계에서 빈 결과가 나옵니다.** 이유는 그 절에 있습니다.
 
 ---
 
@@ -188,7 +196,7 @@ contextctl query "반차는 어떻게 써?"
 MCP·HTTP·`query` 는 한 프로세스 안에서 같은 정책으로 답합니다. 용도(`usage`)는 `retrieval` 로 고정입니다.
 `contextctl doctor` 가 `policy-context` 줄에서 현재 값과 그 결과를 보여주며, `allow` 면 경고로 표시합니다.
 
-### ★ Card 의미 생성기 — 설정을 권장합니다
+### Card 의미 생성기 (선택)
 
 ```bash
 export CONTEXTCTL_CARD_MEANING_BASE_URL=https://your-endpoint
@@ -196,26 +204,9 @@ export CONTEXTCTL_CARD_MEANING_MODEL=your-model
 export CONTEXTCTL_CARD_MEANING_API_KEY=...
 ```
 
-**설정하지 않으면 어떻게 되는가.** 기본값은 모델을 쓰지 않는 결정적 생성기입니다.
-그것이 만드는 Card 의 키워드는 스키마 필드 이름과 식별자뿐이라
-(`block`, `count`, `section`, `title`, `unit`, base32 ID …) **자연어 질의와 겹치는 말이 없습니다.**
-
-실측입니다. 결정적 생성기로 만든 Card 4개에 `"반차는 어떻게 써?"` 를 물으면:
-
-```
-선택 모드: hybrid
-판정 집계: 승인 0 · 보류 0 · 기각 4
-
-선택된 Card: 없음 — 승인된 Card 중 이 질의에 응답한 것이 없습니다.
-컨텍스트 항목: 없음 — 선택된 Scope가 없습니다.
-```
-
-최고 점수가 0.138 이고 기각 임계값이 0.35 입니다. 임계값 문제가 아니라
-**Card 에 매칭될 말이 없는 것**입니다.
-
-모델을 붙이면 같은 질의가 답합니다 — `승인 1 · 기각 3`, 그리고
-`"반차는 오전 반차와 오후 반차로 나뉘며 연차 0.5일을 차감합니다."` 가 실제로 반환됩니다.
-무관한 질의(`"점심 메뉴 추천해줘"`)는 승인 0 으로 아무것도 주지 않습니다.
+설정하지 않으면 제목·섹션 라벨과 본문에서 제한적으로 파생한 `keywords.derived`를 사용하는
+결정적 생성기가 Card 의미를 만듭니다. 따라서 위 데모는 외부 LLM 없이 실행할 수 있습니다.
+OpenAI 호환 생성기는 설명과 예시 질의를 더 풍부하게 만들고 싶을 때 선택적으로 사용합니다.
 
 > ★ **`BASE_URL` 에 `/v1` 을 붙이지 마십시오.** 클라이언트가 `/v1/chat/completions` 를
 > 직접 붙입니다. `https://host/v1` 을 주면 `https://host/v1/v1/chat/completions` 가 되어
@@ -232,6 +223,7 @@ export CONTEXTCTL_CARD_MEANING_API_KEY=...
 
 ```
 contextctl install-assets [--yes] [--target <dir>] [--source-directory <dir>]
+contextctl demo init [<directory>]
 contextctl paths
 contextctl doctor [--deep]
 contextctl source add <path> [--name <ref>] [--display-name <text>]

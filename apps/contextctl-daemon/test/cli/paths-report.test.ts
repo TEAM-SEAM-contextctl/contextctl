@@ -115,6 +115,9 @@ describe("paths report", () => {
     const entry = (report: typeof without) =>
       report.groups.flatMap((g) => g.entries).find((e) => e.label === "Qdrant");
     expect(entry(without)?.kind).toBe("absent");
+    expect(entry(without)?.value).toContain("실행할 수 없습니다");
+    expect(entry(without)?.note).toContain("시험 전용");
+    expect(entry(without)?.value).not.toContain("메모리에만");
     expect(entry(with_)?.kind).toBe("present");
     expect(entry(with_)?.value).toContain("localhost:6333");
   });

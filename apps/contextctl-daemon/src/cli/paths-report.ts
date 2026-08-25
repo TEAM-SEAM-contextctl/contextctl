@@ -129,9 +129,9 @@ function vectorEntry(
   if (url === undefined) {
     return {
       label: "Qdrant",
-      value: "(설정되지 않음 — 색인이 메모리에만 있습니다)",
+      value: "(설정되지 않음 — ingest, query, serve를 실행할 수 없습니다)",
       kind: "absent",
-      note: "프로세스가 끝나면 색인이 사라지므로 지울 것이 없습니다.",
+      note: "CONTEXTCTL_QDRANT_URL을 설정하십시오. 인메모리 색인은 시험 전용이며 운영 대체 경로가 아닙니다.",
     };
   }
   return {

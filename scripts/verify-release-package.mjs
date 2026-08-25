@@ -67,6 +67,13 @@ const forbiddenSuffixes = Object.freeze([
   ".sqlite3",
   ".tsbuildinfo",
 ]);
+const bundledDemoDocuments = Object.freeze([
+  "demo/docs/expense.md",
+  "demo/docs/leave.md",
+  "demo/docs/payment.md",
+  "demo/docs/refund.md",
+  "demo/docs/shipping.md",
+]);
 
 let temporaryRoot;
 let embeddingProvider;
@@ -122,6 +129,7 @@ try {
   if (!sourceList.stdout.includes("등록된 Source가 없습니다")) {
     throw new Error("installed command did not execute a state-free operator command");
   }
+  await assertInstalledDemo(executable, commandEnvironment, temporaryRoot);
   await assertClosedFailureWithoutQdrant(executable, commandEnvironment, contextctlHome);
 
   if (productMode) {
@@ -213,7 +221,13 @@ function assertPackageContents(packed) {
       throw new Error(`${expected.name} is not on integrated version ${releaseVersion}`);
     }
     const paths = metadata.files.map((file) => file?.path).filter((path) => typeof path === "string");
-    for (const required of ["package.json", expected.entrypoint, expected.bin].filter(Boolean)) {
+    const requiredPaths = [
+      "package.json",
+      expected.entrypoint,
+      expected.bin,
+      ...(expected.name === "@contextctl/daemon" ? bundledDemoDocuments : []),
+    ].filter(Boolean);
+    for (const required of requiredPaths) {
       if (!paths.includes(required)) {
         throw new Error(`${expected.name} tarball omitted ${required}`);
       }
@@ -225,6 +239,9 @@ function assertPackageContents(packed) {
 }
 
 function assertSafePublishedPath(packageName, path) {
+  if (packageName === "@contextctl/daemon" && bundledDemoDocuments.includes(path)) {
+    return;
+  }
   const segments = path.split("/");
   if (
     segments.some((segment) => forbiddenSegments.has(segment)) ||
@@ -241,6 +258,27 @@ function assertSafePublishedPath(packageName, path) {
     !path.startsWith("dist/")
   ) {
     throw new Error(`${packageName} tarball contains an undeclared public path: ${path}`);
+  }
+}
+
+async function assertInstalledDemo(executable, environment, temporaryRoot) {
+  const destination = join(temporaryRoot, "installed-demo");
+  const initialized = await run(executable, ["demo", "init", destination], environment);
+  if (!initialized.stdout.includes("데모 문서 5개를 준비했다")) {
+    throw new Error("installed command did not report the bundled demo documents");
+  }
+  const expectations = Object.freeze({
+    "expense.md": "경비 정산 마감일은 매월 5일이며",
+    "leave.md": "반차는 오전 반차와 오후 반차로 나뉘며 연차 0.5일을 차감합니다.",
+    "payment.md": "재시도 간격은 5분, 30분, 2시간입니다.",
+    "refund.md": "카드는 3~5영업일, 계좌이체는 당일 처리됩니다.",
+    "shipping.md": "운송장은 출고 후 2시간 이내에 발급됩니다.",
+  });
+  for (const [name, sentence] of Object.entries(expectations)) {
+    const content = await readFile(join(destination, name), "utf8");
+    if (!content.includes(sentence)) {
+      throw new Error(`installed demo document is missing its expected content: ${name}`);
+    }
   }
 }
 
@@ -282,7 +320,8 @@ async function verifyProduct(input) {
   const productHome = join(input.temporaryRoot, `product-home-${combinationName}`);
   const restoredHome = join(input.temporaryRoot, `restored-home-${combinationName}`);
   const backupDirectory = join(input.temporaryRoot, `backup-${combinationName}`);
-  const documentPath = join(input.temporaryRoot, `shipping-${combinationName}.md`);
+  const demoDirectory = join(input.temporaryRoot, `demo-${combinationName}`);
+  const documentPath = join(demoDirectory, "leave.md");
   const suffix = [
     input.combination.document,
     input.combination.card,
@@ -351,13 +390,9 @@ async function verifyProduct(input) {
   delete environment.CONTEXTCTL_CARD_MEANING_MODEL;
   delete environment.CONTEXTCTL_CARD_MEANING_API_KEY;
 
-  const originalSentence = "결제가 완료되면 운송장 번호는 3~5영업일 이내 발급됩니다.";
-  const retainedSentence = "반품 접수는 배송 완료 뒤 7일 이내 신청합니다.";
-  await writeFile(
-    documentPath,
-    `# 배송 정책\n\n## 운송장 발급\n\n${originalSentence}\n\n## 반품 접수\n\n${retainedSentence}\n`,
-    "utf8",
-  );
+  const originalSentence = "반차는 오전 반차와 오후 반차로 나뉘며 연차 0.5일을 차감합니다.";
+  const retainedSentence = "병가는 연간 10일까지 유급으로 사용할 수 있습니다.";
+  await run(input.executable, ["demo", "init", demoDirectory], environment);
 
   let backupManifest;
   try {
@@ -365,7 +400,7 @@ async function verifyProduct(input) {
     await run(input.executable, ["ingest"], environment);
     await approveValidatedVersions(input.executable, environment);
 
-    const query = "운송장 번호는 언제 발급되나요?";
+    const query = "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?";
     const initial = await queryContext(input.executable, environment, query);
     assertRetrieved(initial, originalSentence);
     const restarted = await queryContext(input.executable, environment, query);
@@ -381,7 +416,7 @@ async function verifyProduct(input) {
 
     await writeFile(
       documentPath,
-      `# 배송 정책\n\n## 반품 접수\n\n${retainedSentence}\n`,
+      `# 인사 규정: 휴가\n\n## 병가\n\n${retainedSentence}\n`,
       "utf8",
     );
     await run(input.executable, ["ingest"], environment);
@@ -491,8 +526,14 @@ async function queryContext(executable, environment, query) {
 }
 
 function assertRetrieved(resolution, sentence) {
-  if (!retrievedText(resolution).includes(sentence)) {
-    throw new Error("natural-language resolution did not return the expected document text");
+  const text = retrievedText(resolution);
+  if (!text.includes(sentence)) {
+    const selected = (resolution.selection?.selected ?? [])
+      .map((card) => `${card.cardId}@${card.versionId}`)
+      .join(", ");
+    throw new Error(
+      `natural-language resolution did not return the expected document text; selected=${selected || "none"}; retrieved=${JSON.stringify(text.slice(0, 512))}`,
+    );
   }
   const contexts = resolution.items
     ?.filter((item) => item?.fulfillment?.status === "fulfilled")

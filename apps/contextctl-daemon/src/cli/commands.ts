@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
+import { join } from "node:path";
 
 import {
   buildReachabilityReport,
@@ -32,6 +33,7 @@ import {
   resolveActiveAssetDirectory,
 } from "./asset-directory.js";
 import { runDiagnosis, type DiagnosisReport } from "./doctor.js";
+import { initializeBundledDemo } from "./demo.js";
 import { readNonEmpty, resolveContextctlPaths } from "./paths.js";
 import {
   judgeLanes,
@@ -109,6 +111,24 @@ export function failed(message: string): CommandOutcome {
 /** Fails with a code other than the default, for outcomes a script must tell apart. */
 export function failedWith(code: ExitCode, message: string): CommandOutcome {
   return { stdout: "", stderr: [message], exitCode: code };
+}
+
+export async function runDemoInit(
+  command: Extract<CliCommand, { kind: "demo_init" }>,
+  workingDirectory: string,
+): Promise<CommandOutcome> {
+  const initialized = await initializeBundledDemo({
+    destination: command.destination,
+    workingDirectory,
+  });
+  return ok(
+    [
+      `데모 문서 ${initialized.documents.length}개를 준비했다: ${initialized.directory}`,
+      ...initialized.documents.map((name) => `  ${name}`),
+      "",
+      `다음: contextctl source add ${JSON.stringify(join(initialized.directory, "leave.md"))}`,
+    ].join("\n"),
+  );
 }
 
 /* ------------------------------------------------------------------ source */
