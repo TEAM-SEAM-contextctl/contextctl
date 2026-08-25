@@ -13,6 +13,7 @@ import {
   SEMANTIC_CONFIDENT_MARGIN,
   SEMANTIC_CONFIDENT_SCORE,
   SEMANTIC_CONFIDENT_SIMILARITY_FLOOR,
+  SEMANTIC_LEXICAL_SUPPORT_FLOOR,
   SEMANTIC_SECONDARY_SCORE_CEILING,
   semanticScoreFor,
 } from "../../src/domain/hybrid-ranking.js";
@@ -156,9 +157,9 @@ describe("rankHybridCandidates", () => {
       lexicalTopK: 2,
     });
 
-    expect(ranked.find((entry) => entry.versionId === "a")?.score).toBe(
-      DEFAULT_SELECTION_THRESHOLDS.admit,
-    );
+    expect(
+      ranked.find((entry) => entry.versionId === "a")?.score,
+    ).toBeGreaterThanOrEqual(DEFAULT_SELECTION_THRESHOLDS.admit);
   });
 
   it("keeps every non-leading neighbour below reject", () => {
@@ -178,6 +179,42 @@ describe("rankHybridCandidates", () => {
     expect(SEMANTIC_SECONDARY_SCORE_CEILING).toBeLessThan(
       DEFAULT_SELECTION_THRESHOLDS.reject,
     );
+  });
+
+  it("refuses a close semantic leader without lexical corroboration", () => {
+    const ranked = rankHybridCandidates({
+      lexical: [candidate("a", 0.2), candidate("b", 0.7)],
+      semantic: [
+        { cardId: "card_a", cardVersionId: "a", similarity: 0.86 },
+        { cardId: "card_b", cardVersionId: "b", similarity: 0.855 },
+      ],
+      lexicalTopK: 2,
+    });
+
+    expect(ranked.find((entry) => entry.versionId === "a")?.semanticScore).toBe(
+      SEMANTIC_SECONDARY_SCORE_CEILING,
+    );
+    expect(ranked.find((entry) => entry.versionId === "a")?.score).toBeLessThan(
+      DEFAULT_SELECTION_THRESHOLDS.reject,
+    );
+  });
+
+  it("keeps a close semantic leader when lexical evidence corroborates it", () => {
+    const ranked = rankHybridCandidates({
+      lexical: [
+        candidate("a", SEMANTIC_LEXICAL_SUPPORT_FLOOR),
+        candidate("b", 0.2),
+      ],
+      semantic: [
+        { cardId: "card_a", cardVersionId: "a", similarity: 0.86 },
+        { cardId: "card_b", cardVersionId: "b", similarity: 0.855 },
+      ],
+      lexicalTopK: 2,
+    });
+
+    expect(
+      ranked.find((entry) => entry.versionId === "a")?.score,
+    ).toBeGreaterThanOrEqual(DEFAULT_SELECTION_THRESHOLDS.admit);
   });
 
   it("leaves a Card outside both top-K sets on its lexical score alone", () => {
@@ -264,25 +301,25 @@ describe("the mode and scoring pairing", () => {
       HYBRID_SCORING_POLICY_VERSION,
     );
     expect(scoringPolicyVersionFor("lexical_degraded")).toBe(
-      "selection-lexical-v2",
+      "selection-lexical-v3",
     );
   });
 
   it("accepts the two valid pairs", () => {
     expect(() =>
-      assertSelectionScoringPairing("hybrid", "selection-hybrid-v2"),
+      assertSelectionScoringPairing("hybrid", "selection-hybrid-v3"),
     ).not.toThrow();
     expect(() =>
-      assertSelectionScoringPairing("lexical_degraded", "selection-lexical-v2"),
+      assertSelectionScoringPairing("lexical_degraded", "selection-lexical-v3"),
     ).not.toThrow();
   });
 
   it("refuses every other combination", () => {
     expect(() =>
-      assertSelectionScoringPairing("hybrid", "selection-lexical-v2"),
+      assertSelectionScoringPairing("hybrid", "selection-lexical-v3"),
     ).toThrow(SelectionModeInvariantError);
     expect(() =>
-      assertSelectionScoringPairing("lexical_degraded", "selection-hybrid-v2"),
+      assertSelectionScoringPairing("lexical_degraded", "selection-hybrid-v3"),
     ).toThrow(SelectionModeInvariantError);
     expect(() =>
       assertSelectionScoringPairing("hybrid", "selection-hybrid-v1"),

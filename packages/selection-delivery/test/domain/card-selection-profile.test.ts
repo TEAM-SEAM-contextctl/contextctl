@@ -165,9 +165,9 @@ describe("remote Card selection profiles", () => {
     expect(profile.pooling).toBe("provider_defined");
     expect(profile.normalization).toBe("l2");
     expect(profile.distance).toBe("cosine");
-    expect(profile.selectionTextSchemaVersion).toBe(2);
-    expect(profile.cardInputTransformVersion).toBe("card-selection-text-v2");
-    expect(profile.queryInputTransformVersion).toBe("card-selection-text-v2");
+    expect(profile.selectionTextSchemaVersion).toBe(3);
+    expect(profile.cardInputTransformVersion).toBe("card-selection-text-v3");
+    expect(profile.queryInputTransformVersion).toBe("card-selection-text-v3");
     expect(profile.admissionLimits).toEqual(DEFAULT_CARD_ADMISSION_LIMITS);
     expect(Object.isFrozen(profile)).toBe(true);
     expect(() => assertValidCardSelectionProfile(profile)).not.toThrow();

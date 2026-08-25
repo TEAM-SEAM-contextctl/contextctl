@@ -46,7 +46,9 @@ describe("derived Publication keywords", () => {
     expect(first).toHaveLength(MAX_DERIVED_PUBLICATION_KEYWORDS);
     expect(first.filter((keyword) => keyword === "retry")).toEqual(["retry"]);
     expect(first).toContain("term00");
-    expect(first).not.toContain("term31");
+    expect(first).not.toContain(
+      `term${String(MAX_DERIVED_PUBLICATION_KEYWORDS - 1).padStart(2, "0")}`,
+    );
   });
 
   it.each([
@@ -70,6 +72,27 @@ describe("derived Publication keywords", () => {
       expect(keywords).toEqual(expect.arrayContaining(expected));
     },
   );
+
+  it("keeps distinctive terms that occur late in a bounded section", () => {
+    const keywords = derivePublicationKeywords([
+      {
+        kind: "paragraph",
+        analysisText: Array.from(
+          { length: 40 },
+          (_, index) => `공통표현${String(index).padStart(2, "0")}`,
+        ).join(" "),
+      },
+      {
+        kind: "list_item",
+        analysisText: "고객 요청으로 개별 제작된 주문 제작 상품",
+      },
+    ]);
+
+    expect(keywords).toEqual(
+      expect.arrayContaining(["개별", "제작된", "주문", "상품"]),
+    );
+    expect(keywords.length).toBeLessThanOrEqual(64);
+  });
 
   it("keeps the extraction policy explicit for Publication provenance", () => {
     expect(DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION).toBe(

@@ -210,7 +210,7 @@ function request(
         cardId: approved.cardId,
         cardVersionId: approved.versionId,
         text: {
-          schema: "card-selection-text-v2",
+          schema: "card-selection-text-v3",
           description: approved.meaning.description,
           representativeQuestions: [],
           aliases: [],

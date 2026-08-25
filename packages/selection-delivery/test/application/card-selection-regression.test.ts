@@ -26,7 +26,7 @@ import {
  *    policy versions and thresholds they were measured under. Changing a
  *    threshold without changing the version fails here first (SOT L794; §6.2:
  *    an input-side defect is not to be hidden by moving a threshold).
- * 3. Quality gates — the design's criteria that lexical v2 now meets. These
+ * 3. Quality gates — the design's criteria that lexical v3 now meets. These
  *    stay as ordinary assertions so a later scorer cannot restore v1's broad
  *    substring admission or collapse the defer band.
  *
@@ -133,13 +133,13 @@ describe.each(GENERATORS)("card-selection-regression-v1 · %s snapshot", (genera
       expect(report.metrics.wrongAdmitRatio as number).toBeLessThanOrEqual(recorded as number);
     });
 
-    it("reproduces the recorded v2 baseline exactly", () => {
+    it("reproduces the recorded v3 baseline exactly", () => {
       expect(report.metrics).toEqual(baseline.snapshots[generator].metrics);
       expect(report.byCategory).toEqual(baseline.snapshots[generator].byCategory);
     });
   });
 
-  describe("lexical v2 quality gates", () => {
+  describe("lexical v3 quality gates", () => {
     it("admits no forbidden Card (SOT L1452: 금지된 Card 수용 0)", () => {
       expect(report.metrics.forbiddenAdmits).toBe(0);
     });

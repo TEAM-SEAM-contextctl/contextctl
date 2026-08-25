@@ -51,7 +51,7 @@ export interface SelectionSummary {
    * Which scoring family produced the ranking behind `selected`.
    *
    * Paired with `ResolutionPolicy.scoring` by invariant — `hybrid` requires
-   * `selection-hybrid-v2`, `lexical_degraded` requires `selection-lexical-v2`,
+   * `selection-hybrid-v3`, `lexical_degraded` requires `selection-lexical-v3`,
    * and any other combination is refused before assembly. The field is explicit
    * rather than inferred from scores so a consumer can tell a full hybrid run
    * from an allowed lexical degradation without guessing.
@@ -100,7 +100,7 @@ export interface ResolutionPolicy {
    * `QUERY_SCORING_POLICY_VERSION`, and the other half of the invariant
    * `SelectionSummary.mode` states — see that field.
    */
-  readonly scoring: "selection-hybrid-v2" | "selection-lexical-v2";
+  readonly scoring: "selection-hybrid-v3" | "selection-lexical-v3";
   /** `SELECTION_RANKING_POLICY_VERSION`. */
   readonly ranking: "selection-ranking-v2";
   /** `SELECTION_PLANNING_POLICY_VERSION`. */

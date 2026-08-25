@@ -12,7 +12,7 @@ SEAM-106 §6.2가 요구하는 다섯 종류 질의와 네 지표를 한 곳에 
 | `cards.llm.json` | demo/docs 3문서를 LLM 생성기로 ingest해 뜬 Card 12장. **1회 표본**이다 — 모델은 결정적이지 않아 같은 문서를 다시 ingest하면 다른 의미가 나온다. 이 파일은 그 표본이지 생성기가 아니다 |
 | `cards.deterministic.json` | 같은 문서를 결정적 생성기(`main` 299a343: 파생 키워드 반영, 숫자 토큰 제거)로 ingest한 Card 12장. 문서에서 재현 가능 |
 | `queries.json` | 질의 25개, 범주당 5. `required`/`optional`/`forbidden`/`confidence`/`note` |
-| `baseline.json` | 현재 스코어러(`selection-lexical-v2`, `selection-ranking-v2`, admit 0.85 / reject 0.35)로 잰 지표. 정책이나 데이터가 바뀌면 다시 측정한다 |
+| `baseline.json` | 현재 스코어러(`selection-lexical-v3`, `selection-ranking-v2`, admit 0.85 / reject 0.35)로 잰 지표. 정책이나 데이터가 바뀌면 다시 측정한다 |
 
 각 Card 파일 머리에 `datasetId`·`version`·`generator`·`sourceCommit`·`generatedAt`·문서 3개의
 sha256이 있다. 로더(`../card-selection-regression.ts`)가 파일 바이트의 sha256을 `digest`로

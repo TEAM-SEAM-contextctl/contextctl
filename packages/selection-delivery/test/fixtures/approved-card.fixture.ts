@@ -120,7 +120,7 @@ export function createPaymentApiCard(): ApprovedCard {
     meaning: {
       description: "결제 단건 조회 API — 결제 상태와 실패 사유 조회",
       representativeQuestions: ["특정 결제의 상태를 조회하려면 어떻게 하나요?"],
-      aliases: ["payment lookup"],
+      aliases: ["payment lookup", "결제 상태 조회"],
       keywords: ["결제", "payment", "실패"],
     },
     policy: { sensitive: false, allowedUsage: ["retrieval"] },
@@ -160,19 +160,16 @@ export function createDemoCardSet(): readonly ApprovedCard[] {
  * exact number `card_payment_api` happens to score. A scoring heuristic that
  * moved would then break tests about serialization.
  *
- * These Cards depend on a declared policy constant instead of on a number. Each
- * one declares a keyword that appears in this query literally, and
- * `query-scoring.ts` puts every direct keyword match at or above
- * `DIRECT_MATCH_FLOOR` (0.9), which sits above the default admit threshold
- * (0.85) by construction — that split is the whole point of separating direct
- * from indirect signals. So all four are admitted under
- * `DEFAULT_SELECTION_THRESHOLDS`, and no test has to state a band of its own.
+ * Each Card declares a distinct multi-token alias that appears in the query
+ * literally. Exact aliases are explicit selection evidence under the shipped
+ * policy, so all four are admitted without making this serialization fixture
+ * depend on a calibrated BM25 or semantic score.
  *
  * The terms are distinct enough that none is a substring of another, so each
  * Card matches on its own word rather than on a neighbour's.
  */
 export const ALL_OUTCOMES_QUERY =
-  "환불정책문서와 재고원장 표, 결제조회엔드포인트, 그리고 유실된색인 문서를 한 번에 확인한다";
+  "환불 정책 문서와 재고 원장 표, 결제 조회 엔드포인트, 그리고 유실된 색인 문서를 한 번에 확인한다";
 
 /**
  * Managed document Card that resolves to `fulfilled`.
@@ -191,7 +188,7 @@ export function createIndexedDocumentCard(): ApprovedCard {
     meaning: {
       description: "환불 정책 문서의 색인 — 우리가 발행하고 색인한 문서다",
       representativeQuestions: ["환불정책문서에는 무엇이 적혀 있나요?"],
-      aliases: ["indexed policy document"],
+      aliases: ["indexed policy document", "환불 정책 문서"],
       keywords: ["환불정책문서"],
     },
     policy: { sensitive: false, allowedUsage: ["retrieval"] },
@@ -222,7 +219,7 @@ export function createLedgerTableCard(): ApprovedCard {
     meaning: {
       description: "재고 원장 테이블 — 상품별 입출고 이력",
       representativeQuestions: ["재고원장에서 입출고 이력을 어떻게 보나요?"],
-      aliases: ["inventory ledger"],
+      aliases: ["inventory ledger", "재고 원장"],
       keywords: ["재고원장"],
     },
     policy: { sensitive: false, allowedUsage: ["retrieval"] },
@@ -252,7 +249,7 @@ export function createLookupApiCard(): ApprovedCard {
       representativeQuestions: [
         "결제조회엔드포인트는 어떤 상태를 돌려주나요?",
       ],
-      aliases: ["settlement lookup"],
+      aliases: ["settlement lookup", "결제 조회 엔드포인트"],
       keywords: ["결제조회엔드포인트"],
     },
     policy: { sensitive: false, allowedUsage: ["retrieval"] },
@@ -299,7 +296,7 @@ export function createUnindexedDocumentCard(): ApprovedCard {
     meaning: {
       description: "색인이 유실된 문서 — 승인은 살아 있으나 색인을 읽을 수 없다",
       representativeQuestions: ["유실된색인 문서는 어떻게 보고되나요?"],
-      aliases: ["retired index"],
+      aliases: ["retired index", "유실된 색인 문서"],
       keywords: ["유실된색인"],
     },
     policy: { sensitive: false, allowedUsage: ["retrieval"] },

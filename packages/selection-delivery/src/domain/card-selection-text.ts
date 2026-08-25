@@ -1,28 +1,26 @@
+import { createHash } from "node:crypto";
+
 import type { ApprovedCard, ApprovedScope } from "./card-catalog.js";
-import { canonicalDigest, canonicalJson } from "./canonical-digest.js";
 import { measureTextUnits } from "./text-measure.js";
 
 /**
- * The schema name the canonical Card text is produced under.
+ * The schema name of the logical Card selection record and model projection.
  *
- * It travels inside the text itself, so a vector built from an older shape can
- * be told from one built under this shape by reading the input rather than by
- * trusting a profile field. `CardSelectionProfile.selectionTextSchemaVersion`
- * states the same number; the two exist together because one identifies the
- * vector family and the other identifies the bytes that were embedded.
+ * The logical record retains this name for diagnostics. The compact model
+ * payload deliberately omits schema syntax, so vector-family separation is
+ * enforced by `CardSelectionProfile.selectionTextSchemaVersion`, transform
+ * versions and the embedding profile identifier.
  *
- * `v2` adds the SQL `schema` and the HTTP `operationId` and `parameters`. That
- * is a schema change and not a widening, because under `v1` two Scopes that
- * differed only in those fields produced byte-identical text and therefore one
- * vector — the exact collision this shape exists to prevent. A vector built
- * under `v1` cannot be told apart from a correct one by any means except this
- * label, which is what the label is for.
+ * `v3` separates the full logical selection record from the lines sent to the
+ * model. Opaque managed-document identifiers stay in the record but do not
+ * distort semantic similarity; human-facing SQL and HTTP coordinates remain
+ * model input. A vector built from the v2 canonical JSON is therefore a
+ * different family and cannot be reused under this label.
  *
- * Bumping it changes every Card's text, since the name is a field of the text,
- * so every vector is rebuilt on the next query. That is the cost of the answer
- * being knowable, and it is paid once.
+ * Bumping it requires the profile lineage to change and every candidate vector
+ * to be rebuilt before the new snapshot becomes current.
  */
-export const CARD_SELECTION_TEXT_SCHEMA = "card-selection-text-v2" as const;
+export const CARD_SELECTION_TEXT_SCHEMA = "card-selection-text-v3" as const;
 
 /**
  * What a Card contributes to the semantic index, and nothing else.
@@ -124,17 +122,25 @@ export function buildCardSelectionText(card: ApprovedCard): CardSelectionTextV1 
  *
  * One value serves both, and that is the point: a digest taken over a different
  * serialization than the one that was embedded would certify bytes nobody
- * encoded. RFC 8785 rather than `JSON.stringify` for the reason
- * `canonical-digest.ts` states — property order must not depend on which code
- * path assigned the fields.
+ * encoded. The normalized arrays already have deterministic order, so the
+ * payload is a compact newline-delimited semantic projection rather than JSON
+ * syntax the embedding model was never trained to interpret.
  */
 export function cardSelectionTextPayload(text: CardSelectionTextV1): string {
-  return canonicalJson(text);
+  return [
+    text.description,
+    ...text.representativeQuestions,
+    ...text.aliases,
+    ...text.keywords,
+    ...text.scopes.flatMap(scopeEmbeddingValues),
+  ].join("\n");
 }
 
 /** `sha256:<hex>` over `cardSelectionTextPayload(text)`. */
 export function cardSelectionTextDigest(text: CardSelectionTextV1): string {
-  return canonicalDigest(text);
+  return `sha256:${createHash("sha256")
+    .update(cardSelectionTextPayload(text), "utf8")
+    .digest("hex")}`;
 }
 
 /**
@@ -178,7 +184,9 @@ function toSelectionScope(scope: ApprovedScope): CardSelectionScope {
         scopeId: normalizeSelectionText(scope.reference.scopeId),
         scopeVersion: normalizeSelectionText(scope.reference.scopeVersion),
         // Which source and which document, both of which a consumer already
-        // receives on a guide. `documentIndexId` and `indexVersion` stay out:
+        // receives on a guide. They remain in the logical record but v3 omits
+        // them from the semantic model input. `documentIndexId` and
+        // `indexVersion` stay out of this record entirely:
         // the first is our own bookkeeping, and the second changes on every
         // republication, which would invalidate a Card's vector because a
         // document was reindexed. A connector and an access handle would belong
@@ -213,9 +221,8 @@ function toSelectionScope(scope: ApprovedScope): CardSelectionScope {
         method: normalizeSelectionText(scope.method),
         path: normalizeSelectionText(scope.path),
         // An absent operation name is carried as an absent field rather than as
-        // an empty string: a source that names no operations and one whose
-        // operation is called "" are different facts, and RFC 8785 serializes
-        // the two differently, so the digest keeps them apart.
+        // an empty string. The approved read model rejects an empty name, and
+        // preserving absence keeps the logical record honest.
         ...(scope.operationId === undefined
           ? {}
           : { operationId: normalizeSelectionText(scope.operationId) }),
@@ -225,13 +232,42 @@ function toSelectionScope(scope: ApprovedScope): CardSelectionScope {
 }
 
 /**
+ * Keeps only coordinates that carry searchable meaning in the model input.
+ *
+ * Managed-document identifiers are opaque hashes and version handles. They
+ * remain on the approved Scope and in the candidate identity, but repeating
+ * them inside every model input moves semantically adjacent Cards apart for a
+ * reason no user query can express. SQL and HTTP coordinates are human-facing
+ * names, so they remain useful selection evidence.
+ */
+function scopeEmbeddingValues(scope: CardSelectionScope): readonly string[] {
+  switch (scope.kind) {
+    case "managed_document":
+      return [];
+    case "sql":
+      return [scope.connector, scope.schema, scope.table, ...scope.columns];
+    case "http":
+      return [
+        scope.connector,
+        scope.method,
+        scope.path,
+        ...(scope.operationId === undefined ? [] : [scope.operationId]),
+        ...scope.parameters.flatMap((parameter) => [
+          parameter.location,
+          parameter.name,
+          parameter.required ? "required" : "optional",
+        ]),
+      ];
+  }
+}
+
+/**
  * NFKC, LF line endings, whitespace runs collapsed to one space, ends trimmed.
  *
  * The whitespace collapse subsumes the line-ending rule — `\r\n` is a run of
- * whitespace and becomes one space — so newlines do not survive into the
- * canonical text at all. That is intended: the text is a single flat string
- * handed to an encoder, and a paragraph break carries no meaning the encoder
- * would read differently from a space.
+ * whitespace and becomes one space — so newlines do not survive *inside one
+ * field*. `cardSelectionTextPayload` later separates fields with one newline;
+ * an editor's paragraph layout is not allowed to create extra model records.
  *
  * Exported because a query has to be transformed the same way before it is
  * embedded. Two texts encoded under two different normalizations are two points

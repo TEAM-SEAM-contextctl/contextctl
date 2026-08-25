@@ -71,7 +71,8 @@ describe("FallbackCardMeaningGenerator", () => {
 
     const { meaning, origin } = await generator.generate(request);
 
-    expect(meaning.description).toContain("unit_01890f5c-7b1a-7684-8f82-b5950cf2b0dd");
+    expect(meaning.description).toBe("결제 실패");
+    expect(meaning.description).not.toContain(coordinate.semanticUnitId);
     // The durable trace of the outage, on the version it shaped: the words are
     // the deterministic generator's, and the origin says which model was down.
     expect(origin).toEqual({

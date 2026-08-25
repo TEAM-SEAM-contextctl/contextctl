@@ -4,8 +4,8 @@ import type { DocumentBlock } from "./document-model.js";
 export const DOCUMENT_KEYWORD_EXTRACTION_POLICY_VERSION =
   "document-keywords-v1";
 
-/** Leaves room below the contract's 64-value ceiling for future policy revisions. */
-export const MAX_DERIVED_PUBLICATION_KEYWORDS = 32;
+/** Uses the contract ceiling so late, distinctive terms are not silently lost. */
+export const MAX_DERIVED_PUBLICATION_KEYWORDS = 64;
 export const MAX_DERIVED_PUBLICATION_KEYWORD_CODE_UNITS = 64;
 
 const WORD_SEGMENTER = new Intl.Segmenter("und", { granularity: "word" });

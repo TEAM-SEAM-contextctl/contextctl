@@ -12,14 +12,14 @@ import { SelectionModeInvariantError } from "./errors.js";
  * as a run that had them — even under identical thresholds and an identical
  * catalog.
  */
-export const HYBRID_SCORING_POLICY_VERSION = "selection-hybrid-v2" as const;
+export const HYBRID_SCORING_POLICY_VERSION = "selection-hybrid-v3" as const;
 
 /** Which scoring family produced a ranking. Paired with `scoring` by invariant. */
 export type SelectionMode = "hybrid" | "lexical_degraded";
 
 export type SelectionScoringPolicyVersion =
   | typeof HYBRID_SCORING_POLICY_VERSION
-  | "selection-lexical-v2";
+  | "selection-lexical-v3";
 
 /**
  * The one scoring version each mode is allowed to travel with.
@@ -33,7 +33,7 @@ export function scoringPolicyVersionFor(
 ): SelectionScoringPolicyVersion {
   return mode === "hybrid"
     ? HYBRID_SCORING_POLICY_VERSION
-    : "selection-lexical-v2";
+    : "selection-lexical-v3";
 }
 
 /** Refuses a `(mode, scoring)` pair that names two different families. */
@@ -61,7 +61,7 @@ export function assertSelectionScoringPairing(
 export const SEMANTIC_SIMILARITY_FLOOR = 0.85;
 
 /**
- * v2 gives no numerical bonus merely because two weak signals coexist.
+ * v3 gives no numerical bonus merely because two weak signals coexist.
  * The former 0.1 bonus admitted forbidden Cards in the fixed Granite corpus.
  * Kept as an exported policy value so a report can state the rule explicitly.
  */
@@ -72,6 +72,10 @@ export const SEMANTIC_SECONDARY_SCORE_CEILING = 0.34;
 export const SEMANTIC_CONFIDENT_SIMILARITY_FLOOR = 0.8;
 export const SEMANTIC_CONFIDENT_MARGIN = 0.03;
 export const SEMANTIC_CONFIDENT_SCORE = 0.85;
+/** An absolute semantic lead this high is decisive even in a dense cluster. */
+export const SEMANTIC_ABSOLUTE_ADMIT_FLOOR = 0.9;
+/** A close semantic lead needs this much independent lexical support. */
+export const SEMANTIC_LEXICAL_SUPPORT_FLOOR = 0.8;
 
 /** One Card's two signals and what they combined to. */
 export interface HybridCandidateScore extends CandidateScore {
@@ -246,6 +250,7 @@ function semanticScoreForCandidate(
   return candidate.versionId === context.leadingSemanticVersionId &&
     context.leadingSemanticSimilarity !== undefined
     ? confidentLeadingSemanticScore(
+        candidate.score,
         rawSemanticScore,
         context.leadingSemanticSimilarity,
         context.runnerUpSemanticSimilarity,
@@ -254,18 +259,22 @@ function semanticScoreForCandidate(
 }
 
 function confidentLeadingSemanticScore(
+  lexicalScore: number,
   rawScore: number,
   similarity: number,
   runnerUpSimilarity: number | undefined,
 ): number {
   const margin = similarity - (runnerUpSimilarity ?? 0);
   if (
-    similarity >= SEMANTIC_CONFIDENT_SIMILARITY_FLOOR &&
-    margin >= SEMANTIC_CONFIDENT_MARGIN
+    (similarity >= SEMANTIC_CONFIDENT_SIMILARITY_FLOOR &&
+      margin >= SEMANTIC_CONFIDENT_MARGIN) ||
+    similarity >= SEMANTIC_ABSOLUTE_ADMIT_FLOOR ||
+    (similarity > SEMANTIC_SIMILARITY_FLOOR &&
+      lexicalScore >= SEMANTIC_LEXICAL_SUPPORT_FLOOR)
   ) {
     return Math.max(rawScore, SEMANTIC_CONFIDENT_SCORE);
   }
-  return rawScore;
+  return Math.min(rawScore, SEMANTIC_SECONDARY_SCORE_CEILING);
 }
 
 /** The strongest `limit` lexical candidates, ties broken on `versionId`. */

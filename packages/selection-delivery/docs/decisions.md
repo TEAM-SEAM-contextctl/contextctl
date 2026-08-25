@@ -2,7 +2,7 @@
 
 ## 이 문서의 목적
 
-`adr/`에는 기록이 12건 있고 그중 5건(0002·0004·0006·0007·0010)은 뒤 기록이 대체했다. 파일을
+`adr/`에는 기록이 13건 있고 그중 5건(0002·0004·0006·0007·0010)은 뒤 기록이 대체했다. 파일을
 번호 순서로 읽으면 대체된 결정을 현행으로 오독하기 쉽다 — 0008이 스스로 적은 위험이고, 각
 파일의 상태 행과 README 표가 막아 주지만 독자가 그것을 먼저 보아야 한다.
 
@@ -42,8 +42,10 @@ ADR 0008은 설계안을 **초안 판본**(`최종설계안.md`, 3,287행 이상
   — [ADR 0008 §2](./adr/0008-daemon-orchestrates-managed-document-retrieval.md)
 - **Scope를 특정하는 좌표는 승인 read model이 직접 선언한다.** SQL `schema`, HTTP
   `operationId`·`parameters`를 싣고, `ApprovedHttpParameter`는 `contracts`에서 가져오지 않고
-  이 패키지가 선언한다. 선택 텍스트 스키마는 `card-selection-text-v2`다.
-  — [ADR 0009](./adr/0009-carry-source-coordinates-that-disambiguate-a-scope.md)
+  이 패키지가 선언한다. 전체 좌표는 읽기 모델에 보존하되 `card-selection-text-v3`의 모델 입력은
+  의미 필드와 사람이 읽을 수 있는 SQL·HTTP 좌표만 사용한다.
+  — [ADR 0009](./adr/0009-carry-source-coordinates-that-disambiguate-a-scope.md),
+  [ADR 0013](./adr/0013-gate-generated-cards-and-require-corroborated-selection-evidence.md)
 
 ## 응답과 실패
 
@@ -59,12 +61,14 @@ ADR 0008은 설계안을 **초안 판본**(`최종설계안.md`, 3,287행 이상
 
 ## 점수 계산
 
-- **`selection-lexical-v2`는 필드 가중 BM25·문자 2·3-gram과 선언 특이성을 결합하고,
-  `selection-hybrid-v2`는 절대 유사도와 1·2위 차이를 함께 사용한다.** 간접 신호와 비선두
-  의미 후보는 거부 영역에 머물고, 흔하고 문맥이 약한 선언은 승인할 수 없다. 두 약한 신호를
-  더하지 않으며 실제 Granite와 고정 `selection-eval-v1`에서 품질·안전 비퇴행을 검증한다.
-  Card 128개 이상에서는 `0.05` 미만의 간접 점수를 우연한 문자 겹침으로 0 처리한다.
-  — [ADR 0011](./adr/0011-calibrate-lexical-and-hybrid-scoring-with-selection-eval-v1.md)
+- **`selection-lexical-v3`는 넓은 선언 어휘에 BM25·문맥 보강을 요구하고,
+  `selection-hybrid-v3`는 차이가 작은 의미 1위에 절대 유사도나 어휘 보강을 요구한다.** 간접
+  신호와 비선두 의미 후보는 거부 영역에 머물며 두 약한 신호를 더하지 않는다. 손작성 Card의
+  `selection-eval-v1`과 실제 생성 Card의 `generated-card-selection-v1`을 모두 필수 Granite
+  검사로 실행한다. Card 128개 이상에서는 `0.05` 미만의 간접 점수를 우연한 문자 겹침으로 0
+  처리한다.
+  — [ADR 0011](./adr/0011-calibrate-lexical-and-hybrid-scoring-with-selection-eval-v1.md),
+  [ADR 0013](./adr/0013-gate-generated-cards-and-require-corroborated-selection-evidence.md)
 
 - **`selection-scale-v1`의 RSS는 `daemon-runtime-profile-v1`과 같은 `1,536MiB` 상한을 사용한다.**
   Granite fp32 구성요소 상한 `1,024MiB`보다 작았던 초기 `768MiB` 모순을 제거한 것이며, p95

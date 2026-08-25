@@ -4,7 +4,7 @@ import type {
 } from "./card-catalog.js";
 
 /** Identifies the lexical rules that produced a candidate score. */
-export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v2" as const;
+export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v3" as const;
 
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
@@ -115,9 +115,10 @@ const catalogStatisticsCache = new WeakMap<
 /**
  * Scores every approved Card against one query.
  *
- * v2 computes catalog statistics once. A term shared by many Cards is weak
- * evidence; a distinctive declared term is strong evidence. This removes
- * v1's 0.9 floor for every substring while retaining deterministic scores.
+ * v3 computes catalog statistics once and requires BM25 or multi-token context
+ * before a declaration can cross the admit threshold. A term shared by many
+ * Cards is weak evidence; a distinctive, corroborated declaration is strong
+ * evidence. This prevents one generic derived keyword from admitting a Card.
  */
 export function scoreCardsAgainstQuery(
   queryText: string,
@@ -415,6 +416,16 @@ function collectDirectSignals(
   const exactMultiTokenAlias = matched.some(
     (entry) => entry.field === "alias" && entry.tokens.length >= 2,
   );
+  const declaredVocabularySize = new Set(
+    [...indexed.card.meaning.keywords, ...indexed.card.meaning.aliases]
+      .filter((value) => !isOpaqueDeclaredIdentifier(value))
+      .flatMap((value) => tokenize(normalizeText(value))),
+  ).size;
+  const humanAliasCount = indexed.card.meaning.aliases.filter(
+    (value) => !isOpaqueDeclaredIdentifier(value),
+  ).length;
+  const conciseSpecificDeclaration =
+    declaredVocabularySize <= 24 && humanAliasCount >= 2;
   const supportedCommonPhrase = matched.length >= 2 && normalizedBm25 >= 0.6;
   const sourceIntentConflict =
     query.sourceIntents.size > 0 &&
@@ -425,8 +436,20 @@ function collectDirectSignals(
     !strongContextPhrase &&
     !exactMultiTokenAlias &&
     !supportedCommonPhrase;
+  const wellCorroboratedDirect =
+    exactMultiTokenAlias ||
+    (conciseSpecificDeclaration && strongest >= 0.9) ||
+    (conciseSpecificDeclaration && supportedCommonPhrase) ||
+    strongContextPhrase ||
+    smallCatalogStrongContext ||
+    (statistics.cards.length <= 3 && strongest >= 0.9) ||
+    normalizedBm25 >= 0.86 ||
+    (strongest >= 0.9 && normalizedBm25 >= 0.84);
   const contribution = clampToUnitInterval(
-    weakSingleTerm || commonTermsWithoutContext || (sourceIntentConflict && strongest < 0.85)
+    weakSingleTerm ||
+    commonTermsWithoutContext ||
+    !wellCorroboratedDirect ||
+    (sourceIntentConflict && strongest < 0.85)
       ? Math.min(rawContribution, MAX_WEAK_DIRECT_SCORE)
       : smallCatalogStrongContext || strongContextPhrase
         ? Math.max(rawContribution, 0.91)
@@ -437,6 +460,15 @@ function collectDirectSignals(
     matched: entry.text,
     contribution,
   }));
+}
+
+/**
+ * Legacy generated Cards may still carry opaque coordinates as aliases.
+ * They are retained for backward-compatible catalog reads, but they are not
+ * vocabulary a person can query and must not make a concise Card look broad.
+ */
+function isOpaqueDeclaredIdentifier(value: string): boolean {
+  return /^(?:doc|unit|src|scope|didx)_[a-z0-9_-]{20,}$/iu.test(value);
 }
 
 function indexedCardContainsQueryToken(

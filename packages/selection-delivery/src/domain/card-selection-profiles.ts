@@ -37,8 +37,8 @@ import {
  */
 export const CARD_SELECTION_EMBEDDING_PROFILE: CardSelectionEmbeddingProfile =
   Object.freeze({
-    id: "card-granite-97m-multilingual-r2-fp32-v1",
-    version: "1",
+    id: "card-granite-97m-multilingual-r2-fp32-v2",
+    version: "2",
     model: "ibm-granite/granite-embedding-97m-multilingual-r2",
     modelRevision: "835ad14087e140460703cf0fae09f97d469d65c2",
     execution: Object.freeze({
@@ -66,9 +66,9 @@ export const CARD_SELECTION_EMBEDDING_PROFILE: CardSelectionEmbeddingProfile =
     pooling: "cls",
     normalization: "l2",
     distance: "cosine",
-    selectionTextSchemaVersion: 2,
-    cardInputTransformVersion: "card-selection-text-v2",
-    queryInputTransformVersion: "card-selection-text-v2",
+    selectionTextSchemaVersion: 3,
+    cardInputTransformVersion: "card-selection-text-v3",
+    queryInputTransformVersion: "card-selection-text-v3",
     admissionLimits: DEFAULT_CARD_ADMISSION_LIMITS,
   });
 
@@ -83,12 +83,12 @@ export const CARD_SELECTION_EMBEDDING_PROFILE: CardSelectionEmbeddingProfile =
  */
 export const DETERMINISTIC_CARD_SELECTION_PROFILE: CardSelectionProfile =
   Object.freeze({
-    id: "card-deterministic-local-v1",
-    version: "1",
+    id: "card-deterministic-local-v2",
+    version: "2",
     model: "deterministic-local-v1",
     dimensions: 8,
     distance: "cosine",
     normalization: "l2",
-    selectionTextSchemaVersion: 2,
+    selectionTextSchemaVersion: 3,
     admissionLimits: DEFAULT_CARD_ADMISSION_LIMITS,
   });

@@ -182,9 +182,7 @@ describe("resolveCardMeaningBackend", () => {
     const { meaning, origin } = await backend.generator.generate(request);
 
     expect(origin.fallbackFromModel).toBe("gemma4-12b-qat");
-    expect(meaning.description).toBe(
-      "Semantic unit unit_01890f5c-7b1a-7898-8dae-639abbaee4d4 of document doc_a. document.title: 운영 안내",
-    );
+    expect(meaning.description).toBe("운영 안내");
     expect(fallbacks).toHaveLength(1);
     const message = fallbacks[0] ?? "";
     expect(message).not.toContain(SECRET);

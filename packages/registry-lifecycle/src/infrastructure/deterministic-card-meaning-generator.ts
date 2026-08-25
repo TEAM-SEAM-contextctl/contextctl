@@ -40,7 +40,7 @@ export class DeterministicCardMeaningGenerator implements CardMeaningGenerator {
     return {
       meaning: {
         description: describe(coordinate, facts),
-        representativeQuestions: [askAbout(coordinate)],
+        representativeQuestions: [askAbout(coordinate, facts)],
         aliases: aliasesFor(coordinate, facts),
         keywords: keywordsFor(coordinate, facts),
       },
@@ -83,6 +83,10 @@ function describe(
   coordinate: PublishedSourceCoordinate,
   facts: readonly PublishedFact[],
 ): string {
+  if (coordinate.kind === "document") {
+    const names = documentHumanNames(facts);
+    return names.length === 0 ? subjectOf(coordinate) : names.join(" · ");
+  }
   const stated = facts
     .map((fact) => `${fact.name}: ${formatValue(fact.value)}`)
     .join(" · ");
@@ -110,10 +114,20 @@ function subjectOf(coordinate: PublishedSourceCoordinate): string {
  * template keeps it honest: inventing plausible questions is exactly the kind
  * of guessing this generator exists to avoid.
  */
-function askAbout(coordinate: PublishedSourceCoordinate): string {
+function askAbout(
+  coordinate: PublishedSourceCoordinate,
+  facts: readonly PublishedFact[],
+): string {
   switch (coordinate.kind) {
-    case "document":
-      return `What does ${coordinate.documentId} say in ${coordinate.semanticUnitId}?`;
+    case "document": {
+      const subject =
+        stringValues(facts, "section.label")[0] ??
+        stringValues(facts, "document.title")[0] ??
+        stringValues(facts, "section.path").at(-1);
+      return subject === undefined
+        ? questionForSubject(subjectOf(coordinate))
+        : questionForSubject(subject);
+    }
     case "sql_table":
       return `What does the ${coordinate.table} table record?`;
     case "http_operation":
@@ -125,26 +139,38 @@ function askAbout(coordinate: PublishedSourceCoordinate): string {
   }
 }
 
+function questionForSubject(subject: string): string {
+  let end = subject.length;
+  while (end > 0 && /[.!?]/u.test(subject[end - 1]!)) {
+    end -= 1;
+  }
+  return `${subject.slice(0, end)}?`;
+}
+
 /**
- * The coordinate's own names first, then the heading a person gave the area.
- *
- * The coordinate aliases are the stable, citable handles — `public.payments`,
- * `GET /payments/{id}` — and they stay exactly as they were. The section label
- * and document title are added after them because a reviewer approving a Card
- * and the Card-selection embedding both read this list, and a heading says what
- * the area is in a way an identifier cannot. Capped at the read-model limit in
- * that same order, and `takeWithin` fills from the front and cuts at the back,
- * so if the ceiling were reached it is the headings that would go — the title
- * first, then the label — and the coordinate handles that would stay. In
- * practice it is not reached: no coordinate yields more than two handles and a
- * unit carries one label and one title, so the list holds at most four entries
- * against a ceiling of 32. The per-entry limit of 128 code units is the one a
- * long title can meet.
+ * Document aliases use human-authored section and title facts. Opaque document
+ * and semantic-unit identifiers remain the fallback only when no such fact was
+ * published; making them the normal aliases harms semantic selection without
+ * giving a person a useful name. SQL and HTTP aliases keep their stable,
+ * human-readable coordinates such as `public.payments` and
+ * `GET /payments/{id}`.
  */
 function aliasesFor(
   coordinate: PublishedSourceCoordinate,
   facts: readonly PublishedFact[],
 ): readonly string[] {
+  if (coordinate.kind === "document") {
+    const names = takeWithin(
+      [
+        stringValues(facts, "section.label"),
+        stringValues(facts, "document.title"),
+      ],
+      ALIAS_LIMITS,
+    );
+    return names.length === 0
+      ? takeWithin([coordinateAliases(coordinate)], ALIAS_LIMITS)
+      : names;
+  }
   return takeWithin(
     [
       coordinateAliases(coordinate),
@@ -152,6 +178,20 @@ function aliasesFor(
       stringValues(facts, "document.title"),
     ],
     ALIAS_LIMITS,
+  );
+}
+
+/** Human-authored document names, ordered by semantic specificity. */
+function documentHumanNames(
+  facts: readonly PublishedFact[],
+): readonly string[] {
+  return takeWithin(
+    [
+      stringValues(facts, "document.title"),
+      stringValues(facts, "section.label"),
+      stringValues(facts, "section.path"),
+    ],
+    { count: 16, each: 256 },
   );
 }
 
@@ -194,7 +234,7 @@ function coordinateAliases(coordinate: PublishedSourceCoordinate): readonly stri
  * area and loses coordinate tokens instead.
  *
  * Unlike the alias ceiling, this one is reachable: Ingestion publishes up to
- * 32 derived keywords, a heading path adds a token per word, and a wide table
+ * 64 derived keywords, a heading path adds a token per word, and a wide table
  * adds one per column. A document unit has no coordinate tokens, so there the
  * cut lands on the derived keywords themselves — the last group present.
  */

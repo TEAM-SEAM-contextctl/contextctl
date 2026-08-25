@@ -59,7 +59,7 @@ describe("scoreCardsAgainstQuery", () => {
     // `lexical`, and the name is a claim: everything this file compares is
     // normalized text and character bigrams, so a version that did not name
     // the family could not be paired with `selection.mode` in a response.
-    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-lexical-v2");
+    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-lexical-v3");
   });
 
   it("reaches the admit band for a distinctive declared keyword", () => {
@@ -187,6 +187,89 @@ describe("scoreCardsAgainstQuery", () => {
         (signal) => signal.field === "keyword" || signal.field === "alias",
       ),
     ).toHaveLength(3);
+  });
+
+  it("does not admit a Card from one rare but generic declared term", () => {
+    const cards = [
+      cardMeaning(
+        {
+          description: "병가 신청 시 진단서가 필요한 경우",
+          keywords: [
+            "필요",
+            ...Array.from({ length: 32 }, (_, index) => `일반어휘${String(index)}`),
+          ],
+        },
+        "cardv_sick_leave",
+      ),
+      cardMeaning(
+        {
+          description: "경비 증빙 제출 기준",
+          aliases: ["경비 증빙"],
+          keywords: ["영수증"],
+        },
+        "cardv_expense_receipt",
+      ),
+      ...Array.from({ length: 6 }, (_, index) =>
+        cardMeaning(
+          { description: `서로 다른 업무 규정 ${String(index)}` },
+          `cardv_unrelated_${String(index)}`,
+        ),
+      ),
+    ];
+    const scores = scoreCardsAgainstQuery("경비 증빙이 필요한가요?", cards);
+    const byVersion = new Map(scores.map((score) => [score.versionId, score]));
+
+    expect(byVersion.get("cardv_sick_leave")?.score).toBeLessThan(
+      DEFAULT_SELECTION_THRESHOLDS.admit,
+    );
+    expect(byVersion.get("cardv_expense_receipt")?.score).toBeGreaterThanOrEqual(
+      DEFAULT_SELECTION_THRESHOLDS.admit,
+    );
+  });
+
+  it("requires a section-specific alias before a concise generated Card gets relaxed evidence", () => {
+    const opaqueAliases = [
+      "doc_2hm7i5kpnrhzna64u7ldemcbztoswqouud7czlwewszfhmagtvga",
+      "unit_mdx5cabcabwx2crrvtjgejxufeiqbjn3lxsplnj5y2g3fx4ay2tq",
+    ];
+    const cards = [
+      cardMeaning(
+        {
+          description: "운송장 조회의 상위 운영 범위",
+          aliases: [...opaqueAliases, "배송 운영 규정"],
+          keywords: ["발급", "운송장", "조회"],
+        },
+        "cardv_shipping_root",
+      ),
+      cardMeaning(
+        {
+          description: "운송장 조회의 섹션 안내 범위",
+          aliases: [...opaqueAliases, "배송 운영 규정", "배송 조회"],
+          keywords: ["발급", "운송장", "조회"],
+        },
+        "cardv_shipping_lookup",
+      ),
+      ...Array.from({ length: 6 }, (_, index) =>
+        cardMeaning(
+          { description: `서로 다른 업무 규정 ${String(index)}` },
+          `cardv_other_${String(index)}`,
+        ),
+      ),
+    ];
+
+    const byVersion = new Map(
+      scoreCardsAgainstQuery("운송장 발급 조회 방법은?", cards).map((score) => [
+        score.versionId,
+        score,
+      ]),
+    );
+
+    expect(byVersion.get("cardv_shipping_root")?.score).toBeLessThan(
+      DEFAULT_SELECTION_THRESHOLDS.admit,
+    );
+    expect(byVersion.get("cardv_shipping_lookup")?.score).toBeGreaterThanOrEqual(
+      DEFAULT_SELECTION_THRESHOLDS.admit,
+    );
   });
 
   it("ignores an empty declared keyword instead of matching everything", () => {
