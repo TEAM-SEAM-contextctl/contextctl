@@ -631,8 +631,10 @@ export class QdrantVectorIndexAdapter implements VectorIndexPort {
    *
    * Collection and payload-index creation deliberately do not use this helper:
    * a response can be lost after Qdrant committed the create, and retrying the
-   * create would turn that success into a conflict. Re-running `prepare` first
-   * reads the server state and is the safe recovery path for those operations.
+   * create would turn that success into a conflict. A later, non-concurrent
+   * `prepare` first reads and validates server state, so it is the recovery path
+   * for those operations. This does not make concurrent check-then-create calls
+   * atomic; a racing conflict still fails closed.
    */
   async #retryTransient<T>(
     operation: () => Promise<T>,

@@ -209,6 +209,44 @@ describe("Qdrant vector index adapter", () => {
     expect(prepared.accessHandle).not.toContain("contextctl_");
   });
 
+  it("recovers a committed collection create on a later prepare without retrying the create", async () => {
+    const client = new FakeQdrantClient();
+    client.loseCollectionCreateResponseOnce = true;
+    const adapter = qdrant(client);
+
+    await expect(adapter.prepare(compatibility)).rejects.toMatchObject({
+      code: "storage_unavailable",
+      retriable: true,
+    });
+    expect(client.collectionCreateCalls).toBe(1);
+
+    await expect(adapter.prepare(compatibility)).resolves.toMatchObject({
+      capabilities: { metadataPreFilter: true },
+    });
+    expect(client.collectionCreateCalls).toBe(1);
+  });
+
+  it("recovers a committed payload index create without recreating that field", async () => {
+    const client = new FakeQdrantClient();
+    client.losePayloadIndexCreateResponseOnce = "recordKind";
+    const adapter = qdrant(client);
+
+    await expect(adapter.prepare(compatibility)).rejects.toMatchObject({
+      code: "storage_unavailable",
+      retriable: true,
+    });
+    expect(
+      client.createdIndexes.filter((field) => field === "recordKind"),
+    ).toHaveLength(1);
+
+    await expect(adapter.prepare(compatibility)).resolves.toMatchObject({
+      capabilities: { metadataPreFilter: true },
+    });
+    expect(
+      client.createdIndexes.filter((field) => field === "recordKind"),
+    ).toHaveLength(1);
+  });
+
   it("rehydrates an existing binding into a fresh Qdrant adapter without creating storage", async () => {
     const client = new FakeQdrantClient();
     const prepared = await qdrant(client).prepare(compatibility);
@@ -601,6 +639,8 @@ class FakeQdrantClient {
   readonly payloadIndexes = new Map<string, string>();
   exists = false;
   ignoreIndexCreation = false;
+  loseCollectionCreateResponseOnce = false;
+  losePayloadIndexCreateResponseOnce: string | undefined;
   failure: unknown;
   lastPointId: string | undefined;
   lastPayload: unknown;
@@ -614,6 +654,7 @@ class FakeQdrantClient {
   lastQuerySignal: AbortSignal | undefined;
   queryCalls = 0;
   transientQueryFailures = 0;
+  collectionCreateCalls = 0;
 
   async collectionExists() {
     this.raise();
@@ -622,6 +663,7 @@ class FakeQdrantClient {
 
   async createCollection(_name: string, request: object) {
     this.raise();
+    this.collectionCreateCalls += 1;
     this.exists = true;
     this.createdCollections.push(request);
     this.compatibilityMetadata = (
@@ -629,6 +671,10 @@ class FakeQdrantClient {
         readonly metadata?: { readonly contextctlCompatibility?: string };
       }
     ).metadata?.contextctlCompatibility;
+    if (this.loseCollectionCreateResponseOnce) {
+      this.loseCollectionCreateResponseOnce = false;
+      throw { status: 503 };
+    }
     return true;
   }
 
@@ -655,6 +701,10 @@ class FakeQdrantClient {
     };
     this.createdIndexes.push(field);
     if (!this.ignoreIndexCreation) this.payloadIndexes.set(field, schema);
+    if (this.losePayloadIndexCreateResponseOnce === field) {
+      this.losePayloadIndexCreateResponseOnce = undefined;
+      throw { status: 503 };
+    }
     return { status: "completed" };
   }
 
