@@ -5,6 +5,7 @@
 [![CI](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml/badge.svg)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)
+[![검증 플랫폼: Ubuntu 24.04](https://img.shields.io/badge/%EA%B2%80%EC%A6%9D%20%ED%94%8C%EB%9E%AB%ED%8F%BC-Ubuntu%2024.04-blue)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 
 [English](README.md)
 
