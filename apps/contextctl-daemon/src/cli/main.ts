@@ -18,6 +18,7 @@ import {
   runDemoInit,
   runReachability,
   runCardsList,
+  runCardsShow,
   runDoctor,
   runInstallAssets,
   runPaths,
@@ -184,6 +185,7 @@ export async function runCli(input: {
     if (
       command.kind === "cards_decision" ||
       command.kind === "cards_list" ||
+      command.kind === "cards_show" ||
       command.kind === "reachability" ||
       command.kind === "status"
     ) {
@@ -243,7 +245,7 @@ async function runRegistryOnlyCommand(
   registry: RegistryOnlyRuntime,
   command: Extract<
     CliCommand,
-    { kind: "cards_decision" | "cards_list" | "reachability" | "status" }
+    { kind: "cards_decision" | "cards_list" | "cards_show" | "reachability" | "status" }
   >,
   context: {
     readonly environment: Readonly<Partial<Record<string, string>>>;
@@ -254,7 +256,9 @@ async function runRegistryOnlyCommand(
     case "cards_decision":
       return runCardsDecision(registry, command);
     case "cards_list":
-      return runCardsList(registry, command.json);
+      return runCardsList(registry, command);
+    case "cards_show":
+      return runCardsShow(registry, command);
     case "reachability":
       return runReachability(registry, command);
     case "status":

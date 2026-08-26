@@ -153,6 +153,8 @@ describe("cards", () => {
     expect(commandOf(["cards", "list", "--json"])).toEqual({
       kind: "cards_list",
       json: true,
+      filter: "pending",
+      compact: true,
     });
   });
 
@@ -160,6 +162,50 @@ describe("cards", () => {
     expect(commandOf(["cards", "list"])).toEqual({
       kind: "cards_list",
       json: false,
+      filter: "pending",
+      compact: true,
+    });
+  });
+
+  it("filters and expands a Card listing only when explicitly requested", () => {
+    expect(
+      commandOf([
+        "cards",
+        "list",
+        "--approved",
+        "--source",
+        "source.handbook",
+        "--verbose",
+      ]),
+    ).toEqual({
+      kind: "cards_list",
+      json: false,
+      filter: "approved",
+      compact: false,
+      source: "source.handbook",
+    });
+  });
+
+  it("rejects ambiguous listing modes", () => {
+    expect(statusOf(["cards", "list", "--pending", "--all"])).toBe(
+      "usage_error",
+    );
+    expect(statusOf(["cards", "list", "--compact", "--verbose"])).toBe(
+      "usage_error",
+    );
+  });
+
+  it("shows one Card or one exact version", () => {
+    expect(commandOf(["cards", "show", "card_1"])).toEqual({
+      kind: "cards_show",
+      cardId: "card_1",
+      json: false,
+    });
+    expect(commandOf(["cards", "show", "card_1", "cv_2", "--json"])).toEqual({
+      kind: "cards_show",
+      cardId: "card_1",
+      versionId: "cv_2",
+      json: true,
     });
   });
 
@@ -392,7 +438,8 @@ describe("usageText", () => {
     "contextctl backup create <directory>",
     "contextctl backup restore <directory> --target-home <new-directory>",
     "contextctl ingest [<ref>]",
-    "contextctl cards list [--json]",
+    "contextctl cards list [--pending|--approved|--all] [--source <ref>] [--compact|--verbose] [--json]",
+    "contextctl cards show <cardId> [<versionId>] [--json]",
     "contextctl cards approve <cardId> [<versionId>] [--by <who>] [--note <text>]",
     'contextctl query "<질문>" [--json] [--max-context <n>]',
     "contextctl serve",

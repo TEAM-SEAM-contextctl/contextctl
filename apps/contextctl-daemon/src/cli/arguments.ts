@@ -29,7 +29,19 @@ export type CliCommand =
   | { readonly kind: "source_remove"; readonly reference: string }
   | { readonly kind: "demo_init"; readonly destination: string }
   | { readonly kind: "ingest"; readonly reference?: string }
-  | { readonly kind: "cards_list"; readonly json: boolean }
+  | {
+      readonly kind: "cards_list";
+      readonly json: boolean;
+      readonly filter: "pending" | "approved" | "all";
+      readonly compact: boolean;
+      readonly source?: string;
+    }
+  | {
+      readonly kind: "cards_show";
+      readonly cardId: string;
+      readonly versionId?: string;
+      readonly json: boolean;
+    }
   /**
    * The four decisions share one shape, because Registry's surface does.
    *
@@ -161,8 +173,15 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
   },
   {
     topic: "cards list",
-    line: "contextctl cards list [--json]",
-    summary: "카드와 승인 상태를 보여준다.",
+    line:
+      "contextctl cards list [--pending|--approved|--all] [--source <ref>] [--compact|--verbose] [--json]",
+    summary:
+      "카드를 탐색한다. 기본값은 승인 대기 카드의 간략 목록이고, --verbose 로 전체 근거를 본다.",
+  },
+  {
+    topic: "cards show",
+    line: "contextctl cards show <cardId> [<versionId>] [--json]",
+    summary: "한 카드의 설명·키워드·버전·검토 근거를 빠짐없이 보여준다.",
   },
   {
     topic: "cards approve",
@@ -565,18 +584,78 @@ function parseCardsCommand(rest: readonly string[]): ParsedArguments {
   switch (subcommand) {
     case undefined:
       return usageError(
-        "cards 에는 하위 명령이 필요합니다: list, approve, reject, disable, rollback",
+        "cards 에는 하위 명령이 필요합니다: list, show, approve, reject, disable, rollback",
         "cards",
       );
     case "list": {
-      const outcome = tokenize(rest.slice(1), { json: { type: "boolean" } }, "cards list");
+      const outcome = tokenize(
+        rest.slice(1),
+        {
+          json: { type: "boolean" },
+          pending: { type: "boolean" },
+          approved: { type: "boolean" },
+          all: { type: "boolean" },
+          compact: { type: "boolean" },
+          verbose: { type: "boolean" },
+          source: { type: "string" },
+        },
+        "cards list",
+      );
       if (outcome.status === "usage_error") {
         return outcome;
       }
       if (outcome.positionals.length > 0) {
         return usageError("cards list 는 인자를 받지 않습니다.", "cards list");
       }
-      return ok({ kind: "cards_list", json: outcome.values["json"] === true });
+      const selectedFilters = (["pending", "approved", "all"] as const).filter(
+        (name) => outcome.values[name] === true,
+      );
+      if (selectedFilters.length > 1) {
+        return usageError(
+          "--pending, --approved, --all 중 하나만 선택할 수 있습니다.",
+          "cards list",
+        );
+      }
+      if (
+        outcome.values["compact"] === true &&
+        outcome.values["verbose"] === true
+      ) {
+        return usageError(
+          "--compact 와 --verbose 는 함께 쓸 수 없습니다.",
+          "cards list",
+        );
+      }
+      const source = stringOf(outcome.values["source"]);
+      return ok({
+        kind: "cards_list",
+        json: outcome.values["json"] === true,
+        filter: selectedFilters[0] ?? "pending",
+        compact: outcome.values["verbose"] !== true,
+        ...(source === undefined ? {} : { source }),
+      });
+    }
+    case "show": {
+      const outcome = tokenize(rest.slice(1), { json: { type: "boolean" } }, "cards show");
+      if (outcome.status === "usage_error") {
+        return outcome;
+      }
+      const cardId = outcome.positionals[0];
+      if (cardId === undefined) {
+        return usageError("확인할 Card 식별자가 필요합니다.", "cards show");
+      }
+      if (outcome.positionals.length > 2) {
+        return usageError(
+          "cards show 는 Card와 선택적 버전 식별자만 받습니다.",
+          "cards show",
+        );
+      }
+      const versionId = outcome.positionals[1];
+      return ok({
+        kind: "cards_show",
+        cardId,
+        json: outcome.values["json"] === true,
+        ...(versionId === undefined ? {} : { versionId }),
+      });
     }
     case "approve":
     case "reject":

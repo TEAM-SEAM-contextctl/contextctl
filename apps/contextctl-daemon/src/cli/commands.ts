@@ -48,6 +48,8 @@ import { buildPathsReport, renderPathsReport } from "./paths-report.js";
 import {
   describeGrounding,
   renderCardListings,
+  renderCardDetail,
+  renderCompactCardListings,
   renderResolution,
   renderSourceListing,
   type CardListing,
@@ -349,7 +351,7 @@ function refusalSummary(refusal: IngestRefusal, headline: string): string {
  */
 export async function runCardsList(
   cli: RegistryOnlyRuntime,
-  json: boolean,
+  command: Extract<CliCommand, { kind: "cards_list" }>,
 ): Promise<CommandOutcome> {
   const rows = cli.database
     .prepare("SELECT card_id FROM cards ORDER BY rowid")
@@ -370,20 +372,101 @@ export async function runCardsList(
     if (card === undefined) {
       continue;
     }
-    listings.push({ card, pendingVersionIds: pendingVersionIdsOf(card) });
+    const listing = { card, pendingVersionIds: pendingVersionIdsOf(card) };
+    if (
+      command.source !== undefined &&
+      !cardHasSource(card, command.source)
+    ) {
+      continue;
+    }
+    if (!listingMatchesFilter(listing, command.filter)) {
+      continue;
+    }
+    listings.push(listing);
   }
 
-  if (json) {
+  if (command.json) {
     return ok(JSON.stringify(listings, undefined, 2));
   }
-  return ok(renderCardListings(listings));
+  return ok(
+    command.compact
+      ? renderCompactCardListings(listings, command.filter)
+      : renderCardListings(listings),
+  );
+}
+
+export async function runCardsShow(
+  cli: RegistryOnlyRuntime,
+  command: Extract<CliCommand, { kind: "cards_show" }>,
+): Promise<CommandOutcome> {
+  const card = await cli.cards.findCard(command.cardId);
+  if (card === undefined) {
+    return failed(
+      `Card ${command.cardId} 를 찾을 수 없습니다. contextctl cards list --all 로 확인하세요.`,
+    );
+  }
+  if (
+    command.versionId !== undefined &&
+    !card.versions.versions.some((version) => version.id === command.versionId)
+  ) {
+    return failed(
+      `Card ${command.cardId} 에 버전 ${command.versionId} 이 없습니다.`,
+    );
+  }
+  const listing = { card, pendingVersionIds: pendingVersionIdsOf(card) };
+  if (command.json) {
+    return ok(
+      JSON.stringify(
+        {
+          ...listing,
+          ...(command.versionId === undefined
+            ? {}
+            : { selectedVersionId: command.versionId }),
+        },
+        undefined,
+        2,
+      ),
+    );
+  }
+  return ok(renderCardDetail(listing, command.versionId));
 }
 
 /** Versions that exist but are not the one currently serving. */
 function pendingVersionIdsOf(card: ContextCard): readonly string[] {
+  const currentIndex = card.versions.versions.findIndex(
+    (version) => version.id === card.versions.currentVersionId,
+  );
   return card.versions.versions
-    .filter((version) => version.id !== card.versions.currentVersionId)
+    .filter(
+      (version, index) =>
+        version.validationState !== "rejected" &&
+        version.id !== card.versions.currentVersionId &&
+        (currentIndex === -1 || index > currentIndex),
+    )
     .map((version) => version.id);
+}
+
+function listingMatchesFilter(
+  listing: CardListing,
+  filter: "pending" | "approved" | "all",
+): boolean {
+  if (filter === "pending") {
+    return listing.pendingVersionIds.length > 0;
+  }
+  if (filter === "approved") {
+    return listing.card.versions.currentVersionId !== undefined;
+  }
+  return true;
+}
+
+function cardHasSource(card: ContextCard, source: string): boolean {
+  return card.versions.versions.some((version) =>
+    version.scopes.some((scope) =>
+      scope.kind === "managed_document"
+        ? scope.documentIndex.sourceId === source
+        : scope.connector === source,
+    ),
+  );
 }
 
 /**
