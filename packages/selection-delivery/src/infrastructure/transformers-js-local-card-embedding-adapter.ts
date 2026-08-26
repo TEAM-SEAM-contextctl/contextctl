@@ -40,7 +40,7 @@ export interface LocalCardEmbeddingInferenceResource {
     },
   ): Promise<{
     readonly dimensions: readonly number[];
-    readonly data: readonly number[];
+    readonly data: readonly number[] | Float32Array;
   }>;
 }
 
@@ -197,8 +197,11 @@ export class TransformersJsLocalCardEmbeddingAdapter
     ) {
       throw new CardEmbeddingFault("invalid_response", false);
     }
+    const data = Array.isArray(tensor.data)
+      ? tensor.data
+      : Array.from(tensor.data, Number);
     return inputs.map((input, index) => {
-      const vector = tensor.data.slice(
+      const vector = data.slice(
         index * this.profile.dimensions,
         (index + 1) * this.profile.dimensions,
       );

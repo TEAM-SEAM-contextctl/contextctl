@@ -5,10 +5,11 @@ import {
   loadLocalDocumentEmbeddingInferenceResource,
 } from "@contextctl/ingestion-indexing";
 
-import type {
-  LocalEmbeddingWorkerBootstrap,
-  LocalEmbeddingWorkerRequest,
-  LocalEmbeddingWorkerResponse,
+import {
+  postLocalEmbeddingWorkerResponse,
+  type LocalEmbeddingWorkerBootstrap,
+  type LocalEmbeddingWorkerRequest,
+  type LocalEmbeddingWorkerResponse,
 } from "./local-embedding-worker-protocol.js";
 
 if (parentPort === null) {
@@ -82,5 +83,5 @@ async function handle(request: LocalEmbeddingWorkerRequest): Promise<void> {
 }
 
 function post(response: LocalEmbeddingWorkerResponse): void {
-  port.postMessage(response);
+  postLocalEmbeddingWorkerResponse(port, response);
 }

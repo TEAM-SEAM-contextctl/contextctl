@@ -136,7 +136,7 @@ export interface LocalDocumentEmbeddingInferenceResource {
     },
   ): Promise<{
     readonly dimensions: readonly number[];
-    readonly data: readonly number[];
+    readonly data: readonly number[] | Float32Array;
   }>;
 }
 
@@ -427,7 +427,10 @@ class TransformersJsRuntimeFactory
         tensor = tensor.normalize(2, -1);
         return {
           dimensions: [...tensor.dims],
-          data: Array.from(tensor.data, Number),
+          data:
+            input.execution.precision === "fp32"
+              ? asFloat32TensorData(tensor.data)
+              : Array.from(tensor.data, Number),
         };
       },
     };
@@ -465,7 +468,7 @@ function outputsFromTensor(
   request: EmbeddingProviderRequest,
   tensor: {
     readonly dimensions: readonly number[];
-    readonly data: readonly number[];
+    readonly data: readonly number[] | Float32Array;
   },
   dimensions: number,
 ): readonly EmbeddingProviderOutput[] {
@@ -478,11 +481,11 @@ function outputsFromTensor(
   ) {
     throw new EmbeddingProviderFault("invalid_response", false);
   }
+  const data = Array.isArray(tensor.data)
+    ? tensor.data
+    : Array.from(tensor.data, Number);
   return request.inputs.map((input, index) => {
-    const vector = tensor.data.slice(
-      index * dimensions,
-      (index + 1) * dimensions,
-    );
+    const vector = data.slice(index * dimensions, (index + 1) * dimensions);
     const magnitude = Math.sqrt(
       vector.reduce((sum, component) => sum + component * component, 0),
     );
@@ -491,6 +494,18 @@ function outputsFromTensor(
     }
     return { key: input.key, vector };
   });
+}
+
+function asFloat32TensorData(data: ArrayLike<number>): Float32Array {
+  if (
+    data instanceof Float32Array &&
+    data.buffer instanceof ArrayBuffer &&
+    data.byteOffset === 0 &&
+    data.byteLength === data.buffer.byteLength
+  ) {
+    return data;
+  }
+  return Float32Array.from(data);
 }
 
 function parseAssetManifest(input: unknown): LocalEmbeddingAssetManifest {

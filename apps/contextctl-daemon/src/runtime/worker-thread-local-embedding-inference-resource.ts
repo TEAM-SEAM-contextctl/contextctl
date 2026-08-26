@@ -83,7 +83,10 @@ export class WorkerThreadLocalEmbeddingInferenceResource
   async embed(
     texts: readonly string[],
     options: { readonly pooling: "cls" | "mean"; readonly normalize: true },
-  ): Promise<{ readonly dimensions: readonly number[]; readonly data: readonly number[] }> {
+  ): Promise<{
+    readonly dimensions: readonly number[];
+    readonly data: readonly number[] | Float32Array;
+  }> {
     if (options.normalize !== true) {
       throw new EmbeddingProviderFault("invalid_request", false);
     }
