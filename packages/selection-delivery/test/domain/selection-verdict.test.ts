@@ -5,6 +5,7 @@ import {
   SelectionThresholdsInvariantError,
 } from "../../src/domain/errors.js";
 import {
+  applySetPlanningDecision,
   DEFAULT_SELECTION_THRESHOLDS,
   judgeCandidates,
   SELECTION_RANKING_POLICY_VERSION,
@@ -404,5 +405,45 @@ describe("judgeCandidates", () => {
       "defer",
       "reject",
     ]);
+  });
+
+  it("can project an independently admitted set into a smaller plan verdict", () => {
+    const independent = judgeCandidates(
+      [candidate("cv_a", 0.95), candidate("cv_b", 0.9)],
+      thresholds,
+    );
+
+    const planned = applySetPlanningDecision(independent, new Set(["cv_a"]));
+
+    expect(planned.outcomes.map((outcome) => outcome.verdict)).toEqual([
+      "admit",
+      "defer",
+    ]);
+    expect(rulesOf(planned.outcomes[1]!)).toEqual([
+      "plan.covered_by_selected_set",
+    ]);
+    expect(planned.provenance).toBe(independent.provenance);
+  });
+
+  it("does not promote a Card that missed the independent admit band", () => {
+    const independent = judgeCandidates(
+      [candidate("cv_a", 0.95), candidate("cv_b", 0.5)],
+      thresholds,
+    );
+
+    expect(() =>
+      applySetPlanningDecision(independent, new Set(["cv_b"])),
+    ).toThrow(SelectionCandidateInvariantError);
+  });
+
+  it("does not remove the entire independently admitted set", () => {
+    const independent = judgeCandidates(
+      [candidate("cv_a", 0.95)],
+      thresholds,
+    );
+
+    expect(() => applySetPlanningDecision(independent, new Set())).toThrow(
+      SelectionCandidateInvariantError,
+    );
   });
 });

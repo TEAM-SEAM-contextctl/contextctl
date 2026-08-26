@@ -2,6 +2,7 @@ import type {
   ApprovedCard,
   ApprovedScope,
 } from "./card-catalog.js";
+import { SelectionCandidateInvariantError } from "./errors.js";
 
 /** Identifies the lexical rules that produced a candidate score. */
 export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v4" as const;
@@ -33,7 +34,7 @@ const STOP_WORDS = new Set([
   "알려줘", "알려주세요", "하나요",
 ]);
 
-type SourceIntent = ApprovedScope["kind"];
+export type SourceIntent = ApprovedScope["kind"];
 
 const SOURCE_INTENT_TOKENS: Readonly<Record<SourceIntent, ReadonlySet<string>>> = {
   managed_document: new Set(["document", "guide", "policy", "규정", "문서", "안내", "절차"]),
@@ -132,6 +133,12 @@ const catalogIndexCache = new WeakMap<
   CatalogIndex
 >();
 
+/** Built only for set planning; the current product scoring path pays nothing. */
+const indexedCardsByVersionIdCache = new WeakMap<
+  readonly ApprovedCard[],
+  ReadonlyMap<string, IndexedCard>
+>();
+
 /**
  * Scores every approved Card against one query.
  *
@@ -147,9 +154,58 @@ export function scoreCardsAgainstQuery(
   queryText: string,
   cards: readonly ApprovedCard[],
 ): readonly CandidateScore[] {
-  const query = normalizeText(queryText);
-  const tokens = tokenize(query);
   const catalog = catalogIndex(cards);
+  return scoreIndexedCardsAgainstQuery(queryText, catalog, catalog.cards);
+}
+
+/**
+ * Scores a small candidate subset under the complete catalog's v4 statistics.
+ *
+ * Set planning needs facet scores only for independently admitted Cards. Calling
+ * `scoreCardsAgainstQuery` for every facet would rescore all 10,000 eligible
+ * Cards even though the planning ceiling admits at most 32. Query-relevant
+ * statistics and direct-evidence competition still use the complete immutable
+ * catalog, so the subset produces exactly the scores from a complete pass.
+ */
+export function scoreCardSubsetAgainstQuery(
+  queryText: string,
+  catalogCards: readonly ApprovedCard[],
+  candidateCards: readonly ApprovedCard[],
+): readonly CandidateScore[] {
+  const catalog = catalogIndex(catalogCards);
+  const cardsByVersionId = indexedCardsByVersionId(catalogCards, catalog);
+  const indexed = candidateCards.map((card) => {
+    const known = cardsByVersionId.get(card.versionId);
+    if (known === undefined || known.card.cardId !== card.cardId) {
+      throw new SelectionCandidateInvariantError(
+        `card version ${card.versionId} is not part of the eligible scoring snapshot`,
+      );
+    }
+    return known;
+  });
+  return scoreIndexedCardsAgainstQuery(queryText, catalog, indexed);
+}
+
+function indexedCardsByVersionId(
+  catalogCards: readonly ApprovedCard[],
+  catalog: CatalogIndex,
+): ReadonlyMap<string, IndexedCard> {
+  const cached = indexedCardsByVersionIdCache.get(catalogCards);
+  if (cached !== undefined) return cached;
+  const indexed = new Map(
+    catalog.cards.map((card) => [card.card.versionId, card]),
+  );
+  indexedCardsByVersionIdCache.set(catalogCards, indexed);
+  return indexed;
+}
+
+function scoreIndexedCardsAgainstQuery(
+  queryText: string,
+  catalog: CatalogIndex,
+  cards: readonly IndexedCard[],
+): readonly CandidateScore[] {
+  const query = normalizeLexicalText(queryText);
+  const tokens = tokenizeLexicalText(query);
   const analysis: QueryAnalysis = {
     tokens,
     uniqueTokens: uniqueInOrder(tokens),
@@ -159,7 +215,7 @@ export function scoreCardsAgainstQuery(
   const statistics = queryRelevantStatistics(analysis.uniqueTokens, catalog);
   const competition = directEvidenceCompetition(analysis, catalog.cards);
 
-  return catalog.cards.map((indexed) =>
+  return cards.map((indexed) =>
     scoreCard(analysis, indexed, statistics, competition),
   );
 }
@@ -326,7 +382,7 @@ function indexCard(
   );
   const humanDeclaredTokens: string[] = [];
   for (const token of [...humanKeywords, ...humanAliases].flatMap((term) =>
-    tokenize(normalizeText(term)),
+    tokenizeLexicalText(normalizeLexicalText(term)),
   )) {
     if (!humanDeclaredTokens.includes(token)) humanDeclaredTokens.push(token);
   }
@@ -357,8 +413,8 @@ function appendFields(
   ngramIds: Map<string, number>,
 ): void {
   for (const text of values) {
-    const normalized = normalizeText(text);
-    const tokens = tokenize(normalized);
+    const normalized = normalizeLexicalText(text);
+    const tokens = tokenizeLexicalText(normalized);
     if (tokens.length > 0) {
       target.push({
         field,
@@ -771,7 +827,7 @@ function bestNgramContribution(
   return best;
 }
 
-function scopeSearchValues(scope: ApprovedScope): readonly string[] {
+export function scopeSearchValues(scope: ApprovedScope): readonly string[] {
   switch (scope.kind) {
     case "managed_document":
       return [
@@ -808,11 +864,11 @@ function scopeSearchValues(scope: ApprovedScope): readonly string[] {
   }
 }
 
-function normalizeText(text: string): string {
+export function normalizeLexicalText(text: string): string {
   return text.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
-function tokenize(text: string): readonly string[] {
+export function tokenizeLexicalText(text: string): readonly string[] {
   const raw = text.match(/[\p{L}\p{N}]+/gu) ?? [];
   const tokens: string[] = [];
   for (const value of raw) {
