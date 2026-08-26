@@ -289,9 +289,22 @@ version_manager_hint() {
 
 verify_reachable() {
   if command -v contextctl >/dev/null 2>&1; then
-    say ""
-    say "설치를 마쳤습니다: $(command -v contextctl)"
-    return 0
+    local command_path actual_version expected_version
+    command_path="$(command -v contextctl)"
+    expected_version="contextctl ${RELEASE_TAG#v}"
+    if actual_version="$(contextctl --version 2>/dev/null)" && [ "${actual_version}" = "${expected_version}" ]; then
+      say ""
+      say "설치를 마쳤습니다: ${command_path} (${actual_version})"
+      return 0
+    fi
+
+    fail ""
+    fail "PATH의 contextctl 이 요청한 릴리스와 다릅니다."
+    fail "  경로: ${command_path}"
+    fail "  기대: ${expected_version}"
+    fail "  실제: ${actual_version:-실행 실패}"
+    fail "활성 Node 버전과 npm 전역 bin 경로를 확인한 뒤 다시 실행하십시오."
+    return 1
   fi
 
   local bin_dir manager

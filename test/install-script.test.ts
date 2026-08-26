@@ -46,6 +46,7 @@ describe("release installer", () => {
     for (const name of packageNames) {
       expect(npmArguments).toContain(`/${name}.tgz`);
     }
+    expect(result.stdout).toContain("contextctl 1.2.3");
   });
 
   it("resolves the latest tag before downloading a single release set", () => {
@@ -108,6 +109,18 @@ describe("release installer", () => {
     expect(result.stderr).toContain("vX.Y.Z 형식이어야 합니다");
     expect(() => readFileSync(fixture.curlMarker)).toThrow();
   });
+
+  it("refuses a stale contextctl that shadows the installed release on PATH", () => {
+    const fixture = createFixture("valid", "v24.18.0", "1.2.2");
+
+    const result = runInstaller(fixture, ["--version", "v1.2.3"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("PATH의 contextctl 이 요청한 릴리스와 다릅니다");
+    expect(result.stderr).toContain("기대: contextctl 1.2.3");
+    expect(result.stderr).toContain("실제: contextctl 1.2.2");
+    expect(readFileSync(fixture.npmMarker, "utf8")).toMatch(/^install -g /);
+  });
 });
 
 type ChecksumMutation = "valid" | "missing" | "duplicate" | "malformed";
@@ -115,6 +128,7 @@ type ChecksumMutation = "valid" | "missing" | "duplicate" | "malformed";
 function createFixture(
   checksumMutation: ChecksumMutation = "valid",
   nodeVersion = "v24.18.0",
+  contextctlVersion = "1.2.3",
 ): {
   readonly root: string;
   readonly releaseDirectory: string;
@@ -158,7 +172,7 @@ function createFixture(
   );
   writeExecutable(
     join(binDirectory, "contextctl"),
-    "#!/usr/bin/env bash\nexit 0\n",
+    `#!/usr/bin/env bash\nprintf '%s\\n' 'contextctl ${contextctlVersion}'\n`,
   );
   writeExecutable(
     join(binDirectory, "curl"),
