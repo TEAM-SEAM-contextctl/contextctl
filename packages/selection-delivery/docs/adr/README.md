@@ -35,6 +35,7 @@ Records are written in Korean. See [`0000-template.md`](./0000-template.md).
 | [0012](./0012-use-the-daemon-rss-limit-for-selection-scale.md) | Selection 규모 검사의 RSS 상한은 daemon 전체 프로세스 상한을 사용한다 | Accepted | 2026-08-24 | |
 | [0013](./0013-gate-generated-cards-and-require-corroborated-selection-evidence.md) | 실제 생성 Card를 품질 Gate로 검증하고 선택 근거를 보강한다 | Accepted | 2026-08-25 | 0009·0011 부분 대체 |
 | [0014](./0014-make-selection-evidence-invariant-under-unrelated-catalog-growth.md) | 무관한 Card 증가가 선택 근거를 바꾸지 못하게 한다 | Accepted | 2026-08-26 | 0011·0013 점수 정책 부분 대체 |
+| [0015](./0015-plan-a-minimum-sufficient-card-set.md) | 독립 수용 Card 전체가 아니라 최소 충분 Card 집합을 실행한다 | Proposed | 2026-08-26 | 0014의 홀드아웃 충분성 복구 뒤 채택 판정 |
 
 0001은 **부분 대체**다. 소비자의 원본을 실행하지 않는다는 결정 자체는 그대로 유효하고,
 0006이 바꾼 것은 그 좌표의 이름(`Retrieval Contract` → `Retrieval Guide`)과 그것을 담아

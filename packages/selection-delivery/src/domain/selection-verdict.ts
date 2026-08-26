@@ -97,6 +97,15 @@ interface SelectionFindingCache {
   readonly defer: Map<number, readonly SelectionFinding[]>;
 }
 
+const COVERED_BY_SELECTED_SET_FINDINGS: readonly SelectionFinding[] =
+  Object.freeze([
+    Object.freeze({
+      rule: "plan.covered_by_selected_set",
+      message:
+        "the candidate was strongly relevant but added no unique query support at a lower execution cost",
+    }),
+  ]);
+
 /** Below this size two Maps cost more than the repeated findings they avoid. */
 const FINDING_CACHE_MIN_CANDIDATES = 128;
 
@@ -158,6 +167,59 @@ export function judgeCandidates(
       // heap. The ordinary path above preserves the narrow audit shape.
       ranked,
     },
+  };
+}
+
+/**
+ * Converts the independent relevance band into the Cards the joint plan acts on.
+ *
+ * `judgeCandidates` deliberately knows nothing about Card Scopes. This second
+ * step does: an independently strong Card may be relevant yet add no unique
+ * query support or read. It becomes deferred rather than rejected, preserving
+ * the distinction between "not relevant" and "not needed by this plan" while
+ * keeping the public invariant that every admitted Card selects an item.
+ * This projection remains unwired until the minimum-set adoption gate clears.
+ */
+export function applySetPlanningDecision(
+  selection: SelectionResult,
+  selectedVersionIds: ReadonlySet<string>,
+): SelectionResult {
+  const independentlyAdmitted = new Set(
+    selection.outcomes
+      .filter(
+        (
+          outcome,
+        ): outcome is Extract<SelectionOutcome, { verdict: "admit" }> =>
+          outcome.verdict === "admit",
+      )
+      .map((outcome) => outcome.versionId),
+  );
+  for (const versionId of selectedVersionIds) {
+    if (!independentlyAdmitted.has(versionId)) {
+      throw new SelectionCandidateInvariantError(
+        `card version ${versionId} was selected by the set planner without clearing the admit band`,
+      );
+    }
+  }
+  if (independentlyAdmitted.size > 0 && selectedVersionIds.size === 0) {
+    throw new SelectionCandidateInvariantError(
+      "set planning cannot remove every independently admitted card",
+    );
+  }
+
+  return {
+    outcomes: selection.outcomes.map((outcome) =>
+      outcome.verdict === "admit" && !selectedVersionIds.has(outcome.versionId)
+        ? {
+            verdict: "defer" as const,
+            cardId: outcome.cardId,
+            versionId: outcome.versionId,
+            score: outcome.score,
+            findings: COVERED_BY_SELECTED_SET_FINDINGS,
+          }
+        : outcome,
+    ),
+    provenance: selection.provenance,
   };
 }
 
