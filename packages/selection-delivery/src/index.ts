@@ -73,6 +73,15 @@ export {
   type SelectionScoringPolicyVersion,
 } from "./domain/hybrid-ranking.js";
 export {
+  MINIMUM_SUFFICIENT_SET_POLICY_VERSION,
+  planMinimumSufficientCardSet,
+  type CardPlanningDecision,
+  type CardPlanningDecisionReason,
+  type MinimumSufficientSetAudit,
+  type MinimumSufficientSetInput,
+  type MinimumSufficientSetResult,
+} from "./domain/minimum-sufficient-set.js";
+export {
   measureTextUnits,
   TEXT_MEASURE_PROFILE_VERSION,
 } from "./domain/text-measure.js";
@@ -175,6 +184,7 @@ export {
   type ScoreSignal,
 } from "./domain/query-scoring.js";
 export {
+  applySetPlanningDecision,
   DEFAULT_SELECTION_THRESHOLDS,
   judgeCandidates,
   SELECTION_RANKING_POLICY_VERSION,

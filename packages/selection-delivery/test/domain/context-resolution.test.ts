@@ -203,7 +203,7 @@ describe("ContextResolution serialization", () => {
     expect(resolution.policy).toMatchObject({
       scoring: "selection-lexical-v4",
       ranking: "selection-ranking-v2",
-      planning: "selection-planning-v1",
+      planning: "selection-planning-v2",
       fusion: "rrf-v1",
       assembly: "context-assembly-v2",
     });

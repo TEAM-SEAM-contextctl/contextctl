@@ -36,11 +36,10 @@ export type { PlanCost } from "./minimum-set-plan-cost.js";
 export type { FacetCoverage } from "./query-facet-support.js";
 
 /**
- * The proposed joint Card reduction rule for `selection-planning-v2`.
+ * The joint Card reduction rule used by `selection-planning-v2`.
  *
- * It remains outside `selectContext` until the product holdout sufficiency gate
- * clears. Keeping the planner pure lets the baseline fix and a new sealed
- * holdout validate the exact same implementation before the policy is enabled.
+ * Keeping the planner pure lets the product path, scale gate and holdouts run
+ * the exact same implementation without a second orchestration-specific rule.
  */
 export const MINIMUM_SUFFICIENT_SET_POLICY_VERSION =
   "minimum-sufficient-set-v1" as const;
@@ -105,10 +104,7 @@ interface RemovalCandidate {
 export function planMinimumSufficientCardSet(
   input: MinimumSufficientSetInput,
 ): MinimumSufficientSetResult {
-  assertPlannerInput(input);
-  const cardsByVersionId = new Map(
-    input.eligibleCards.map((card) => [card.versionId, card]),
-  );
+  const cardsByVersionId = assertPlannerInput(input);
   const initialStrong = input.initialSelection.outcomes
     .filter(isAdmitted)
     .map((outcome) => cardsByVersionId.get(outcome.versionId))
@@ -380,14 +376,14 @@ function replacementCards(
   return replacements.sort(compareText);
 }
 
-function assertPlannerInput(input: MinimumSufficientSetInput): void {
+function assertPlannerInput(
+  input: MinimumSufficientSetInput,
+): ReadonlyMap<string, ApprovedCard> {
   if (input.query.trim() === "") {
     throw new SelectionCandidateInvariantError(
       "minimum-sufficient set planning requires a non-empty query",
     );
   }
-  const cards = uniqueReferences("eligible Card", input.eligibleCards);
-  const lexical = uniqueReferences("lexical score", input.lexicalScores);
   const ranked = uniqueReferences("ranked score", input.rankedScores);
   const outcomes = uniqueReferences(
     "selection outcome",
@@ -397,16 +393,39 @@ function assertPlannerInput(input: MinimumSufficientSetInput): void {
     "ranking provenance",
     input.initialSelection.provenance.ranked,
   );
-  if (!sameKeys(cards, lexical)) {
+  const seenEligibleVersions = new Set<string>();
+  for (const card of input.eligibleCards) {
+    if (seenEligibleVersions.has(card.versionId)) {
+      throw new SelectionCandidateInvariantError(
+        `eligible Card repeats card version ${card.versionId}`,
+      );
+    }
+    seenEligibleVersions.add(card.versionId);
+  }
+  if (input.eligibleCards.length !== input.lexicalScores.length) {
     throw new SelectionCandidateInvariantError(
       "lexical scores do not describe the complete eligible Card snapshot",
     );
   }
-  for (const [versionId, score] of lexical) {
-    if (cards.get(versionId)?.cardId !== score.cardId) {
+  const cardsByRankedVersionId = new Map<string, ApprovedCard>();
+  for (let index = 0; index < input.eligibleCards.length; index += 1) {
+    const card = input.eligibleCards[index];
+    const score = input.lexicalScores[index];
+    if (card === undefined || score === undefined) {
       throw new SelectionCandidateInvariantError(
-        `card version ${versionId} is inconsistent between the eligible snapshot and lexical scores`,
+        "lexical scores do not describe the complete eligible Card snapshot",
       );
+    }
+    if (
+      score.versionId !== card.versionId ||
+      score.cardId !== card.cardId
+    ) {
+      throw new SelectionCandidateInvariantError(
+        `card version ${card.versionId} is inconsistent between the eligible snapshot and lexical scores`,
+      );
+    }
+    if (ranked.has(card.versionId)) {
+      cardsByRankedVersionId.set(card.versionId, card);
     }
   }
   if (
@@ -419,7 +438,7 @@ function assertPlannerInput(input: MinimumSufficientSetInput): void {
     );
   }
   for (const [versionId, score] of ranked) {
-    const card = cards.get(versionId);
+    const card = cardsByRankedVersionId.get(versionId);
     const outcome = outcomes.get(versionId);
     const provenanceEntry = provenance.get(versionId);
     if (
@@ -435,6 +454,7 @@ function assertPlannerInput(input: MinimumSufficientSetInput): void {
       );
     }
   }
+  return cardsByRankedVersionId;
 }
 
 function uniqueReferences<

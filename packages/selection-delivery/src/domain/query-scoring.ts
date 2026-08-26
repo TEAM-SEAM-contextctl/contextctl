@@ -133,12 +133,6 @@ const catalogIndexCache = new WeakMap<
   CatalogIndex
 >();
 
-/** Built only for set planning; the current product scoring path pays nothing. */
-const indexedCardsByVersionIdCache = new WeakMap<
-  readonly ApprovedCard[],
-  ReadonlyMap<string, IndexedCard>
->();
-
 /**
  * Scores every approved Card against one query.
  *
@@ -173,9 +167,30 @@ export function scoreCardSubsetAgainstQuery(
   candidateCards: readonly ApprovedCard[],
 ): readonly CandidateScore[] {
   const catalog = catalogIndex(catalogCards);
-  const cardsByVersionId = indexedCardsByVersionId(catalogCards, catalog);
-  const indexed = candidateCards.map((card) => {
-    const known = cardsByVersionId.get(card.versionId);
+  const indexed = indexedCandidateCards(catalog, candidateCards);
+  return scoreIndexedCardsAgainstQuery(queryText, catalog, indexed);
+}
+
+function indexedCandidateCards(
+  catalog: CatalogIndex,
+  candidateCards: readonly ApprovedCard[],
+): readonly IndexedCard[] {
+  const requested = new Map(
+    candidateCards.map((card) => [card.versionId, card]),
+  );
+  if (requested.size !== candidateCards.length) {
+    throw new SelectionCandidateInvariantError(
+      "candidate subset repeats a Card Version",
+    );
+  }
+  const found = new Map<string, IndexedCard>();
+  for (const indexed of catalog.cards) {
+    if (requested.has(indexed.card.versionId)) {
+      found.set(indexed.card.versionId, indexed);
+    }
+  }
+  return candidateCards.map((card) => {
+    const known = found.get(card.versionId);
     if (known === undefined || known.card.cardId !== card.cardId) {
       throw new SelectionCandidateInvariantError(
         `card version ${card.versionId} is not part of the eligible scoring snapshot`,
@@ -183,20 +198,6 @@ export function scoreCardSubsetAgainstQuery(
     }
     return known;
   });
-  return scoreIndexedCardsAgainstQuery(queryText, catalog, indexed);
-}
-
-function indexedCardsByVersionId(
-  catalogCards: readonly ApprovedCard[],
-  catalog: CatalogIndex,
-): ReadonlyMap<string, IndexedCard> {
-  const cached = indexedCardsByVersionIdCache.get(catalogCards);
-  if (cached !== undefined) return cached;
-  const indexed = new Map(
-    catalog.cards.map((card) => [card.card.versionId, card]),
-  );
-  indexedCardsByVersionIdCache.set(catalogCards, indexed);
-  return indexed;
 }
 
 function scoreIndexedCardsAgainstQuery(

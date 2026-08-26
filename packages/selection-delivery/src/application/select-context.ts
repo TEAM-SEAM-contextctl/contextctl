@@ -19,6 +19,7 @@ import {
   rankHybridCandidateScores,
   type SelectionMode,
 } from "../domain/hybrid-ranking.js";
+import { planMinimumSufficientCardSet } from "../domain/minimum-sufficient-set.js";
 import {
   QUERY_SCORING_POLICY_VERSION,
   scoreCardsAgainstQuery,
@@ -38,6 +39,7 @@ import {
   type SelectionPlan,
 } from "../domain/selection-plan.js";
 import {
+  applySetPlanningDecision,
   judgeCandidates,
   SELECTION_RANKING_POLICY_VERSION,
   type SelectionResult,
@@ -72,7 +74,7 @@ export {
  * deliberately above `DEFAULT_CONTEXT_BUDGET.maxChunks / 2`, so two Scopes can
  * still fill the budget between them.
  *
- * Not a number of its own: it *is* the `selection-planning-v1` ceiling on
+ * Not a number of its own: it *is* the `selection-planning-v2` ceiling on
  * chunks per target. The default is the maximum the policy allows, and a
  * deployment may set `chunkLimitPerScope` lower but never higher — a higher
  * value is refused at planning as `selection_plan_limit_exceeded`.
@@ -235,12 +237,27 @@ export async function selectContext(
   // `undefined` rather than a local default: the threshold band is
   // `judgeCandidates`' own decision and must not be restated here, or the two
   // defaults would drift apart silently.
-  const selection = judgeCandidates(scored.candidates, options.thresholds);
-  const admitted = collectAdmittedCards(selection, cards);
-  const planned = planSelectedScopes(
-    admitted,
-    options.chunkLimitPerScope ?? DEFAULT_CHUNK_LIMIT_PER_SCOPE,
+  const independentSelection = judgeCandidates(
+    scored.candidates,
+    options.thresholds,
   );
+  const chunkLimit =
+    options.chunkLimitPerScope ?? DEFAULT_CHUNK_LIMIT_PER_SCOPE;
+  const setPlan = planMinimumSufficientCardSet({
+    query: queryText,
+    eligibleCards: policy.eligible,
+    lexicalScores: lexical,
+    rankedScores: scored.candidates,
+    initialSelection: independentSelection,
+    mode: scored.mode,
+    chunkLimitPerScope: chunkLimit,
+  });
+  const selection = applySetPlanningDecision(
+    independentSelection,
+    new Set(setPlan.selectedCards.map((card) => card.versionId)),
+  );
+  const admitted = collectAdmittedCards(selection, cards);
+  const planned = planSelectedScopes(admitted, chunkLimit);
   // After merging and before anything is executed: the plan's real size is
   // only known once same-Scope Cards have collapsed onto shared items, and a
   // plan over policy must not be trimmed to fit or read at all (SOT L1470).
@@ -256,6 +273,7 @@ export async function selectContext(
       selection,
       mode: scored.mode,
       policy: { context: policy.context, excluded: policy.excluded },
+      planning: setPlan.audit,
     },
     items: planned.items,
     managedTargets: planned.managedTargets,
