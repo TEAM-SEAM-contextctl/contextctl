@@ -209,6 +209,7 @@ describe("runDiagnosis / embedding assets", () => {
 
     expect(step.status).toBe("fail");
     expect(step.remedy).toContain("contextctl install-assets");
+    expect(step.remedy).toContain("396.1 MiB, 약 415 MB");
     expect(report.healthy).toBe(false);
   });
 

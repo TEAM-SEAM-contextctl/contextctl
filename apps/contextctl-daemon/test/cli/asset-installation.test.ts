@@ -129,6 +129,7 @@ describe("describeAssetInstallationPlan", () => {
     );
 
     expect(text).toContain("396.1 MiB");
+    expect(text).toContain("약 415 MB");
     expect(text).toContain("Apache-2.0");
     expect(text).toContain(MANIFEST.repository);
     expect(text).toContain(MANIFEST.revision);
