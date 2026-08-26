@@ -104,7 +104,7 @@ export interface ResolutionPolicy {
   /** `SELECTION_RANKING_POLICY_VERSION`. */
   readonly ranking: "selection-ranking-v2";
   /** `SELECTION_PLANNING_POLICY_VERSION`. */
-  readonly planning: "selection-planning-v1";
+  readonly planning: "selection-planning-v2";
   /** `CONTEXT_FUSION_POLICY_VERSION`. */
   readonly fusion: "rrf-v1";
   /** `CONTEXT_ASSEMBLY_POLICY_VERSION`. */

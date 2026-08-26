@@ -91,7 +91,7 @@ async function violationsOf(cards: readonly ApprovedCard[], chunkLimitPerScope?:
   return [];
 }
 
-describe("selection-planning-v1 limits", () => {
+describe("selection-planning-v2 limits", () => {
   it("states the SOT's planning and response ceilings", () => {
     expect(SELECTION_PLANNING_LIMITS).toEqual({
       admittedCards: 32,

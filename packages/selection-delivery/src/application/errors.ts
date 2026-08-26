@@ -164,7 +164,7 @@ export class QueryInputLimitExceededError extends ResolveContextFailure {
 }
 
 /**
- * Thrown when a plan is over one or more `selection-planning-v1` ceilings.
+ * Thrown when a plan is over one or more `selection-planning-v2` ceilings.
  *
  * Raised after merging and before anything is executed, which is the only
  * honest moment: earlier, the plan's real size is not known; later, a read has

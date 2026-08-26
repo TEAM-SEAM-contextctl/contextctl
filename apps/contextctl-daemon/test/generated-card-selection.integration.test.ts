@@ -7,7 +7,9 @@ import {
   buildCardSelectionEntry,
   catalogSnapshotVersion,
   InMemoryCardCandidateIndexStore,
+  judgeCandidates,
   normalizeSelectionText,
+  planMinimumSufficientCardSet,
   rankHybridCandidates,
   scoreCardsAgainstQuery,
   type ApprovedCard,
@@ -355,9 +357,16 @@ async function measureUnrelatedGrowth(
         semantic,
         lexicalTopK: 32,
       });
-      const admitted = hybrid
-        .filter((candidate) => candidate.score >= 0.85)
-        .map((candidate) => candidate.cardId)
+      const admitted = planMinimumSufficientCardSet({
+        query: testCase.query,
+        eligibleCards: cards,
+        lexicalScores: lexical,
+        rankedScores: hybrid,
+        initialSelection: judgeCandidates(hybrid),
+        mode: "hybrid",
+        chunkLimitPerScope: 8,
+      }).selectedCards
+        .map((card) => card.cardId)
         .sort();
       if (!sameStrings(admitted, baselineAdmissions.get(testCase.id)!)) {
         changedAdmissionCount += 1;

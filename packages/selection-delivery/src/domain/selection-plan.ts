@@ -5,6 +5,7 @@ import {
   SelectionScopeInvariantError,
 } from "./errors.js";
 import type { SelectionMode } from "./hybrid-ranking.js";
+import type { MinimumSufficientSetAudit } from "./minimum-sufficient-set.js";
 import {
   assertValidPolicyContext,
   type PolicyContext,
@@ -35,10 +36,10 @@ import {
  * authorised by two Cards became one item under this version and could become
  * two under another, without any Card's verdict changing.
  */
-export const SELECTION_PLANNING_POLICY_VERSION = "selection-planning-v1" as const;
+export const SELECTION_PLANNING_POLICY_VERSION = "selection-planning-v2" as const;
 
 /**
- * The absolute ceilings of `selection-planning-v1`, which no caller can raise.
+ * The absolute ceilings of `selection-planning-v2`, which no caller can raise.
  *
  * A plan is a read plan, and each ceiling bounds one dimension of what a
  * single query may cause: how many Cards may answer it, how many items the
@@ -116,6 +117,8 @@ export interface SelectionPlan {
 export interface SelectionPlanSummary {
   readonly candidates: readonly CandidateScore[];
   readonly selection: SelectionResult;
+  /** Internal joint-plan audit; Delivery verifies it but never serializes it. */
+  readonly planning: MinimumSufficientSetAudit;
   /**
    * Which scoring family produced `candidates`.
    *
@@ -345,7 +348,7 @@ export function planSelectedScopes(
 }
 
 /**
- * Every `selection-planning-v1` ceiling the plan is over, after merging.
+ * Every `selection-planning-v2` ceiling the plan is over, after merging.
  *
  * Measured on the merged plan rather than on the raw Card list, because the
  * SOT bounds what a query *causes* and merging is what decides that: two
@@ -536,6 +539,7 @@ export function verifySelectionPlan(
       );
     }
   }
+  verifySetPlanningAudit(plan, admitted);
 
   // A Card the policy kept out must be absent from everything downstream of
   // the filter: it was never scored, so it cannot be a candidate; never
@@ -564,6 +568,105 @@ export function verifySelectionPlan(
         `an item is selected by ${key.replace("\u0000", " version ")}, which the policy excluded`,
       );
     }
+  }
+}
+
+function verifySetPlanningAudit(
+  plan: SelectionPlan,
+  admitted: ReadonlySet<string>,
+): void {
+  const { auditDigest, ...auditBody } = plan.summary.planning;
+  if (canonicalDigest(auditBody) !== auditDigest) {
+    throw new SelectionPlanInvariantError(
+      "set planning audit does not match its digest",
+    );
+  }
+
+  const decisions = new Map<string, (typeof plan.summary.planning.decisions)[number]>();
+  let removed = 0;
+  for (const decision of plan.summary.planning.decisions) {
+    const key = cardRefKey(decision);
+    if (decisions.has(key)) {
+      throw new SelectionPlanInvariantError(
+        `set planning audit repeats ${decision.cardId} version ${decision.versionId}`,
+      );
+    }
+    decisions.set(key, decision);
+    if (decision.decision === "not_planned") {
+      removed += 1;
+      if (admitted.has(key)) {
+        throw new SelectionPlanInvariantError(
+          `set planning audit removed ${decision.cardId} version ${decision.versionId}, but the final verdict admits it`,
+        );
+      }
+      const outcome = plan.summary.selection.outcomes.find(
+        (candidate) => cardRefKey(candidate) === key,
+      );
+      if (
+        outcome?.verdict !== "defer" ||
+        !outcome.findings.some(
+          (finding) => finding.rule === "plan.covered_by_selected_set",
+        )
+      ) {
+        throw new SelectionPlanInvariantError(
+          `set planning audit removed ${decision.cardId} version ${decision.versionId} without the matching defer verdict`,
+        );
+      }
+      continue;
+    }
+    if (!admitted.has(key)) {
+      throw new SelectionPlanInvariantError(
+        `set planning audit retains ${decision.cardId} version ${decision.versionId}, but the final verdict does not admit it`,
+      );
+    }
+  }
+
+  for (const key of admitted) {
+    const decision = decisions.get(key);
+    if (
+      decision === undefined ||
+      (decision.decision !== "selected" && decision.decision !== "protected")
+    ) {
+      throw new SelectionPlanInvariantError(
+        `admitted ${key.replace("\u0000", " version ")} has no retained set-planning decision`,
+      );
+    }
+  }
+  if (
+    plan.summary.planning.removalCount !== removed ||
+    plan.summary.planning.costBefore.cardCount !== decisions.size
+  ) {
+    throw new SelectionPlanInvariantError(
+      "set planning audit counts do not match its decisions",
+    );
+  }
+
+  const actualCostAfter = {
+    managedTargetCount: plan.managedTargets.length,
+    managedChunkLimitTotal: plan.managedTargets.reduce(
+      (total, target) => total + target.limit,
+      0,
+    ),
+    delegatedItemCount: plan.items.filter(
+      (item) => !isManagedPlannedItem(item),
+    ).length,
+    guideBytes: plan.items.reduce(
+      (total, item) => total + utf8ByteLength(canonicalJson(item.guide)),
+      0,
+    ),
+    selectedByTotal: plan.items.reduce(
+      (total, item) => total + item.selectedBy.length,
+      0,
+    ),
+    cardCount: admitted.size,
+  };
+  if (
+    canonicalJson(actualCostAfter) !==
+    canonicalJson(plan.summary.planning.costAfter)
+  ) {
+    throw new SelectionPlanInvariantError(
+      "set planning audit cost does not match the final read plan",
+    );
   }
 }
 

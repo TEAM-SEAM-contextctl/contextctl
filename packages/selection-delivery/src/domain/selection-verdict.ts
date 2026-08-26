@@ -178,7 +178,8 @@ export function judgeCandidates(
  * query support or read. It becomes deferred rather than rejected, preserving
  * the distinction between "not relevant" and "not needed by this plan" while
  * keeping the public invariant that every admitted Card selects an item.
- * This projection remains unwired until the minimum-set adoption gate clears.
+ * The independent verdict remains in provenance; this projection changes only
+ * which relevant Cards the joint read plan needs to execute.
  */
 export function applySetPlanningDecision(
   selection: SelectionResult,
