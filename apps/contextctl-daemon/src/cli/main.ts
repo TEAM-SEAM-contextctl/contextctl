@@ -24,7 +24,7 @@ import { EXIT_CODES } from "./exit-codes.js";
 export const INSTALL_ASSETS_HINT = [
   EMBEDDING_ASSETS_MISSING_GUIDANCE,
   "  contextctl install-assets",
-  "  (약 415MB를 내려받는다. 설치 위치는 CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY 로 바꿀 수 있다.)",
+  "  (396.1 MiB, 약 415 MB를 내려받는다. 설치 위치는 CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY 로 바꿀 수 있다.)",
   "  상태를 먼저 보려면: contextctl doctor",
 ].join("\n");
 

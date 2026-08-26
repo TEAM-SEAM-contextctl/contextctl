@@ -131,7 +131,7 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
     topic: "install-assets",
     line: "contextctl install-assets [--yes] [--target <dir>] [--source-directory <dir>]",
     summary:
-      "질의에 필요한 임베딩 모델을 내려받아 설치한다. 약 415MB를 받으므로 먼저 동의를 묻는다.",
+      "질의에 필요한 임베딩 모델을 내려받아 설치한다. 396.1 MiB(약 415 MB)를 받으므로 먼저 동의를 묻는다.",
   },
   {
     topic: "paths",
@@ -388,7 +388,7 @@ export function usageText(topic?: string): string {
     "contextctl — 외부 문서를 수집·색인하고 승인 Card로 검색 범위를 결정하는 데몬.",
     "",
     "처음이라면 이 순서로 실행하십시오:",
-    "  1. contextctl install-assets    임베딩 모델 설치 (약 415MB)",
+    "  1. contextctl install-assets    임베딩 모델 설치 (396.1 MiB, 약 415 MB)",
     "  2. contextctl doctor            설치 상태 점검",
     "  3. contextctl demo init         데모 문서 준비",
     "  4. contextctl source add <path> 문서 등록",

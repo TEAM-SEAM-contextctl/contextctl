@@ -458,6 +458,11 @@ describe("usageText", () => {
     expect(text).not.toContain("contextctl serve");
   });
 
+  it("states the pinned model size in binary and decimal units", () => {
+    expect(usageText("install-assets")).toContain("396.1 MiB(약 415 MB)");
+    expect(usageText()).toContain("396.1 MiB, 약 415 MB");
+  });
+
   it("puts the usage into every rejection message", () => {
     const parsed = parseCliArguments(["query"]);
 
