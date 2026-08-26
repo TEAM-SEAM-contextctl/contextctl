@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml/badge.svg)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)
+![Node](https://img.shields.io/badge/node-24.18.x-brightgreen)
 [![Verified on Ubuntu 24.04](https://img.shields.io/badge/verified%20on-Ubuntu%2024.04-blue)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 
 [한국어](README.ko.md)
@@ -84,10 +84,8 @@ same location later.
 
 ## Five minutes
 
-> Every command prints a `SQLite is an experimental feature` warning on
-> `stderr`. That is expected and harmless — the stores use Node's built-in
-> `node:sqlite`. No suppression flag is documented, because silencing this
-> warning silences the ones that matter too.
+> The `SQLite is an experimental feature` warning on `stderr` is expected. It is
+> not suppressed because doing so would also hide warnings that matter.
 
 ```bash
 # 1. Start the vector index
@@ -142,9 +140,6 @@ together.
 
 IDs above are shortened with `…` for readability. Actual IDs vary between
 installations and ingestion runs.
-
-(An admit/defer/reject tally, the approved Card it chose, and the retrieved text
-marked `untrusted` — data, not instruction.)
 
 **Step 5 is the boundary this product exists for.** Capturing alone searches
 nothing. A Card you do not approve is never used, and one you did approve can be
