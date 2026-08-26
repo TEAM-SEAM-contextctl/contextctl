@@ -7,6 +7,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "contextctl-local-embedding-worker": "./dist/infrastructure/local-embedding-worker-entry.js",
       "import": "./dist/index.js"
     }
   },

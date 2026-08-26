@@ -14,6 +14,9 @@ import type {
   LocalEmbeddingWorkerResponse,
 } from "./local-embedding-worker-protocol.js";
 
+const LOCAL_EMBEDDING_WORKER_EXPORT_CONDITION =
+  "contextctl-local-embedding-worker";
+
 interface PendingWorkerRequest {
   readonly resolve: (response: LocalEmbeddingWorkerResponse) => void;
   readonly reject: (reason: unknown) => void;
@@ -160,6 +163,13 @@ export class WorkerThreadLocalEmbeddingInferenceResource
     if (this.#worker !== undefined) return this.#worker;
     const worker = new Worker(resolveWorkerUrl(), {
       workerData: this.#bootstrap,
+      // Keep the public package-root import while selecting the inference-only
+      // entry in this isolate. Without it the Worker evaluates the complete
+      // Ingestion package, including parsers and stores it can never call.
+      execArgv: [
+        ...process.execArgv,
+        `--conditions=${LOCAL_EMBEDDING_WORKER_EXPORT_CONDITION}`,
+      ],
     });
     worker.on("message", (response: LocalEmbeddingWorkerResponse) => {
       const pending = this.#pending.get(response.id);

@@ -13,6 +13,7 @@ interface PackageManifest {
   };
   readonly exports?: {
     readonly "."?: {
+      readonly "contextctl-local-embedding-worker"?: string;
       readonly import?: string;
       readonly types?: string;
     };
@@ -94,6 +95,20 @@ describe("workspace scaffold", () => {
       expect(manifest.exports?.["."]?.types).toMatch(/\.\/dist\/.+\.d\.ts$/);
     },
   );
+
+  it("keeps the local embedding Worker on the package root with a narrow runtime condition", async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        new URL("../packages/ingestion-indexing/package.json", import.meta.url),
+        "utf8",
+      ),
+    ) as PackageManifest;
+
+    expect(
+      manifest.exports?.["."]?.["contextctl-local-embedding-worker"],
+    ).toBe("./dist/infrastructure/local-embedding-worker-entry.js");
+    expect(Object.keys(manifest.exports ?? {})).toEqual(["."]);
+  });
 
   it("assigns shared and domain paths to their owner teams", async () => {
     const codeowners = await readFile(
