@@ -2,8 +2,20 @@
   "name": "@contextctl/contracts",
   "version": "1.0.0",
   "private": true,
+  "description": "Versioned lifecycle contracts for Contextctl.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TEAM-SEAM-contextctl/contextctl.git",
+    "directory": "packages/contracts"
+  },
+  "homepage": "https://github.com/TEAM-SEAM-contextctl/contextctl#readme",
+  "bugs": {
+    "url": "https://github.com/TEAM-SEAM-contextctl/contextctl/issues"
+  },
+  "keywords": ["contextctl", "contracts", "rag"],
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": { "node": ">=24.18.0 <25" },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -12,6 +24,8 @@
   },
   "files": [
     "dist",
+    "LICENSE",
+    "README.md",
     "!dist/.tsbuildinfo"
   ],
   "dependencies": {

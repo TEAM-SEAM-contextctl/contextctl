@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +11,8 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const releaseVersion = await readReleaseVersion();
+const rootLicense = await readFile(join(repositoryRoot, "LICENSE"));
+const rootLicenseSha256 = sha256(rootLicense);
 const productArgument = process.argv[2];
 const productMode =
   productArgument === "--product-e2e" ||
@@ -23,26 +26,31 @@ if (process.argv.length !== (productMode ? 3 : 2)) {
 const workspaces = Object.freeze([
   {
     name: "@contextctl/contracts",
+    directory: "packages/contracts",
     tarball: releaseTarballName("contracts"),
     entrypoint: "dist/index.js",
   },
   {
     name: "@contextctl/ingestion-indexing",
+    directory: "packages/ingestion-indexing",
     tarball: releaseTarballName("ingestion-indexing"),
     entrypoint: "dist/index.js",
   },
   {
     name: "@contextctl/registry-lifecycle",
+    directory: "packages/registry-lifecycle",
     tarball: releaseTarballName("registry-lifecycle"),
     entrypoint: "dist/index.js",
   },
   {
     name: "@contextctl/selection-delivery",
+    directory: "packages/selection-delivery",
     tarball: releaseTarballName("selection-delivery"),
     entrypoint: "dist/index.js",
   },
   {
     name: "@contextctl/daemon",
+    directory: "apps/contextctl-daemon",
     tarball: releaseTarballName("daemon"),
     entrypoint: "dist/main.js",
     bin: "bin/contextctl.mjs",
@@ -104,6 +112,7 @@ try {
     installDirectory,
     ...workspaces.map((workspace) => join(packDirectory, workspace.tarball)),
   ]);
+  await assertInstalledPackageMetadata(installDirectory);
 
   const executable = join(
     installDirectory,
@@ -223,6 +232,8 @@ function assertPackageContents(packed) {
     const paths = metadata.files.map((file) => file?.path).filter((path) => typeof path === "string");
     const requiredPaths = [
       "package.json",
+      "LICENSE",
+      "README.md",
       expected.entrypoint,
       expected.bin,
       ...(expected.name === "@contextctl/daemon" ? bundledDemoDocuments : []),
@@ -236,6 +247,64 @@ function assertPackageContents(packed) {
       assertSafePublishedPath(expected.name, path);
     }
   }
+}
+
+async function assertInstalledPackageMetadata(installDirectory) {
+  for (const expected of workspaces) {
+    const packageRoot = join(
+      installDirectory,
+      "node_modules",
+      ...expected.name.split("/"),
+    );
+    const manifest = JSON.parse(
+      await readFile(join(packageRoot, "package.json"), "utf8"),
+    );
+    if (manifest.name !== expected.name || manifest.version !== releaseVersion) {
+      throw new Error(`${expected.name} installed with unexpected identity`);
+    }
+    if (manifest.license !== "MIT") {
+      throw new Error(`${expected.name} does not declare the MIT license`);
+    }
+    if (
+      manifest.repository?.type !== "git" ||
+      manifest.repository?.url !==
+        "git+https://github.com/TEAM-SEAM-contextctl/contextctl.git" ||
+      manifest.repository?.directory !== expected.directory
+    ) {
+      throw new Error(`${expected.name} does not identify its repository directory`);
+    }
+    if (
+      manifest.homepage !==
+        "https://github.com/TEAM-SEAM-contextctl/contextctl#readme" ||
+      manifest.bugs?.url !==
+        "https://github.com/TEAM-SEAM-contextctl/contextctl/issues"
+    ) {
+      throw new Error(`${expected.name} does not expose its project and issue URLs`);
+    }
+    if (manifest.engines?.node !== ">=24.18.0 <25") {
+      throw new Error(`${expected.name} declares an unverified Node support range`);
+    }
+    if (
+      typeof manifest.description !== "string" ||
+      manifest.description.trim() === "" ||
+      !Array.isArray(manifest.keywords) ||
+      !manifest.keywords.includes("contextctl")
+    ) {
+      throw new Error(`${expected.name} is missing package discovery metadata`);
+    }
+    const packagedLicense = await readFile(join(packageRoot, "LICENSE"));
+    if (sha256(packagedLicense) !== rootLicenseSha256) {
+      throw new Error(`${expected.name} LICENSE differs from the repository license`);
+    }
+    const packagedReadme = await readFile(join(packageRoot, "README.md"), "utf8");
+    if (!packagedReadme.includes(`# ${expected.name}`)) {
+      throw new Error(`${expected.name} README does not identify the package`);
+    }
+  }
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function assertSafePublishedPath(packageName, path) {
