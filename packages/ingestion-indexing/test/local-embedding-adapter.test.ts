@@ -209,6 +209,35 @@ describe("Transformers.js local embedding adapter", () => {
     ).toThrow(/does not match/);
   });
 
+  it("materializes transferred fp32 data as owned document vectors", async () => {
+    const fixture = await createAssetFixture();
+    const execution = fixture.profile.execution;
+    if (execution.kind !== "local") {
+      throw new Error("fixture must use local execution");
+    }
+    const data = new Float32Array([1, 0, 0]);
+    const adapter = new TransformersJsLocalEmbeddingAdapter({
+      profile: fixture.profile,
+      inferenceResource: {
+        execution,
+        modelMaxTokens: fixture.profile.modelMaxTokens,
+        tokenCount: () => 2,
+        embed: async () => ({ dimensions: [1, 3], data }),
+      },
+    });
+
+    const output = await adapter.embed({
+      profile: fixture.profile,
+      inputs: [{ key: "query", text: "검색 질의" }],
+      signal: new AbortController().signal,
+    });
+
+    expect(output).toEqual([{ key: "query", vector: [1, 0, 0] }]);
+    expect(Array.isArray(output[0]?.vector)).toBe(true);
+    data.fill(0);
+    expect(output[0]?.vector).toEqual([1, 0, 0]);
+  });
+
   it("fails closed for a missing, changed, or escaping asset", async () => {
     const missing = await createAssetFixture();
     await rm(join(missing.artifactDirectory, "model_quantized.onnx"));

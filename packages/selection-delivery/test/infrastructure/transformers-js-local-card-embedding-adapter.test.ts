@@ -64,6 +64,26 @@ describe("TransformersJsLocalCardEmbeddingAdapter", () => {
     expect(adapter.usesInferenceResource(inference)).toBe(true);
   });
 
+  it("materializes transferred fp32 data as owned public vectors", async () => {
+    const data = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0]);
+    const adapter = new TransformersJsLocalCardEmbeddingAdapter({
+      inferenceResource: resource({
+        embed: async () => ({ dimensions: [2, 4], data }),
+      }),
+      profile,
+    });
+
+    const output = await adapter.embed(request());
+
+    expect(output).toEqual([
+      { key: "card_a", vector: [1, 0, 0, 0] },
+      { key: "card_b", vector: [0, 1, 0, 0] },
+    ]);
+    expect(output.every((item) => Array.isArray(item.vector))).toBe(true);
+    data.fill(0);
+    expect(output[0]?.vector).toEqual([1, 0, 0, 0]);
+  });
+
   it("refuses a remote profile and a physical resource for another execution", () => {
     expect(
       () =>
