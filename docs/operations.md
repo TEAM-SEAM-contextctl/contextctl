@@ -262,6 +262,25 @@ npm rm -g @contextctl/daemon @contextctl/selection-delivery \
 > ★ **버전 매니저를 쓴다면 Node 버전마다 확인해야 합니다.** 설치는 활성 버전의 `bin` 에만
 > 들어갑니다. 여러 버전에서 설치한 적이 있다면 각 버전으로 전환해 위 명령을 반복하십시오.
 
+### 릴리스 설치 무결성
+
+`install.sh`는 `latest` 주소에서 패키지를 곧바로 섞어 받지 않습니다. 먼저 정확한 릴리스 태그를
+구한 뒤 그 태그 아래의 `SHA256SUMS`와 패키지 5개를 받습니다. 파일별 SHA-256이 모두 일치해야
+한 번의 `npm install -g`를 실행합니다. 특정 버전의 장애를 재현할 때는 다음처럼 태그를 고정합니다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash -s -- --version vX.Y.Z
+```
+
+릴리스 담당자는 빌드가 끝난 깨끗한 작업 트리에서 다음 명령으로 업로드 자산을 만듭니다. 출력
+디렉터리가 비어 있지 않으면 서로 다른 릴리스가 섞이지 않도록 실패합니다.
+
+```bash
+npm run release:prepare -- --output ./release-assets
+```
+
+생성된 패키지 5개와 `SHA256SUMS`를 같은 GitHub Release에 함께 올려야 합니다.
+
 ### ② 임베딩 모델 (396.1 MiB) — 재설치 가능
 
 ```bash

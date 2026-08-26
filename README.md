@@ -56,7 +56,7 @@ Keeping the responsibility narrow is the design, not a missing feature.
 
 | | |
 |---|---|
-| **Node.js** | **24 or newer** — the stores are built on `node:sqlite`, first shipped in Node 24 |
+| **Node.js** | **24.18.0 or newer in the 24.x line** — this is the runtime range exercised by the required release checks |
 | **Qdrant** | Required. `ingest`, `query` and `serve` refuse to start without `CONTEXTCTL_QDRANT_URL` |
 | **Disk** | **396.1 MiB** for the embedding model — with the default local execution. Running both embedding layers remotely needs none of it |
 
@@ -70,9 +70,13 @@ Keeping the responsibility narrow is the design, not a missing feature.
 curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
 ```
 
-The script does three things — check the Node version, install five packages
-globally, confirm `PATH` reaches them. **It does not download the model.** A
-396 MiB download needs its own consent, so the next step asks for it.
+The script resolves one immutable release tag, verifies all five package
+tarballs against that release's `SHA256SUMS`, installs them together, and
+confirms that `PATH` reaches the command. A digest mismatch stops before npm is
+called. When piping the script into Bash, append `-s -- --version vX.Y.Z` to
+reproduce an exact release; the operations guide has the full command.
+
+**It does not download the model.** The separate 396 MiB download asks for consent next.
 
 If `PATH` does not reach the install, the script stops and prints the real `bin`
 directory with the `export PATH=…` line to add. `contextctl paths` reports the

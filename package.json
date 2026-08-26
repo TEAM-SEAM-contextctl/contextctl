@@ -22,6 +22,7 @@
     "test:release-package": "node scripts/verify-release-package.mjs",
     "test:release-product": "node scripts/verify-release-package.mjs --product-e2e",
     "test:release-product-local": "node scripts/verify-release-package.mjs --product-e2e-local-matrix",
+    "release:prepare": "npm run build && node scripts/prepare-release-assets.mjs",
     "test:integration:qdrant": "node scripts/run-external-test.mjs qdrant",
     "test:integration:granite": "node scripts/run-external-test.mjs granite",
     "test:eval:document-retrieval": "node scripts/run-external-test.mjs document-retrieval",
