@@ -5,6 +5,7 @@ import {
   operatorExitCode,
   type ExitCode,
 } from "../../src/cli/exit-codes.js";
+import { failed } from "../../src/cli/commands.js";
 
 /**
  * The codes are a contract with whatever runs `contextctl`, so they are asserted.
@@ -48,6 +49,13 @@ describe("exit codes", () => {
     // an operator fixes the request. `gate_failed` means the reachability gate
     // did not pass, which stops a release.
     expect(operatorExitCode("gate_failed")).not.toBe(operatorExitCode("refused"));
+  });
+
+  it("does not report an ordinary operational failure as a Registry refusal", () => {
+    const outcome = failed("dependency unavailable");
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.genericFailure);
+    expect(outcome.exitCode).not.toBe(EXIT_CODES.refused);
   });
 
   it("tells a gap apart from a fork", () => {

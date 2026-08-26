@@ -65,6 +65,13 @@ export const EXIT_CODES = {
    * this request now.
    */
   resolveUnavailable: 7,
+  /**
+   * The command could not complete because an operational dependency or local
+   * state failed. This is deliberately not `refused`: Registry did not apply a
+   * policy decision, so a caller should inspect the diagnostic rather than
+   * changing a Card decision request.
+   */
+  genericFailure: 8,
 } as const;
 
 export type ExitCode = (typeof EXIT_CODES)[keyof typeof EXIT_CODES];

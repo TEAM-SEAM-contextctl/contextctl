@@ -82,7 +82,7 @@ describe("commands that require a durable vector index", () => {
 
     const result = await run(home, args);
 
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(8);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("CONTEXTCTL_QDRANT_URL이 필요합니다");
     expect(result.stderr).toContain("qdrant_endpoint_required");

@@ -33,6 +33,8 @@ export function createCliTerminal(input: {
   readonly writeStderr: (text: string) => void;
   readonly stdoutIsTTY: boolean;
   readonly stderrIsTTY: boolean;
+  readonly stdoutColumns?: number;
+  readonly stderrColumns?: number;
   readonly environment: Readonly<Partial<Record<string, string>>>;
 }): CliTerminal {
   const ansiEnabled =
@@ -48,14 +50,22 @@ export function createCliTerminal(input: {
 
   return {
     stdout: (text) => {
+      const wrapped = wrapForTerminal(
+        text,
+        input.stdoutIsTTY ? input.stdoutColumns : undefined,
+      );
       input.writeStdout(
-        `${input.stdoutIsTTY && ansiEnabled ? decorateStdout(text) : text}\n`,
+        `${input.stdoutIsTTY && ansiEnabled ? decorateStdout(wrapped) : wrapped}\n`,
       );
     },
     stderr: (text) => {
       completeProgress();
+      const wrapped = wrapForTerminal(
+        text,
+        input.stderrIsTTY ? input.stderrColumns : undefined,
+      );
       input.writeStderr(
-        `${input.stderrIsTTY && ansiEnabled ? decorateStderr(text) : text}\n`,
+        `${input.stderrIsTTY && ansiEnabled ? decorateStderr(wrapped) : wrapped}\n`,
       );
     },
     progress: (text) => {
@@ -69,6 +79,96 @@ export function createCliTerminal(input: {
     },
     finish: completeProgress,
   };
+}
+
+/** Wraps human-facing TTY prose while preserving machine-readable JSON. */
+function wrapForTerminal(text: string, columns: number | undefined): string {
+  if (
+    columns === undefined ||
+    !Number.isInteger(columns) ||
+    columns < 20 ||
+    isJsonDocument(text)
+  ) {
+    return text;
+  }
+  return text
+    .split("\n")
+    .flatMap((line) => wrapLine(line, columns))
+    .join("\n");
+}
+
+function wrapLine(text: string, columns: number): readonly string[] {
+  if (displayWidth(text) <= columns || text.trim() === "") {
+    return [text];
+  }
+  const indentation = text.match(/^\s*/u)?.[0] ?? "";
+  const continuation = `${indentation}  `;
+  const words = text.trimStart().split(/\s+/u);
+  const lines: string[] = [];
+  let current = indentation;
+
+  for (const word of words) {
+    const candidate = current.trim() === "" ? `${current}${word}` : `${current} ${word}`;
+    if (displayWidth(candidate) <= columns || current.trim() === "") {
+      current = candidate;
+      continue;
+    }
+    lines.push(current);
+    current = `${continuation}${word}`;
+  }
+  lines.push(current);
+  return lines;
+}
+
+/** Terminal columns, not UTF-16 code units: Hangul and CJK glyphs are wide. */
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const character of text) {
+    if (/\p{Mark}/u.test(character)) {
+      continue;
+    }
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint < 32 || (codePoint >= 0x7f && codePoint < 0xa0)) {
+      continue;
+    }
+    width += isFullWidthCodePoint(codePoint) ? 2 : 1;
+  }
+  return width;
+}
+
+function isFullWidthCodePoint(codePoint: number): boolean {
+  return (
+    codePoint >= 0x1100 &&
+    (codePoint <= 0x115f ||
+      codePoint === 0x2329 ||
+      codePoint === 0x232a ||
+      (codePoint >= 0x2e80 && codePoint <= 0x3247 && codePoint !== 0x303f) ||
+      (codePoint >= 0x3250 && codePoint <= 0x4dbf) ||
+      (codePoint >= 0x4e00 && codePoint <= 0xa4c6) ||
+      (codePoint >= 0xa960 && codePoint <= 0xa97c) ||
+      (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+      (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+      (codePoint >= 0xfe30 && codePoint <= 0xfe6b) ||
+      (codePoint >= 0xff01 && codePoint <= 0xff60) ||
+      (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+      (codePoint >= 0x1b000 && codePoint <= 0x1b2ff) ||
+      (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
+      (codePoint >= 0x20000 && codePoint <= 0x3fffd))
+  );
+}
+
+function isJsonDocument(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return false;
+  }
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function decorateStdout(text: string): string {
