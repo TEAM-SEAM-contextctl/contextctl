@@ -86,6 +86,7 @@ const bundledDemoDocuments = Object.freeze([
 let temporaryRoot;
 let embeddingProvider;
 try {
+  await assertPublicQuickstartDocumentation();
   temporaryRoot = await mkdtemp(join(tmpdir(), "contextctl-release-package-"));
   const packDirectory = join(temporaryRoot, "packages");
   const installDirectory = join(temporaryRoot, "install");
@@ -183,6 +184,46 @@ async function readReleaseVersion() {
     throw new Error("root package.json does not declare the integrated release version");
   }
   return manifest.version;
+}
+
+async function assertPublicQuickstartDocumentation() {
+  const query = "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?";
+  const sourceCommand = "contextctl source add ./contextctl-demo/leave.md";
+  const expectedSentence =
+    "반차는 오전 반차와 오후 반차로 나뉘며 연차 0.5일을 차감합니다.";
+  const documents = [
+    {
+      path: "README.md",
+      start: "## Five minutes",
+      end: "## As an MCP server",
+      cardCount: "nine pending Card versions",
+    },
+    {
+      path: "README.ko.md",
+      start: "## 5분 만에 해보기",
+      end: "## MCP 로 붙이기",
+      cardCount: "Card 버전 9개가 승인을 기다린다",
+    },
+  ];
+
+  for (const document of documents) {
+    const content = await readFile(join(repositoryRoot, document.path), "utf8");
+    const start = content.indexOf(document.start);
+    const end = content.indexOf(document.end, start + document.start.length);
+    const section = start < 0 || end < 0 ? "" : content.slice(start, end);
+    if (
+      section === "" ||
+      !section.includes(sourceCommand) ||
+      !section.includes(query) ||
+      !section.includes(expectedSentence) ||
+      !section.includes(document.cardCount) ||
+      section.includes("결제가 실패하면 몇 번 재시도돼?")
+    ) {
+      throw new Error(
+        `${document.path} quickstart no longer matches the installed leave.md product flow`,
+      );
+    }
+  }
 }
 
 function releaseTarballName(packageName) {
@@ -467,7 +508,15 @@ async function verifyProduct(input) {
   try {
     await run(input.executable, ["source", "add", documentPath], environment);
     await run(input.executable, ["ingest"], environment);
-    await approveValidatedVersions(input.executable, environment);
+    const cardCount = await approveValidatedVersions(
+      input.executable,
+      environment,
+    );
+    if (cardCount !== 9) {
+      throw new Error(
+        `bundled leave.md produced ${cardCount} Cards; update the verified quickstart if this is intentional`,
+      );
+    }
 
     const query = "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?";
     const initial = await queryContext(input.executable, environment, query);
@@ -587,6 +636,7 @@ async function approveValidatedVersions(executable, environment) {
       );
     }
   }
+  return listed.length;
 }
 
 async function queryContext(executable, environment, query) {
