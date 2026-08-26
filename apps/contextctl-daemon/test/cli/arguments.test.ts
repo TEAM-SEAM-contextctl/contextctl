@@ -44,7 +44,15 @@ describe("parseCliArguments", () => {
   });
 
   it("rejects an unknown command", () => {
-    expect(statusOf(["bogus"])).toBe("usage_error");
+    const parsed = parseCliArguments(["bogus"]);
+
+    expect(parsed.status).toBe("usage_error");
+    if (parsed.status === "usage_error") {
+      expect(parsed.message).toContain("알 수 없는 명령입니다: bogus");
+      expect(parsed.message).toContain("사용법: contextctl <command> [options]");
+      expect(parsed.message).toContain("자세한 도움말: contextctl help");
+      expect(parsed.message).not.toContain("처음이라면 이 순서로");
+    }
   });
 });
 
@@ -409,6 +417,9 @@ describe("usageText", () => {
     expect(parsed.status).toBe("usage_error");
     expect(parsed.status === "usage_error" ? parsed.message : "").toContain(
       "contextctl query",
+    );
+    expect(parsed.status === "usage_error" ? parsed.message : "").toContain(
+      "자세한 도움말: contextctl help query",
     );
   });
 });

@@ -45,6 +45,7 @@ import { resolveCardMeaningBackend } from "./meaning-generator.js";
 import { resolveVectorBackend } from "../vector-backend.js";
 import { runStateBackupCommand } from "./state-backup-command.js";
 import { createCliTerminal } from "./terminal.js";
+import { EXIT_CODES } from "./exit-codes.js";
 
 /**
  * The command line entry point.
@@ -98,17 +99,17 @@ export async function runCli(input: {
   const parsed = parseCliArguments(input.argv);
   if (parsed.status === "usage_error") {
     input.stderr(parsed.message);
-    return 2;
+    return EXIT_CODES.usageError;
   }
   const command = parsed.command;
 
   if (command.kind === "help") {
     input.stdout(usageText(command.topic));
-    return 0;
+    return EXIT_CODES.ok;
   }
   if (command.kind === "version") {
     input.stdout(`contextctl ${await readPackageVersion()}`);
-    return 0;
+    return EXIT_CODES.ok;
   }
   if (command.kind === "serve") {
     // Nothing is written here, on either stream. `runDaemon` owns stdout from
@@ -117,10 +118,10 @@ export async function runCli(input: {
     // `serve` process and a `query` process see the same state.
     try {
       await runServe(input.environment, input.workingDirectory ?? process.cwd());
-      return 0;
+      return EXIT_CODES.ok;
     } catch (error: unknown) {
       input.stderr(describeFailure(error));
-      return 1;
+      return EXIT_CODES.genericFailure;
     }
   }
 
@@ -210,7 +211,7 @@ export async function runCli(input: {
     }
   } catch (error: unknown) {
     input.stderr(describeFailure(error));
-    return 1;
+    return EXIT_CODES.genericFailure;
   }
 }
 
@@ -488,6 +489,8 @@ const terminal = createCliTerminal({
   writeStderr: (text) => process.stderr.write(text),
   stdoutIsTTY: process.stdout.isTTY === true,
   stderrIsTTY: process.stderr.isTTY === true,
+  stdoutColumns: process.stdout.columns,
+  stderrColumns: process.stderr.columns,
   environment: process.env,
 });
 

@@ -105,7 +105,7 @@ export function ok(stdout: string, stderr: readonly string[] = []): CommandOutco
 }
 
 export function failed(message: string): CommandOutcome {
-  return { stdout: "", stderr: [message], exitCode: EXIT_CODES.refused };
+  return { stdout: "", stderr: [message], exitCode: EXIT_CODES.genericFailure };
 }
 
 /** Fails with a code other than the default, for outcomes a script must tell apart. */
@@ -1063,7 +1063,7 @@ export async function runDoctor(input: {
   return {
     stdout: renderDiagnosis(report),
     stderr: [],
-    exitCode: report.healthy ? 0 : 1,
+    exitCode: report.healthy ? EXIT_CODES.ok : EXIT_CODES.genericFailure,
   };
 }
 

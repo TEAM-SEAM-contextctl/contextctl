@@ -209,7 +209,8 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
   {
     topic: "query",
     line: 'contextctl query "<질문>" [--json] [--max-context <n>]',
-    summary: "승인된 카드에서 컨텍스트를 선택해 답한다. --max-context 는 문자 수 상한이다.",
+    summary:
+      "질문과 관련된 Card와 검색 컨텍스트를 선택해 반환한다. --max-context 는 문자 수 상한이다.",
   },
   {
     topic: "serve",
@@ -365,7 +366,7 @@ export function usageText(topic?: string): string {
   // just installed the binary has no model, no source and no approved Card, and
   // every command except the first two will tell them so one at a time.
   return [
-    "contextctl — 승인된 컨텍스트 카드를 골라 전달하는 데몬.",
+    "contextctl — 외부 문서를 수집·색인하고 승인 Card로 검색 범위를 결정하는 데몬.",
     "",
     "처음이라면 이 순서로 실행하십시오:",
     "  1. contextctl install-assets    임베딩 모델 설치 (약 415MB)",
@@ -849,7 +850,25 @@ function ok(command: CliCommand): ParsedArguments {
   return { status: "ok", command };
 }
 
-/** Every rejection carries the usage, because it is what the reader needs next. */
+/**
+ * A rejection names the immediate syntax and the help command, without
+ * burying the actual error under the complete command reference.
+ */
 function usageError(reason: string, topic?: string): UsageError {
-  return { status: "usage_error", message: `${reason}\n\n${usageText(topic)}` };
+  const selected =
+    topic === undefined
+      ? []
+      : COMMAND_USAGES.filter(
+          (usage) =>
+            usage.topic === topic || usage.topic.startsWith(`${topic} `),
+        );
+  const usage =
+    selected.length === 0
+      ? ["사용법: contextctl <command> [options]"]
+      : ["사용법:", ...selected.map((entry) => `  ${entry.line}`)];
+  const help = `자세한 도움말: contextctl help${topic === undefined ? "" : ` ${topic}`}`;
+  return {
+    status: "usage_error",
+    message: [reason, "", ...usage, help].join("\n"),
+  };
 }

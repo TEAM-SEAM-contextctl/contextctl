@@ -7,6 +7,8 @@ const ANSI_PATTERN = /\u001b\[[0-9;]*[A-Za-z]/u;
 function capture(options: {
   readonly stdoutIsTTY?: boolean;
   readonly stderrIsTTY?: boolean;
+  readonly stdoutColumns?: number;
+  readonly stderrColumns?: number;
   readonly environment?: Readonly<Partial<Record<string, string>>>;
 } = {}) {
   const stdout: string[] = [];
@@ -16,6 +18,12 @@ function capture(options: {
     writeStderr: (text) => stderr.push(text),
     stdoutIsTTY: options.stdoutIsTTY ?? false,
     stderrIsTTY: options.stderrIsTTY ?? false,
+    ...(options.stdoutColumns === undefined
+      ? {}
+      : { stdoutColumns: options.stdoutColumns }),
+    ...(options.stderrColumns === undefined
+      ? {}
+      : { stderrColumns: options.stderrColumns }),
     environment: options.environment ?? {},
   });
   return { terminal, stdout, stderr };
@@ -98,4 +106,29 @@ describe("createCliTerminal", () => {
 
     expect(stderr.join("").endsWith("완료\u001b[0m\n")).toBe(true);
   });
+
+  it("wraps only interactive prose and indents continuation lines", () => {
+    const { terminal, stdout } = capture({ stdoutIsTTY: true, stdoutColumns: 28 });
+
+    terminal.stdout("상태: 승인된 Card가 많아서 다음 작업을 확인해야 합니다.");
+
+    expect(stdout.join("")).toMatch(/\n {2}\S/u);
+    expect(stripAnsi(stdout.join("")).split("\n").every((line) => line.length <= 28)).toBe(true);
+  });
+
+  it("does not split long identifiers or alter JSON on a TTY", () => {
+    const identifier = "card_0123456789abcdefghijklmnopqrstuvwxyz";
+    const human = capture({ stdoutIsTTY: true, stdoutColumns: 20 });
+    human.terminal.stdout(`Card ${identifier} 승인 대기`);
+    expect(human.stdout.join("")).toContain(identifier);
+
+    const json = capture({ stdoutIsTTY: true, stdoutColumns: 20 });
+    const document = JSON.stringify({ cardId: identifier }, undefined, 2);
+    json.terminal.stdout(document);
+    expect(stripAnsi(json.stdout.join("")).trim()).toBe(document);
+  });
 });
+
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*[A-Za-z]/gu, "");
+}
