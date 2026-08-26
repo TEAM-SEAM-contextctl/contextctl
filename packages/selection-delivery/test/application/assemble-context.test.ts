@@ -428,7 +428,7 @@ describe("assembleContext", () => {
     // tell a consumer the ranking used Card embeddings that do not exist.
     expect([resolution.selection.mode, resolution.policy.scoring]).toEqual([
       "lexical_degraded",
-      "selection-lexical-v3",
+      "selection-lexical-v4",
     ]);
   });
 

@@ -59,7 +59,7 @@ describe("scoreCardsAgainstQuery", () => {
     // `lexical`, and the name is a claim: everything this file compares is
     // normalized text and character bigrams, so a version that did not name
     // the family could not be paired with `selection.mode` in a response.
-    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-lexical-v3");
+    expect(QUERY_SCORING_POLICY_VERSION).toBe("selection-lexical-v4");
   });
 
   it("reaches the admit band for a distinctive declared keyword", () => {
@@ -86,6 +86,20 @@ describe("scoreCardsAgainstQuery", () => {
       matched: "재고",
       contribution: scored.score,
     });
+  });
+
+  it("matches derived and queried forms of the passive 되다 inflection", () => {
+    const scored = scoreOne(
+      "결제했던 카드가 해지된 경우",
+      cardMeaning({ keywords: ["카드가 해지되어"] }),
+    );
+
+    expect(scored.score).toBeGreaterThanOrEqual(
+      DEFAULT_SELECTION_THRESHOLDS.admit,
+    );
+    expect(scored.signals).toContainEqual(
+      expect.objectContaining({ field: "keyword", matched: "카드가 해지되어" }),
+    );
   });
 
   it("matches Latin keywords regardless of case", () => {
@@ -135,32 +149,43 @@ describe("scoreCardsAgainstQuery", () => {
     expect(scored.signals).toEqual([]);
   });
 
-  it("drops incidental character overlap below the indirect evidence floor", () => {
-    const cards = Array.from({ length: 128 }, (_, index) =>
-      cardMeaning(
-        {
-          representativeQuestions: [
-            `Where is synthetic topic ${String(index).padStart(5, "0")}?`,
-          ],
-        },
-        `cardv_noise_${String(index)}`,
-      ),
-    );
-    const scored = scoreCardsAgainstQuery(
-      "What is today's dollar exchange rate?",
-      cards,
-    );
+  it("keeps negligible overlap rankable but not auditable at every catalog size", () => {
+    let firstScore: number | undefined;
+    for (const cardCount of [1, 3, 127, 128]) {
+      const cards = Array.from({ length: cardCount }, (_, index) =>
+        cardMeaning(
+          {
+            representativeQuestions: [
+              `Where is synthetic topic ${String(index).padStart(5, "0")}?`,
+            ],
+          },
+          `cardv_noise_${String(index)}`,
+        ),
+      );
+      const scored = scoreCardsAgainstQuery(
+        "What is today's dollar exchange rate?",
+        cards,
+      );
 
-    expect(scored.every((candidate) => candidate.score === 0)).toBe(true);
-    expect(scored.every((candidate) => candidate.signals.length === 0)).toBe(
-      true,
-    );
-
-    const repeated = scoreCardsAgainstQuery(
-      "What is today's dollar exchange rate?",
-      cards,
-    );
-    expect(repeated[0]).toBe(scored[0]);
+      expect(
+        scored.every(
+          (candidate) =>
+            candidate.score > 0 &&
+            candidate.score < DEFAULT_SELECTION_THRESHOLDS.reject,
+        ),
+      ).toBe(true);
+      expect(scored.every((candidate) => candidate.signals.length === 0)).toBe(
+        true,
+      );
+      firstScore ??= scored[0]?.score;
+      expect(scored[0]?.score).toBe(firstScore);
+      const repeated = scoreCardsAgainstQuery(
+        "What is today's dollar exchange rate?",
+        cards,
+      );
+      expect(repeated).toEqual(scored);
+      expect(repeated[0]).toBe(scored[0]);
+    }
   });
 
   it("stays finite when the Card declares no keywords and no aliases", () => {
@@ -352,6 +377,95 @@ describe("scoreCardsAgainstQuery", () => {
         (score) => score.score < DEFAULT_SELECTION_THRESHOLDS.admit,
       ),
     ).toBe(true);
+  });
+
+  it("keeps existing scores invariant when unrelated growth crosses 128 Cards", () => {
+    const relevant = [
+      cardMeaning(
+        {
+          description: "승인 응답 지연 주문 처리",
+          aliases: ["승인 대기", "주문 처리"],
+          keywords: [
+            "승인",
+            "응답",
+            "주문",
+            "재확인",
+            ...Array.from({ length: 28 }, (_, index) => `근거어휘${String(index)}`),
+          ],
+        },
+        "cardv_relevant_strong",
+      ),
+      cardMeaning(
+        {
+          description: "오류 응답 처리",
+          aliases: ["오류 코드", "응답 처리"],
+          keywords: [
+            "응답",
+            "주문",
+            "처리",
+            ...Array.from({ length: 28 }, (_, index) => `인접어휘${String(index)}`),
+          ],
+        },
+        "cardv_relevant_adjacent",
+      ),
+    ];
+    const unrelated = (count: number, offset = 0) =>
+      Array.from({ length: count }, (_, index) =>
+        cardMeaning(
+          {
+            description: `천문 관측 장비 교정 ${String(index + offset)}`,
+            aliases: [`망원경 ${String(index + offset)}`],
+            keywords: ["천문", "관측", `교정${String(index + offset)}`],
+          },
+          `cardv_unrelated_${String(index + offset)}`,
+        ),
+      );
+    const baseCards = [...relevant, ...unrelated(42)];
+    const baseline = scoreCardsAgainstQuery(
+      "승인 응답이 늦을 때 주문을 재확인하나요?",
+      baseCards,
+    );
+
+    for (const size of [46, 58, 64, 105, 128]) {
+      const grown = scoreCardsAgainstQuery(
+        "승인 응답이 늦을 때 주문을 재확인하나요?",
+        [...baseCards, ...unrelated(size - baseCards.length, baseCards.length)],
+      );
+      expect(grown.slice(0, baseCards.length), String(size)).toEqual(baseline);
+    }
+    expect(
+      baseline.find((candidate) => candidate.versionId === "cardv_relevant_strong")
+        ?.score,
+    ).toBeGreaterThanOrEqual(DEFAULT_SELECTION_THRESHOLDS.admit);
+    expect(
+      baseline.find((candidate) => candidate.versionId === "cardv_relevant_adjacent")
+        ?.score,
+    ).toBeLessThan(DEFAULT_SELECTION_THRESHOLDS.admit);
+  });
+
+  it("keeps fuzzy-only evidence invariant when no exact query token exists", () => {
+    const target = cardMeaning(
+      {
+        description: "배송 도착 예정일 안내",
+      },
+      "cardv_fuzzy_target",
+    );
+    const unrelated = Array.from({ length: 127 }, (_, index) =>
+      cardMeaning(
+        {
+          description: `천문 관측 기록 ${String(index)}`,
+          aliases: [`망원경 ${String(index)}`],
+          keywords: ["천문", `교정${String(index)}`],
+        },
+        `cardv_fuzzy_unrelated_${String(index)}`,
+      ),
+    );
+    const query = "택배가 언제 도착해요";
+    const baseline = scoreCardsAgainstQuery(query, [target]);
+    const grown = scoreCardsAgainstQuery(query, [target, ...unrelated]);
+
+    expect(grown[0]).toEqual(baseline[0]);
+    expect(grown).toHaveLength(128);
   });
 
   it("ignores an empty declared keyword instead of matching everything", () => {

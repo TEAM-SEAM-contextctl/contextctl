@@ -91,7 +91,7 @@ function resolution(
     query: "결제 실패 재시도 정책",
     policy: {
       payloadSchemaVersion: 3,
-      scoring: overrides.scoring ?? "selection-lexical-v3",
+      scoring: overrides.scoring ?? "selection-lexical-v4",
       ranking: "selection-ranking-v2",
       planning: "selection-planning-v1",
       fusion: "rrf-v1",
@@ -193,23 +193,23 @@ describe("renderResolution", () => {
 
   it("prints hybrid mode and its scoring policy verbatim", () => {
     const rendered = renderResolution(
-      resolution({ mode: "hybrid", scoring: "selection-hybrid-v3" }),
+      resolution({ mode: "hybrid", scoring: "selection-hybrid-v4" }),
     );
 
     expect(rendered).toContain("hybrid");
-    expect(rendered).toContain("selection-hybrid-v3");
+    expect(rendered).toContain("selection-hybrid-v4");
   });
 
   it("prints degraded mode and its scoring policy verbatim", () => {
     const rendered = renderResolution(
       resolution({
         mode: "lexical_degraded",
-        scoring: "selection-lexical-v3",
+        scoring: "selection-lexical-v4",
       }),
     );
 
     expect(rendered).toContain("lexical_degraded");
-    expect(rendered).toContain("selection-lexical-v3");
+    expect(rendered).toContain("selection-lexical-v4");
   });
 
   it("prints the payload schema version", () => {

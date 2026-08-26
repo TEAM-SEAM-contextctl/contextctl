@@ -12,14 +12,14 @@ import { SelectionModeInvariantError } from "./errors.js";
  * as a run that had them — even under identical thresholds and an identical
  * catalog.
  */
-export const HYBRID_SCORING_POLICY_VERSION = "selection-hybrid-v3" as const;
+export const HYBRID_SCORING_POLICY_VERSION = "selection-hybrid-v4" as const;
 
 /** Which scoring family produced a ranking. Paired with `scoring` by invariant. */
 export type SelectionMode = "hybrid" | "lexical_degraded";
 
 export type SelectionScoringPolicyVersion =
   | typeof HYBRID_SCORING_POLICY_VERSION
-  | "selection-lexical-v3";
+  | "selection-lexical-v4";
 
 /**
  * The one scoring version each mode is allowed to travel with.
@@ -33,7 +33,7 @@ export function scoringPolicyVersionFor(
 ): SelectionScoringPolicyVersion {
   return mode === "hybrid"
     ? HYBRID_SCORING_POLICY_VERSION
-    : "selection-lexical-v3";
+    : "selection-lexical-v4";
 }
 
 /** Refuses a `(mode, scoring)` pair that names two different families. */
@@ -76,6 +76,11 @@ export const SEMANTIC_CONFIDENT_SCORE = 0.85;
 export const SEMANTIC_ABSOLUTE_ADMIT_FLOOR = 0.9;
 /** A close semantic lead needs this much independent lexical support. */
 export const SEMANTIC_LEXICAL_SUPPORT_FLOOR = 0.8;
+/** A stronger direct-evidence Card blocks only the weak close-leader shortcut. */
+export const DIRECT_EVIDENCE_OVERRIDE_FLOOR = 0.91;
+/** Rank agreement may recover a paraphrase just below the absolute cosine floor. */
+export const LEXICAL_SEMANTIC_AGREEMENT_FLOOR = 0.82;
+export const LEXICAL_SEMANTIC_AGREEMENT_MARGIN = 0.02;
 
 /** One Card's two signals and what they combined to. */
 export interface HybridCandidateScore extends CandidateScore {
@@ -205,6 +210,8 @@ interface PreparedHybridRanking {
   readonly leadingSemanticVersionId: string | undefined;
   readonly leadingSemanticSimilarity: number | undefined;
   readonly runnerUpSemanticSimilarity: number | undefined;
+  readonly strongestLexicalScore: number;
+  readonly leadingLexicalVersionId: string | undefined;
   readonly union: ReadonlySet<string>;
 }
 
@@ -218,6 +225,13 @@ function prepareHybridRanking(input: HybridRankingInput): PreparedHybridRanking 
   const runnerUpSemantic = input.semantic[1];
   const leadingSemanticVersionId = leadingSemantic?.cardVersionId;
   const union = new Set<string>(similarityByVersionId.keys());
+  const strongestLexicalScore = input.lexical.reduce(
+    (maximum, candidate) => Math.max(maximum, candidate.score),
+    0,
+  );
+  const lexicalLeaders = input.lexical.filter(
+    (candidate) => candidate.score === strongestLexicalScore,
+  );
   for (const candidate of topLexical(input.lexical, input.lexicalTopK)) {
     union.add(candidate.versionId);
   }
@@ -227,6 +241,11 @@ function prepareHybridRanking(input: HybridRankingInput): PreparedHybridRanking 
     leadingSemanticVersionId,
     leadingSemanticSimilarity: leadingSemantic?.similarity,
     runnerUpSemanticSimilarity: runnerUpSemantic?.similarity,
+    strongestLexicalScore,
+    leadingLexicalVersionId:
+      strongestLexicalScore > 0 && lexicalLeaders.length === 1
+        ? lexicalLeaders[0]!.versionId
+        : undefined,
     union,
   };
 }
@@ -247,6 +266,18 @@ function semanticScoreForCandidate(
 ): number {
   const rawSemanticScore =
     similarity === undefined ? 0 : semanticScoreFor(similarity);
+  if (
+    candidate.versionId === context.leadingLexicalVersionId &&
+    candidate.score >= SEMANTIC_LEXICAL_SUPPORT_FLOOR &&
+    candidate.score < SEMANTIC_CONFIDENT_SCORE &&
+    similarity !== undefined &&
+    similarity >= LEXICAL_SEMANTIC_AGREEMENT_FLOOR &&
+    context.leadingSemanticSimilarity !== undefined &&
+    context.leadingSemanticSimilarity - similarity <=
+      LEXICAL_SEMANTIC_AGREEMENT_MARGIN
+  ) {
+    return Math.max(rawSemanticScore, SEMANTIC_CONFIDENT_SCORE);
+  }
   return candidate.versionId === context.leadingSemanticVersionId &&
     context.leadingSemanticSimilarity !== undefined
     ? confidentLeadingSemanticScore(
@@ -254,6 +285,7 @@ function semanticScoreForCandidate(
         rawSemanticScore,
         context.leadingSemanticSimilarity,
         context.runnerUpSemanticSimilarity,
+        context.strongestLexicalScore,
       )
     : Math.min(rawSemanticScore, SEMANTIC_SECONDARY_SCORE_CEILING);
 }
@@ -263,14 +295,19 @@ function confidentLeadingSemanticScore(
   rawScore: number,
   similarity: number,
   runnerUpSimilarity: number | undefined,
+  strongestLexicalScore: number,
 ): number {
   const margin = similarity - (runnerUpSimilarity ?? 0);
+  const strongerDirectEvidenceExists =
+    strongestLexicalScore >= DIRECT_EVIDENCE_OVERRIDE_FLOOR &&
+    strongestLexicalScore > lexicalScore;
   if (
     (similarity >= SEMANTIC_CONFIDENT_SIMILARITY_FLOOR &&
       margin >= SEMANTIC_CONFIDENT_MARGIN) ||
     similarity >= SEMANTIC_ABSOLUTE_ADMIT_FLOOR ||
     (similarity > SEMANTIC_SIMILARITY_FLOOR &&
-      lexicalScore >= SEMANTIC_LEXICAL_SUPPORT_FLOOR)
+      lexicalScore >= SEMANTIC_LEXICAL_SUPPORT_FLOOR &&
+      !strongerDirectEvidenceExists)
   ) {
     return Math.max(rawScore, SEMANTIC_CONFIDENT_SCORE);
   }

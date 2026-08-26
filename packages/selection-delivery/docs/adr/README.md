@@ -34,6 +34,7 @@ Records are written in Korean. See [`0000-template.md`](./0000-template.md).
 | [0011](./0011-calibrate-lexical-and-hybrid-scoring-with-selection-eval-v1.md) | `selection-eval-v1`으로 어휘·혼합 점수를 교정하고 정책 버전을 v2로 올린다 | Accepted | 2026-08-24 | 0013이 점수 정책을 부분 대체 |
 | [0012](./0012-use-the-daemon-rss-limit-for-selection-scale.md) | Selection 규모 검사의 RSS 상한은 daemon 전체 프로세스 상한을 사용한다 | Accepted | 2026-08-24 | |
 | [0013](./0013-gate-generated-cards-and-require-corroborated-selection-evidence.md) | 실제 생성 Card를 품질 Gate로 검증하고 선택 근거를 보강한다 | Accepted | 2026-08-25 | 0009·0011 부분 대체 |
+| [0014](./0014-make-selection-evidence-invariant-under-unrelated-catalog-growth.md) | 무관한 Card 증가가 선택 근거를 바꾸지 못하게 한다 | Accepted | 2026-08-26 | 0011·0013 점수 정책 부분 대체 |
 
 0001은 **부분 대체**다. 소비자의 원본을 실행하지 않는다는 결정 자체는 그대로 유효하고,
 0006이 바꾼 것은 그 좌표의 이름(`Retrieval Contract` → `Retrieval Guide`)과 그것을 담아
@@ -58,5 +59,11 @@ target의 분리, 개명은 전부 그대로 유효하고, 0007이 고치는 것
 정한 고정 평가·BM25·간접 신호 상한은 유지한다. 바뀐 것은 모델에 전달하는 선택 텍스트 투영과
 v2 점수 정책이다. 두 기록은 여전히 유효한 결정을 포함하므로 상태를 Accepted로 두고 이 표에서
 부분 대체 관계를 명시한다.
+
+0014는 0011과 0013의 **부분 대체**다. 고정 평가 자료, BM25·문자 n-gram 결합, 간접 신호
+상한, 실제 생성 Card Gate와 선택 텍스트 v3는 유지한다. 전체 카탈로그 상대 통계와 128개에서만
+적용하던 간접 신호 경계, 어휘·혼합 v3 규칙만 질의 관련 통계 모집단, 모든 규모에서 `0.05`
+미만 간접값의 수치 순위만 보존하는 규칙, 직접 근거 경쟁과 순위 합의를 쓰는 v4로 바꾼다. 두
+기록은 여전히 유효한 결정을 포함하므로 상태를 Accepted로 둔다.
 
 Other domains are welcome to adopt this format under their own package.

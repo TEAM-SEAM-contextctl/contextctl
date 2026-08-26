@@ -17,7 +17,7 @@ describe("selection-eval-v1", () => {
     expect(SELECTION_EVAL_SPLIT_DIGEST).toBe("sha256:3ab829dc857adf5f0b7f06df27f7113b6348227b887e1f1e7b8b7f9ec89efcdb");
   });
 
-  it("records the lexical-v2 release baseline over all 50 fixed queries", async () => {
+  it("records the lexical-v4 release baseline over all 50 fixed queries", async () => {
     const report = await evaluateSelection(async (query) => {
       const started = performance.now();
       const candidates = scoreCardsAgainstQuery(query, SELECTION_EVAL_CARDS);

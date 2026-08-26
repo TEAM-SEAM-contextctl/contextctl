@@ -14,6 +14,8 @@ import {
   SEMANTIC_CONFIDENT_SCORE,
   SEMANTIC_CONFIDENT_SIMILARITY_FLOOR,
   SEMANTIC_LEXICAL_SUPPORT_FLOOR,
+  LEXICAL_SEMANTIC_AGREEMENT_FLOOR,
+  LEXICAL_SEMANTIC_AGREEMENT_MARGIN,
   SEMANTIC_SECONDARY_SCORE_CEILING,
   semanticScoreFor,
 } from "../../src/domain/hybrid-ranking.js";
@@ -199,6 +201,26 @@ describe("rankHybridCandidates", () => {
     );
   });
 
+  it("lets stronger direct evidence override only a close semantic leader", () => {
+    const ranked = rankHybridCandidates({
+      lexical: [candidate("direct", 0.91), candidate("semantic", 0.84)],
+      semantic: [
+        { cardId: "card_semantic", cardVersionId: "semantic", similarity: 0.87 },
+        { cardId: "card_direct", cardVersionId: "direct", similarity: 0.865 },
+      ],
+      lexicalTopK: 2,
+    });
+
+    expect(ranked.find((entry) => entry.versionId === "direct")).toMatchObject({
+      score: 0.91,
+      semanticScore: SEMANTIC_SECONDARY_SCORE_CEILING,
+    });
+    expect(ranked.find((entry) => entry.versionId === "semantic")).toMatchObject({
+      score: 0.84,
+      semanticScore: SEMANTIC_SECONDARY_SCORE_CEILING,
+    });
+  });
+
   it("keeps a close semantic leader when lexical evidence corroborates it", () => {
     const ranked = rankHybridCandidates({
       lexical: [
@@ -215,6 +237,55 @@ describe("rankHybridCandidates", () => {
     expect(
       ranked.find((entry) => entry.versionId === "a")?.score,
     ).toBeGreaterThanOrEqual(DEFAULT_SELECTION_THRESHOLDS.admit);
+  });
+
+  it("recovers a unique lexical leader when both rankings nearly agree", () => {
+    const ranked = rankHybridCandidates({
+      lexical: [candidate("lexical", 0.84), candidate("semantic", 0.72)],
+      semantic: [
+        {
+          cardId: "card_semantic",
+          cardVersionId: "semantic",
+          similarity: LEXICAL_SEMANTIC_AGREEMENT_FLOOR + 0.003,
+        },
+        {
+          cardId: "card_lexical",
+          cardVersionId: "lexical",
+          similarity: LEXICAL_SEMANTIC_AGREEMENT_FLOOR,
+        },
+      ],
+      lexicalTopK: 2,
+    });
+
+    expect(
+      ranked.find((entry) => entry.versionId === "lexical")?.score,
+    ).toBe(DEFAULT_SELECTION_THRESHOLDS.admit);
+  });
+
+  it("does not recover a lexical leader outside the rank-agreement margin", () => {
+    const ranked = rankHybridCandidates({
+      lexical: [candidate("lexical", 0.84), candidate("semantic", 0.72)],
+      semantic: [
+        {
+          cardId: "card_semantic",
+          cardVersionId: "semantic",
+          similarity:
+            LEXICAL_SEMANTIC_AGREEMENT_FLOOR +
+            LEXICAL_SEMANTIC_AGREEMENT_MARGIN +
+            0.001,
+        },
+        {
+          cardId: "card_lexical",
+          cardVersionId: "lexical",
+          similarity: LEXICAL_SEMANTIC_AGREEMENT_FLOOR,
+        },
+      ],
+      lexicalTopK: 2,
+    });
+
+    expect(
+      ranked.find((entry) => entry.versionId === "lexical")?.score,
+    ).toBeLessThan(DEFAULT_SELECTION_THRESHOLDS.admit);
   });
 
   it("leaves a Card outside both top-K sets on its lexical score alone", () => {
@@ -301,25 +372,25 @@ describe("the mode and scoring pairing", () => {
       HYBRID_SCORING_POLICY_VERSION,
     );
     expect(scoringPolicyVersionFor("lexical_degraded")).toBe(
-      "selection-lexical-v3",
+      "selection-lexical-v4",
     );
   });
 
   it("accepts the two valid pairs", () => {
     expect(() =>
-      assertSelectionScoringPairing("hybrid", "selection-hybrid-v3"),
+      assertSelectionScoringPairing("hybrid", "selection-hybrid-v4"),
     ).not.toThrow();
     expect(() =>
-      assertSelectionScoringPairing("lexical_degraded", "selection-lexical-v3"),
+      assertSelectionScoringPairing("lexical_degraded", "selection-lexical-v4"),
     ).not.toThrow();
   });
 
   it("refuses every other combination", () => {
     expect(() =>
-      assertSelectionScoringPairing("hybrid", "selection-lexical-v3"),
+      assertSelectionScoringPairing("hybrid", "selection-lexical-v4"),
     ).toThrow(SelectionModeInvariantError);
     expect(() =>
-      assertSelectionScoringPairing("lexical_degraded", "selection-hybrid-v3"),
+      assertSelectionScoringPairing("lexical_degraded", "selection-hybrid-v4"),
     ).toThrow(SelectionModeInvariantError);
     expect(() =>
       assertSelectionScoringPairing("hybrid", "selection-hybrid-v1"),
