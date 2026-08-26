@@ -146,13 +146,17 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
     });
 
     it("covers a generated Card for every expected document section", () => {
+      const expectedCardCount = GENERATED_CARD_SELECTION_CASES.reduce(
+        (sum, testCase) => sum + testCase.sections.length,
+        0,
+      );
       expect(
         GENERATED_CARD_SELECTION_CASES.flatMap((testCase) =>
           testCase.sections.map((section) =>
             cardIdFor(cardRecords, testCase.document, section),
           ),
         ),
-      ).toHaveLength(11);
+      ).toHaveLength(expectedCardCount);
     });
   },
 );

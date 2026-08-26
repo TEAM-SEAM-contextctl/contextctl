@@ -37,6 +37,12 @@ export const GENERATED_CARD_SELECTION_CASES: readonly GeneratedCardSelectionCase
     sections: ["연차 부여 기준"],
   },
   {
+    id: "leave-half-day-deduction",
+    query: "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?",
+    document: "leave.md",
+    sections: ["반차"],
+  },
+  {
     id: "shipping-invoice",
     query: "운송장 번호는 언제부터 조회할 수 있나요?",
     document: "shipping.md",
