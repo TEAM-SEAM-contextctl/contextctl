@@ -1,50 +1,12 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import {
-  EmbeddingProviderFault,
-  openIngestionDatabase,
-} from "@contextctl/ingestion-indexing";
 
-import {
-  EMBEDDING_ASSETS_MISSING_GUIDANCE,
-  readDaemonStateIdentity,
-  runDaemon,
-} from "../main.js";
+import { EMBEDDING_ASSETS_MISSING_GUIDANCE } from "../embedding-guidance.js";
 import { parseCliArguments, usageText, type CliCommand } from "./arguments.js";
-import {
-  failed,
-  runCardsDecision,
-  runDemoInit,
-  runReachability,
-  runCardsList,
-  runCardsShow,
-  runDoctor,
-  runInstallAssets,
-  runPaths,
-  runIngest,
-  runQuery,
-  runSourceAdd,
-  runSourceList,
-  runSourceRemove,
-  runStatus,
-  type CommandOutcome,
-} from "./commands.js";
-import {
-  buildCliRuntime,
-  cliRuntimeOptions,
-  EmbeddingAssetsUnavailableError,
-  openRegistryOnlyRuntime,
-  preflightActiveEmbeddingConfiguration,
-  resolveCliEmbeddingRuntime,
-  type CliRuntime,
-  type RegistryOnlyRuntime,
-} from "./runtime.js";
+import type { CommandOutcome } from "./commands.js";
+import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
 import { resolveContextctlPaths } from "./paths.js";
-import { readSourcesFile, SourcesFileError, toSourceConfigurations } from "./sources-file.js";
-import { resolveCardMeaningBackend } from "./meaning-generator.js";
-import { resolveVectorBackend } from "../vector-backend.js";
-import { runStateBackupCommand } from "./state-backup-command.js";
 import { createCliTerminal } from "./terminal.js";
 import { EXIT_CODES } from "./exit-codes.js";
 
@@ -118,7 +80,11 @@ export async function runCli(input: {
     // Registry, durable Ingestion stores, the configured vector backend — so a
     // `serve` process and a `query` process see the same state.
     try {
-      await runServe(input.environment, input.workingDirectory ?? process.cwd());
+      const { runServeCommand } = await import("./serve-command.js");
+      await runServeCommand(
+        input.environment,
+        input.workingDirectory ?? process.cwd(),
+      );
       return EXIT_CODES.ok;
     } catch (error: unknown) {
       input.stderr(describeFailure(error));
@@ -139,6 +105,7 @@ export async function runCli(input: {
     // still stay inside the common failure boundary so a download, permission
     // or filesystem error becomes one diagnostic and exit 8, not a stack trace.
     if (command.kind === "install_assets") {
+      const { runInstallAssets } = await import("./commands.js");
       return emit(
         input,
         await runInstallAssets({
@@ -153,12 +120,14 @@ export async function runCli(input: {
       );
     }
     if (command.kind === "paths") {
+      const { runPaths } = await import("./paths-command.js");
       return emit(
         input,
         await runPaths({ environment: input.environment, workingDirectory }),
       );
     }
     if (command.kind === "doctor") {
+      const { runDoctor } = await import("./commands.js");
       return emit(
         input,
         await runDoctor({
@@ -173,6 +142,9 @@ export async function runCli(input: {
       command.kind === "backup_create" ||
       command.kind === "backup_restore"
     ) {
+      const { runStateBackupCommand } = await import(
+        "./state-backup-command.js"
+      );
       return emit(
         input,
         await runStateBackupCommand({
@@ -193,6 +165,7 @@ export async function runCli(input: {
       // database has to reach an operator as a sentence, and a branch outside it
       // reported the first `contextctl reachability` on a fresh machine as an
       // uncaught SQLite stack trace.
+      const { openRegistryOnlyRuntime } = await import("./runtime.js");
       const registry = openRegistryOnlyRuntime({
         environment: input.environment,
         workingDirectory,
@@ -235,7 +208,7 @@ function emit(
 }
 
 /**
- * The three commands that need Registry's database and nothing else.
+ * The Card and Registry inspection commands that need its database and nothing else.
  *
  * Switched in one place rather than with a nested conditional at the call site,
  * so that adding a fourth cannot silently fall through to whichever branch the
@@ -252,6 +225,13 @@ async function runRegistryOnlyCommand(
     readonly workingDirectory: string;
   },
 ): Promise<CommandOutcome> {
+  const {
+    runCardsDecision,
+    runCardsList,
+    runCardsShow,
+    runReachability,
+    runStatus,
+  } = await import("./commands.js");
   switch (command.kind) {
     case "cards_decision":
       return runCardsDecision(registry, command);
@@ -275,6 +255,12 @@ async function runWithoutRuntime(
   sourcesFile: string,
   workingDirectory: string,
 ): Promise<CommandOutcome> {
+  const {
+    runDemoInit,
+    runSourceAdd,
+    runSourceList,
+    runSourceRemove,
+  } = await import("./source-commands.js");
   switch (command.kind) {
     case "source_add":
       return runSourceAdd(command, sourcesFile, workingDirectory);
@@ -285,7 +271,11 @@ async function runWithoutRuntime(
     case "source_remove":
       return runSourceRemove(command.reference, sourcesFile);
     default:
-      return failed(`이 명령은 런타임 없이 실행할 수 없다: ${command.kind}`);
+      return {
+        stdout: "",
+        stderr: [`이 명령은 런타임 없이 실행할 수 없다: ${command.kind}`],
+        exitCode: EXIT_CODES.genericFailure,
+      };
   }
 }
 
@@ -293,6 +283,7 @@ async function runWithRuntime(
   cli: CliRuntime,
   command: CliCommand,
 ): Promise<CommandOutcome> {
+  const { failed, runIngest, runQuery } = await import("./commands.js");
   switch (command.kind) {
     case "ingest":
       return runIngest(cli, command.reference);
@@ -317,6 +308,7 @@ async function openRuntime(input: {
   readonly stderr: (text: string) => void;
   readonly workingDirectory?: string;
 }): Promise<CliRuntime> {
+  const { buildCliRuntime } = await import("./runtime.js");
   const seen = new Map<string, number>();
   const diagnostics = (message: string): void => {
     const count = (seen.get(message) ?? 0) + 1;
@@ -332,57 +324,6 @@ async function openRuntime(input: {
     diagnostics,
     ...(input.workingDirectory === undefined ? {} : { workingDirectory: input.workingDirectory }),
   });
-}
-
-/**
- * Starts the daemon under the CLI's own composition.
- *
- * It cannot reuse `buildCliRuntime`, which returns a runtime the caller closes;
- * a served process holds its databases open for its whole life. What it does
- * reuse is `cliRuntimeOptions`, so the two paths cannot drift into serving from
- * one Registry while the CLI writes to another.
- */
-async function runServe(
-  environment: Readonly<Partial<Record<string, string>>>,
-  workingDirectory: string,
-): Promise<void> {
-  // Resolve the required durable index before opening either database. A bad
-  // production composition must leave no checkpoint that can later make an
-  // ingest look complete while its vectors never existed.
-  const vectorBackend = resolveVectorBackend(environment);
-  const paths = resolveContextctlPaths(environment, workingDirectory);
-  const stateIdentity = readDaemonStateIdentity(environment);
-  const sources = await readSourcesFile(paths.sourcesFile);
-  await preflightActiveEmbeddingConfiguration(
-    environment,
-    paths,
-    stateIdentity,
-  );
-  const ingestionDatabase = openIngestionDatabase({
-    location: paths.ingestionDatabase,
-    ...stateIdentity,
-  });
-  const embeddingRuntime = await resolveCliEmbeddingRuntime({
-    environment,
-    paths,
-    ingestionDatabase,
-    stateIdentity,
-  });
-  const options = cliRuntimeOptions({
-    environment,
-    paths,
-    embeddingRuntime,
-    sourceConfigurations: toSourceConfigurations(sources),
-    ingestionDatabase,
-    vectorBackend,
-    stateIdentity,
-    meaningBackend: resolveCardMeaningBackend({
-      environment,
-      // stdout belongs to JSON-RPC from here on, so every notice goes to stderr.
-      onFallback: (message) => process.stderr.write(`${message}\n`),
-    }),
-  });
-  await runDaemon(environment, options);
 }
 
 /**
@@ -455,22 +396,31 @@ async function promptForConsent(write: (text: string) => void): Promise<boolean>
 
 /** Turns an exception into the one sentence an operator can act on. */
 function describeFailure(error: unknown): string {
-  if (error instanceof EmbeddingAssetsUnavailableError) {
+  if (error instanceof Error && error.name === "EmbeddingAssetsUnavailableError") {
     // Reported before the generic fault below, and with the pointer problem's
     // own sentence: the adapter's `embedding_artifact_unavailable` cannot say
     // which of several situations it is in, and this can.
     return [error.message, "", INSTALL_ASSETS_HINT].join("\n");
   }
   if (
-    error instanceof EmbeddingProviderFault &&
-    error.code === "embedding_artifact_unavailable"
+    error instanceof Error &&
+    error.name === "EmbeddingProviderFault" &&
+    errorCode(error) === "embedding_artifact_unavailable"
   ) {
     return INSTALL_ASSETS_HINT;
   }
-  if (error instanceof SourcesFileError) {
-    return `Source 설정 파일을 읽을 수 없다 (${error.code}): ${error.message}`;
+  if (error instanceof Error && error.name === "SourcesFileError") {
+    return `Source 설정 파일을 읽을 수 없다 (${errorCode(error) ?? "unknown"}): ${error.message}`;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+function errorCode(error: Error): string | undefined {
+  if (!("code" in error)) {
+    return undefined;
+  }
+  const code = (error as Error & { readonly code: unknown }).code;
+  return typeof code === "string" ? code : undefined;
 }
 
 /**

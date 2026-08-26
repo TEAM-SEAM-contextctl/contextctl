@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   inspectIngestionDatabase,
   verifyLocalEmbeddingAssets,
 } from "@contextctl/ingestion-indexing";
@@ -446,7 +447,10 @@ async function inspectEmbeddingAssets(
   // in this file is what let the diagnosis and the composition disagree about
   // which directory the assets are in — every check passed and the first embed
   // failed. There is one answer now and both callers ask for it.
-  const resolution = await resolveActiveAssetDirectory(directory);
+  const resolution = await resolveActiveAssetDirectory(
+    directory,
+    DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+  );
   if (resolution.status === "unavailable") {
     return diagnosis(
       "embedding-assets",

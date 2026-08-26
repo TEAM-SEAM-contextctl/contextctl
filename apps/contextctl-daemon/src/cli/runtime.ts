@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   isDocumentRetrievalEmbeddingProfile,
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   openIngestionDatabase,
@@ -397,7 +398,10 @@ export async function preflightActiveEmbeddingConfiguration(
   ) {
     return;
   }
-  const assets = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+  const assets = await resolveActiveAssetDirectory(
+    paths.embeddingAssetDirectory,
+    DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+  );
   if (assets.status === "unavailable") {
     throw new EmbeddingAssetsUnavailableError(assets.problem);
   }
@@ -456,6 +460,7 @@ export async function resolveCliEmbeddingRuntime(input: {
   if (!activeLocal) return { configuration, profiles, requiredBindings };
   const assets = await resolveActiveAssetDirectory(
     input.paths.embeddingAssetDirectory,
+    DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   );
   if (assets.status === "unavailable") {
     throw new EmbeddingAssetsUnavailableError(assets.problem);

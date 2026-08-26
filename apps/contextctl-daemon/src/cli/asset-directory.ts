@@ -1,10 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import {
-  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
-  LOCAL_EMBEDDING_ACTIVE_POINTER_FILE,
-} from "@contextctl/ingestion-indexing";
+export const LOCAL_EMBEDDING_ACTIVE_POINTER_FILE = "active.json";
 
 /**
  * The one place that decides which directory the embedding assets are in.
@@ -67,7 +64,44 @@ export type AssetDirectoryResolution =
  */
 export async function resolveActiveAssetDirectory(
   managedRoot: string,
+  requiredManifestSha256: string,
 ): Promise<AssetDirectoryResolution> {
+  const resolution = await inspectActiveAssetDirectory(managedRoot);
+  if (resolution.status === "unavailable") {
+    return resolution;
+  }
+  if (resolution.manifestSha256 !== requiredManifestSha256) {
+    return {
+      status: "unavailable",
+      problem: {
+        kind: "revision_mismatch",
+        installed: resolution.manifestSha256,
+        required: requiredManifestSha256,
+      },
+    };
+  }
+  return { status: "resolved", directory: resolution.directory };
+}
+
+/**
+ * Reads the installer's active pointer without choosing a model revision.
+ *
+ * Informational commands use this form because they report what is on disk,
+ * not whether that revision is valid for a runtime. Runtime and health paths
+ * must call `resolveActiveAssetDirectory` with the profile digest they pin.
+ * Keeping that digest at those composition points avoids loading the whole
+ * Ingestion package merely to print `contextctl paths`.
+ */
+export async function inspectActiveAssetDirectory(
+  managedRoot: string,
+): Promise<
+  | {
+      readonly status: "resolved";
+      readonly directory: string;
+      readonly manifestSha256: string;
+    }
+  | { readonly status: "unavailable"; readonly problem: AssetDirectoryProblem }
+> {
   const pointerPath = resolve(managedRoot, LOCAL_EMBEDDING_ACTIVE_POINTER_FILE);
 
   let raw: Buffer;
@@ -100,17 +134,6 @@ export async function resolveActiveAssetDirectory(
       problem: { kind: "pointer_unreadable", pointerPath },
     };
   }
-  if (pointer.manifestSha256 !== DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256) {
-    return {
-      status: "unavailable",
-      problem: {
-        kind: "revision_mismatch",
-        installed: pointer.manifestSha256,
-        required: DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
-      },
-    };
-  }
-
   const directory = resolve(managedRoot, pointer.revisionDirectory);
   if (!isInside(managedRoot, directory)) {
     // A pointer is a file an operator can edit, so it is input rather than
@@ -121,7 +144,11 @@ export async function resolveActiveAssetDirectory(
       problem: { kind: "escapes_root", revisionDirectory: pointer.revisionDirectory },
     };
   }
-  return { status: "resolved", directory };
+  return {
+    status: "resolved",
+    directory,
+    manifestSha256: pointer.manifestSha256,
+  };
 }
 
 /**

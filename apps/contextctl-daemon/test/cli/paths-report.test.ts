@@ -93,6 +93,32 @@ describe("paths report", () => {
     expect(values).toContain(revision);
   });
 
+  it("reports bytes actually installed instead of a compiled-in estimate", async () => {
+    const home = await emptyHome();
+    const digest = "test-revision";
+    const revision = join(home, "embedding-assets", "revisions", digest);
+    await mkdir(join(revision, "nested"), { recursive: true });
+    await writeFile(join(revision, "model.onnx"), Buffer.alloc(17), "utf8");
+    await writeFile(join(revision, "nested", "tokenizer.json"), Buffer.alloc(29), "utf8");
+    await writeFile(
+      join(home, "embedding-assets", "active.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        manifestSha256: digest,
+        revisionDirectory: join("revisions", digest),
+      }),
+      "utf8",
+    );
+
+    const report = await buildPathsReport({ environment: { CONTEXTCTL_HOME: home } });
+    const revisionEntry = report.groups
+      .flatMap((group) => group.entries)
+      .find((entry) => entry.label === "현재 revision");
+
+    expect(revisionEntry).toMatchObject({ kind: "present", bytes: 46 });
+    expect(revisionEntry?.note).toContain("실제 설치 용량");
+  });
+
   it("says the model is absent rather than guessing a revision path", async () => {
     const home = await emptyHome();
 

@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
-import { join } from "node:path";
 
 import {
   buildReachabilityReport,
@@ -18,6 +17,7 @@ import {
   ResolveContextFailure,
 } from "@contextctl/selection-delivery";
 import {
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   StaticVectorIndexConnectorRegistry,
 } from "@contextctl/ingestion-indexing";
 
@@ -34,7 +34,6 @@ import {
   resolveActiveAssetDirectory,
 } from "./asset-directory.js";
 import { runDiagnosis, type DiagnosisReport } from "./doctor.js";
-import { initializeBundledDemo } from "./demo.js";
 import { readNonEmpty, resolveContextctlPaths } from "./paths.js";
 import {
   judgeLanes,
@@ -52,7 +51,6 @@ import {
   renderCardDetail,
   renderCompactCardListings,
   renderResolution,
-  renderSourceListing,
   type CardListing,
 } from "./render.js";
 import type { RegistryIntakeResult } from "../registry-intake.js";
@@ -78,13 +76,14 @@ import {
 } from "../embedding/required-bindings.js";
 import type { EmbeddingObservation } from "../embedding/readiness.js";
 import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
-import {
-  addSource,
-  defaultReferenceFor,
-  readSourcesFile,
-  removeSource,
-  writeSourcesFile,
-} from "./sources-file.js";
+import { readSourcesFile } from "./sources-file.js";
+
+export {
+  runDemoInit,
+  runSourceAdd,
+  runSourceList,
+  runSourceRemove,
+} from "./source-commands.js";
 
 /**
  * What a command produced, before anything is written anywhere.
@@ -114,83 +113,6 @@ export function failed(message: string): CommandOutcome {
 /** Fails with a code other than the default, for outcomes a script must tell apart. */
 export function failedWith(code: ExitCode, message: string): CommandOutcome {
   return { stdout: "", stderr: [message], exitCode: code };
-}
-
-export async function runDemoInit(
-  command: Extract<CliCommand, { kind: "demo_init" }>,
-  workingDirectory: string,
-): Promise<CommandOutcome> {
-  const initialized = await initializeBundledDemo({
-    destination: command.destination,
-    workingDirectory,
-  });
-  return ok(
-    [
-      `데모 문서 ${initialized.documents.length}개를 준비했다: ${initialized.directory}`,
-      ...initialized.documents.map((name) => `  ${name}`),
-      "",
-      `다음: contextctl source add ${JSON.stringify(join(initialized.directory, "leave.md"))}`,
-    ].join("\n"),
-  );
-}
-
-/* ------------------------------------------------------------------ source */
-
-/**
- * Registers a Source, and deliberately does not open a runtime to do it.
- *
- * Registration is a statement about a file on disk; it needs no embedding
- * assets, no databases and no model. Building the runtime here would make
- * `contextctl source add` fail on a machine where the 390MB artifact is not
- * installed yet — which is precisely the machine an operator is standing at when
- * they run it for the first time.
- */
-export async function runSourceAdd(
-  command: Extract<CliCommand, { kind: "source_add" }>,
-  sourcesFile: string,
-  workingDirectory: string,
-): Promise<CommandOutcome> {
-  const document = await readSourcesFile(sourcesFile);
-  const reference = command.reference ?? defaultReferenceFor(command.path);
-  const updated = addSource(document, {
-    reference,
-    path: command.path,
-    workingDirectory,
-    ...(command.displayName === undefined ? {} : { displayName: command.displayName }),
-  });
-  await writeSourcesFile(sourcesFile, updated);
-
-  const added = updated.sources[reference];
-  return ok(
-    [
-      `Source를 등록했다: ${reference}`,
-      `  경로: ${added?.path ?? command.path}`,
-      "",
-      "다음: contextctl ingest",
-    ].join("\n"),
-  );
-}
-
-export async function runSourceList(sourcesFile: string): Promise<CommandOutcome> {
-  const document = await readSourcesFile(sourcesFile);
-  return ok(
-    renderSourceListing(
-      Object.entries(document.sources).map(([reference, source]) => ({
-        reference,
-        path: source.path,
-        displayName: source.displayName,
-      })),
-    ),
-  );
-}
-
-export async function runSourceRemove(
-  reference: string,
-  sourcesFile: string,
-): Promise<CommandOutcome> {
-  const document = await readSourcesFile(sourcesFile);
-  await writeSourcesFile(sourcesFile, removeSource(document, reference));
-  return ok(`Source를 제거했다: ${reference}`);
 }
 
 /* ------------------------------------------------------------------ ingest */
@@ -837,7 +759,10 @@ async function observeAssets(directory: string): Promise<AssetObservation> {
     // The same resolver `doctor` and the runtime use. Reading `active.json` here
     // instead is what once let the diagnosis and the composition disagree about
     // which revision was active.
-    const resolution = await resolveActiveAssetDirectory(directory);
+    const resolution = await resolveActiveAssetDirectory(
+      directory,
+      DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+    );
     return resolution.status === "unavailable"
       ? {
           status: "unavailable",

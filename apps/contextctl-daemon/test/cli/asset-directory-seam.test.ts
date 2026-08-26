@@ -1,10 +1,17 @@
-import { DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST } from "@contextctl/ingestion-indexing";
+import {
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+  LOCAL_EMBEDDING_ACTIVE_POINTER_FILE as INGESTION_ACTIVE_POINTER_FILE,
+} from "@contextctl/ingestion-indexing";
 import { mkdir, mkdtemp, open as openFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveActiveAssetDirectory } from "../../src/cli/asset-directory.js";
+import {
+  LOCAL_EMBEDDING_ACTIVE_POINTER_FILE as DAEMON_ACTIVE_POINTER_FILE,
+  resolveActiveAssetDirectory,
+} from "../../src/cli/asset-directory.js";
 import { runDiagnosis } from "../../src/cli/doctor.js";
 import { resolveContextctlPaths } from "../../src/cli/paths.js";
 
@@ -73,6 +80,10 @@ function manifestDigest(): string {
 }
 
 describe("doctor and the composition resolve one asset directory", () => {
+  it("keeps the daemon's lightweight pointer name aligned with the installer", () => {
+    expect(DAEMON_ACTIVE_POINTER_FILE).toBe(INGESTION_ACTIVE_POINTER_FILE);
+  });
+
   it("hands the adapter the directory the diagnosis approved", async () => {
     const home = await installFakeAssets();
     const environment = { CONTEXTCTL_HOME: home };
@@ -80,7 +91,10 @@ describe("doctor and the composition resolve one asset directory", () => {
 
     const report = await runDiagnosis({ environment });
     const assets = report.steps.find((step) => step.name === "embedding-assets");
-    const resolution = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+    const resolution = await resolveActiveAssetDirectory(
+      paths.embeddingAssetDirectory,
+      DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+    );
 
     // The diagnosis says installed...
     expect(assets?.status).toBe("ok");
@@ -104,7 +118,10 @@ describe("doctor and the composition resolve one asset directory", () => {
     // is the file the adapter opens first, and its absence at the root is the
     // whole failure — stated here as a fact about the layout so that a future
     // installer that flattens it fails this test rather than the demo.
-    const resolution = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+    const resolution = await resolveActiveAssetDirectory(
+      paths.embeddingAssetDirectory,
+      DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+    );
     expect(resolution.status).toBe("resolved");
     if (resolution.status !== "resolved") return;
 
@@ -135,7 +152,10 @@ describe("doctor and the composition resolve one asset directory", () => {
     expect(Buffer.byteLength(padded, "utf8")).toBeGreaterThan(8 * 1024);
     await writeFile(pointerPath, padded, "utf8");
 
-    const resolution = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+    const resolution = await resolveActiveAssetDirectory(
+      paths.embeddingAssetDirectory,
+      DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+    );
 
     expect(resolution.status).toBe("unavailable");
     if (resolution.status !== "unavailable") return;
@@ -149,7 +169,10 @@ describe("doctor and the composition resolve one asset directory", () => {
     const paths = resolveContextctlPaths({ CONTEXTCTL_HOME: home });
     await writeFile(join(paths.embeddingAssetDirectory, "active.json"), "", "utf8");
 
-    const resolution = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+    const resolution = await resolveActiveAssetDirectory(
+      paths.embeddingAssetDirectory,
+      DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+    );
 
     // Zero bytes is a file that exists, so it is not `not_installed`; it is a
     // pointer that says nothing. The installer draws the same line.
@@ -163,7 +186,10 @@ describe("doctor and the composition resolve one asset directory", () => {
     directories.push(home);
     const paths = resolveContextctlPaths({ CONTEXTCTL_HOME: home });
 
-    const resolution = await resolveActiveAssetDirectory(paths.embeddingAssetDirectory);
+    const resolution = await resolveActiveAssetDirectory(
+      paths.embeddingAssetDirectory,
+      DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+    );
 
     // The adapter folds every asset failure into one opaque code. Keeping this
     // case distinct is what lets the CLI answer "install it" instead of "your
