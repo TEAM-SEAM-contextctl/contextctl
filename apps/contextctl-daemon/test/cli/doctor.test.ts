@@ -1,4 +1,14 @@
-import { mkdtemp, mkdir, open, readFile, rm, truncate, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,8 +18,10 @@ import {
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   LOCAL_EMBEDDING_ACTIVE_POINTER_FILE,
   LOCAL_EMBEDDING_ASSET_MANIFEST_FILE,
+  openIngestionDatabase,
   serializeLocalEmbeddingAssetManifest,
 } from "@contextctl/ingestion-indexing";
+import { openRegistryDatabase } from "@contextctl/registry-lifecycle";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -144,6 +156,23 @@ async function writeOneSource(home: string): Promise<void> {
       { reference: "source.docs", path: join(home, "docs.md") },
     ),
   );
+}
+
+function initializeState(
+  home: string,
+  stateNamespaceId = "state_local",
+  securityDomain = "local",
+): void {
+  openRegistryDatabase({
+    location: join(home, "registry.db"),
+    stateNamespaceId,
+    securityDomain,
+  }).close();
+  openIngestionDatabase({
+    location: join(home, "ingestion.db"),
+    stateNamespaceId,
+    securityDomain,
+  }).close();
 }
 
 describe("runDiagnosis / embedding assets", () => {
@@ -460,6 +489,7 @@ describe("runDiagnosis / report", () => {
     const home = await makeHome();
     await installFakeAssets(home);
     await writeOneSource(home);
+    initializeState(home);
 
     const everything = await runDiagnosis({
       environment: healthyEnvironment(home),
@@ -499,16 +529,74 @@ describe("runDiagnosis / report", () => {
     }
   });
 
-  it("opens both stores and closes them, so a second run succeeds", async () => {
+  it("reports missing stores without creating them, even on a repeated run", async () => {
     const home = await makeHome();
 
     const first = await runDiagnosis({ environment: { CONTEXTCTL_HOME: home } });
-    const second = await runDiagnosis({ environment: { CONTEXTCTL_HOME: home } });
+    const second = await runDiagnosis({
+      environment: { CONTEXTCTL_HOME: home },
+      deep: true,
+    });
 
     for (const report of [first, second]) {
-      expect(stepNamed(report, "registry-database").status).toBe("ok");
-      expect(stepNamed(report, "ingestion-database").status).toBe("ok");
+      expect(stepNamed(report, "registry-database").status).toBe("warn");
+      expect(stepNamed(report, "ingestion-database").status).toBe("warn");
     }
+    expect(await readdir(home)).not.toContain("registry.db");
+    expect(await readdir(home)).not.toContain("ingestion.db");
+  });
+
+  it("does not create a missing home directory", async () => {
+    const root = await makeHome();
+    const home = join(root, "not-created-by-doctor");
+
+    const report = await runDiagnosis({ environment: { CONTEXTCTL_HOME: home } });
+
+    expect(stepNamed(report, "home-directory").status).toBe("warn");
+    await expect(stat(home)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leaves compatible stores byte-for-byte unchanged", async () => {
+    const home = await makeHome();
+    initializeState(home);
+    const registry = join(home, "registry.db");
+    const ingestion = join(home, "ingestion.db");
+    const beforeRegistry = await readFile(registry);
+    const beforeIngestion = await readFile(ingestion);
+    const beforeFiles = await readdir(home);
+
+    const report = await runDiagnosis({ environment: { CONTEXTCTL_HOME: home } });
+
+    expect(stepNamed(report, "registry-database").status).toBe("ok");
+    expect(stepNamed(report, "ingestion-database").status).toBe("ok");
+    expect(await readFile(registry)).toEqual(beforeRegistry);
+    expect(await readFile(ingestion)).toEqual(beforeIngestion);
+    expect(await readdir(home)).toEqual(beforeFiles);
+  });
+
+  it("reports identity mismatch without migrating either store", async () => {
+    const home = await makeHome();
+    initializeState(home, "state_original", "original");
+    const registry = join(home, "registry.db");
+    const ingestion = join(home, "ingestion.db");
+    const beforeRegistry = await readFile(registry);
+    const beforeIngestion = await readFile(ingestion);
+
+    const report = await runDiagnosis({
+      environment: {
+        CONTEXTCTL_HOME: home,
+        CONTEXTCTL_STATE_NAMESPACE_ID: "state_other",
+        CONTEXTCTL_SECURITY_DOMAIN: "other",
+      },
+    });
+
+    for (const name of ["registry-database", "ingestion-database"]) {
+      const step = stepNamed(report, name);
+      expect(step.status).toBe("fail");
+      expect(step.detail).toContain("identity_mismatch");
+    }
+    expect(await readFile(registry)).toEqual(beforeRegistry);
+    expect(await readFile(ingestion)).toEqual(beforeIngestion);
   });
 
   it("fails the home directory step when the path cannot be written", async () => {

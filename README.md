@@ -111,6 +111,10 @@ contextctl cards approve <cardId>
 contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
 
+`doctor` is read-only. On a fresh home, missing Registry and Ingestion stores
+are warnings, not failures; the first state-changing command creates them.
+Set the state namespace and security domain before that first command.
+
 Step 6 answers like this — what it chose, and why you can trust it, together.
 
 ```

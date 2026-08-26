@@ -103,6 +103,10 @@ contextctl cards approve <cardId>
 contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
 
+`doctor`는 읽기 전용입니다. 새 홈에서 Registry·Ingestion 저장소가 없다는 표시는 실패가 아니라
+경고이며, 첫 상태 변경 명령이 저장소를 만듭니다. 그 전에 상태 namespace와 security domain을
+확정하십시오.
+
 4번에서 이렇게 나옵니다.
 
 ```

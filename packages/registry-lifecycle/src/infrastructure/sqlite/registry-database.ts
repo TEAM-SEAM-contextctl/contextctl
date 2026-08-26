@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 
 /**
  * The owner mark Registry stamps into its database file's header.
@@ -38,6 +40,22 @@ export interface OpenRegistryDatabaseOptions {
   readonly securityDomain: string;
 }
 
+export type RegistryDatabaseInspectionProblem =
+  | RegistryDatabaseIdentityErrorCode
+  | "schema_older";
+
+export type RegistryDatabaseInspection =
+  | { readonly status: "missing" }
+  | {
+      readonly status: "compatible";
+      readonly schemaVersion: typeof REGISTRY_DATABASE_SCHEMA_VERSION;
+    }
+  | {
+      readonly status: "incompatible";
+      readonly code: RegistryDatabaseInspectionProblem;
+    }
+  | { readonly status: "unreadable"; readonly detail: string };
+
 /**
  * The file at the configured location belongs to something else.
  *
@@ -69,12 +87,7 @@ export function openRegistryDatabase(
   options: OpenRegistryDatabaseOptions,
 ): DatabaseSync {
   const { location, stateNamespaceId, securityDomain } = options;
-  if (location.trim() === "") {
-    throw new TypeError("Registry database location is invalid");
-  }
-  if (stateNamespaceId.trim() === "" || securityDomain.trim() === "") {
-    throw new TypeError("Registry database identity is invalid");
-  }
+  validateRegistryDatabaseOptions(options);
   const database = new DatabaseSync(location);
   try {
     database.exec("PRAGMA foreign_keys = ON");
@@ -117,6 +130,89 @@ export function openRegistryDatabase(
   } catch (error) {
     database.close();
     throw error;
+  }
+}
+
+/**
+ * Inspects an existing Registry database without creating or migrating it.
+ *
+ * This is deliberately a separate surface from `openRegistryDatabase`:
+ * opening is a state transition that may claim a blank file and run a
+ * migration, while inspection is an observation and must be safe for health
+ * checks, read-only mounts and pre-flight validation. The read-only SQLite
+ * handle is never configured for WAL and every validation below issues only
+ * read statements.
+ */
+export function inspectRegistryDatabase(
+  options: OpenRegistryDatabaseOptions,
+): RegistryDatabaseInspection {
+  const { location, stateNamespaceId, securityDomain } = options;
+  validateRegistryDatabaseOptions(options);
+  if (location === ":memory:" || !existsSync(location)) {
+    return { status: "missing" };
+  }
+
+  let database: DatabaseSync | undefined;
+  try {
+    database = openInspectionDatabase(location);
+    const state = assertDatabaseClaimable(database);
+    if (state !== "registry") {
+      throw new RegistryDatabaseIdentityError("unidentified_schema");
+    }
+    const schemaVersion = readSchemaVersion(database);
+    if (schemaVersion > REGISTRY_DATABASE_SCHEMA_VERSION) {
+      throw new RegistryDatabaseIdentityError("schema_newer");
+    }
+    if (schemaVersion < REGISTRY_DATABASE_SCHEMA_VERSION) {
+      return { status: "incompatible", code: "schema_older" };
+    }
+    assertExpectedSchema(database);
+    assertRecordedIdentity(database, stateNamespaceId, securityDomain);
+    assertHealthy(database);
+    return {
+      status: "compatible",
+      schemaVersion: REGISTRY_DATABASE_SCHEMA_VERSION,
+    };
+  } catch (error) {
+    if (error instanceof RegistryDatabaseIdentityError) {
+      return { status: "incompatible", code: error.code };
+    }
+    return {
+      status: "unreadable",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    database?.close();
+  }
+}
+
+function openInspectionDatabase(location: string): DatabaseSync {
+  if (existsSync(`${location}-wal`) && existsSync(`${location}-shm`)) {
+    // A live writer has already created the WAL coordination files. Reusing
+    // them lets inspection see committed WAL frames without introducing a new
+    // filesystem entry. The connection itself is still SQLite read-only.
+    return new DatabaseSync(location, { readOnly: true });
+  }
+  const url = pathToFileURL(location);
+  // A plain read-only WAL connection may create `-wal` and `-shm` sidecars in
+  // an otherwise clean directory. `immutable=1` opens the checkpointed main
+  // database without any filesystem write. Identity and schema are stable
+  // control-plane metadata, so that snapshot is the correct inspection target.
+  url.searchParams.set("immutable", "1");
+  return new DatabaseSync(url, { readOnly: true });
+}
+
+function validateRegistryDatabaseOptions(
+  options: OpenRegistryDatabaseOptions,
+): void {
+  if (options.location.trim() === "") {
+    throw new TypeError("Registry database location is invalid");
+  }
+  if (
+    options.stateNamespaceId.trim() === "" ||
+    options.securityDomain.trim() === ""
+  ) {
+    throw new TypeError("Registry database identity is invalid");
   }
 }
 

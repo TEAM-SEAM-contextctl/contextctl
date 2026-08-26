@@ -173,11 +173,14 @@ export {
   type OpenAiCompatibleGeneratorConfig,
 } from "./infrastructure/llm/openai-compatible-card-meaning-generator.js";
 export {
+  inspectRegistryDatabase,
   openRegistryDatabase,
   RegistryDatabaseIdentityError,
   REGISTRY_DATABASE_APPLICATION_ID,
   REGISTRY_DATABASE_SCHEMA_VERSION,
   type OpenRegistryDatabaseOptions,
+  type RegistryDatabaseInspection,
+  type RegistryDatabaseInspectionProblem,
   type RegistryDatabaseIdentityErrorCode,
 } from "./infrastructure/sqlite/registry-database.js";
 export { SqliteCardStore } from "./infrastructure/sqlite/sqlite-card-store.js";
