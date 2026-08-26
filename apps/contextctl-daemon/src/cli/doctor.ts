@@ -98,9 +98,10 @@ const ASSET_REMEDY =
  *
  * Sequential rather than concurrent so the report reads in the order an
  * operator fixes things — the environment first, then the state, then the
- * optional backends. No step creates state: a fresh install stays fresh after
- * diagnosis, and an existing database is opened read-only by its owning
- * package.
+ * optional backends. No step creates persistent application state: a fresh
+ * install stays fresh after diagnosis, directory permission probes are
+ * removed immediately, and an existing database is opened read-only by its
+ * owning package.
  */
 export async function runDiagnosis(
   input: DiagnosisInput,
