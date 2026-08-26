@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 
 import { isUuidV7Id } from "../domain/model-validation.js";
 
@@ -17,6 +19,22 @@ export type IngestionDatabaseSchemaErrorCode =
   | "schema_invalid"
   | "schema_newer";
 
+export type IngestionDatabaseInspectionProblem =
+  | IngestionDatabaseSchemaErrorCode
+  | "schema_older";
+
+export type IngestionDatabaseInspection =
+  | { readonly status: "missing" }
+  | {
+      readonly status: "compatible";
+      readonly schemaVersion: typeof INGESTION_DATABASE_SCHEMA_VERSION;
+    }
+  | {
+      readonly status: "incompatible";
+      readonly code: IngestionDatabaseInspectionProblem;
+    }
+  | { readonly status: "unreadable"; readonly detail: string };
+
 export class IngestionDatabaseSchemaError extends Error {
   constructor(readonly code: IngestionDatabaseSchemaErrorCode) {
     super(`Ingestion database schema is incompatible: ${code}`);
@@ -29,16 +47,11 @@ export function openIngestionDatabase(
   options: OpenIngestionDatabaseOptions,
 ): DatabaseSync {
   const { location, stateNamespaceId, securityDomain } = options;
-  if (location.trim() === "") {
-    throw new TypeError("Ingestion database location is invalid");
-  }
+  validateIngestionDatabaseOptions(options);
   const database = new DatabaseSync(location);
   try {
     database.exec("PRAGMA foreign_keys = ON");
     database.exec("PRAGMA busy_timeout = 5000");
-    if (stateNamespaceId.trim() === "" || securityDomain.trim() === "") {
-      throw new TypeError("Ingestion database identity is invalid");
-    }
     assertDatabaseClaimable(database);
     if (location !== ":memory:") {
       configureDurability(database);
@@ -50,6 +63,90 @@ export function openIngestionDatabase(
   } catch (error) {
     database.close();
     throw error;
+  }
+}
+
+/**
+ * Inspects an existing Ingestion database without claiming or migrating it.
+ *
+ * `openIngestionDatabase` is intentionally mutating: it owns schema migration,
+ * identity stamping and WAL durability. Health checks need the opposite
+ * contract, so this path opens SQLite read-only and accepts only the exact
+ * schema this build already understands.
+ */
+export function inspectIngestionDatabase(
+  options: OpenIngestionDatabaseOptions,
+): IngestionDatabaseInspection {
+  const { location, stateNamespaceId, securityDomain } = options;
+  validateIngestionDatabaseOptions(options);
+  if (location === ":memory:" || !existsSync(location)) {
+    return { status: "missing" };
+  }
+
+  let database: DatabaseSync | undefined;
+  try {
+    database = openInspectionDatabase(location);
+    const applicationId = readApplicationId(database);
+    if (applicationId !== INGESTION_DATABASE_APPLICATION_ID) {
+      throw new IngestionDatabaseSchemaError(
+        applicationId === 0 ? "schema_invalid" : "identity_mismatch",
+      );
+    }
+    const schemaVersion = readSchemaVersion(database);
+    if (schemaVersion > INGESTION_DATABASE_SCHEMA_VERSION) {
+      throw new IngestionDatabaseSchemaError("schema_newer");
+    }
+    if (schemaVersion < INGESTION_DATABASE_SCHEMA_VERSION) {
+      return { status: "incompatible", code: "schema_older" };
+    }
+    assertExpectedSchema(database);
+    assertDatabaseIdentity(database, stateNamespaceId, securityDomain);
+    assertPersistedIdentityFormat(database);
+    assertHealthy(database);
+    return {
+      status: "compatible",
+      schemaVersion: INGESTION_DATABASE_SCHEMA_VERSION,
+    };
+  } catch (error) {
+    if (error instanceof IngestionDatabaseSchemaError) {
+      return { status: "incompatible", code: error.code };
+    }
+    return {
+      status: "unreadable",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    database?.close();
+  }
+}
+
+function openInspectionDatabase(location: string): DatabaseSync {
+  if (existsSync(`${location}-wal`) && existsSync(`${location}-shm`)) {
+    // A live writer has already created the WAL coordination files. Reusing
+    // them lets inspection see committed WAL frames without introducing a new
+    // filesystem entry. The connection itself is still SQLite read-only.
+    return new DatabaseSync(location, { readOnly: true });
+  }
+  const url = pathToFileURL(location);
+  // A plain read-only WAL connection may create `-wal` and `-shm` sidecars in
+  // an otherwise clean directory. `immutable=1` observes the checkpointed
+  // database file without changing the source. Schema and state identity are
+  // stable metadata and do not depend on application rows still in a live WAL.
+  url.searchParams.set("immutable", "1");
+  return new DatabaseSync(url, { readOnly: true });
+}
+
+function validateIngestionDatabaseOptions(
+  options: OpenIngestionDatabaseOptions,
+): void {
+  if (options.location.trim() === "") {
+    throw new TypeError("Ingestion database location is invalid");
+  }
+  if (
+    options.stateNamespaceId.trim() === "" ||
+    options.securityDomain.trim() === ""
+  ) {
+    throw new TypeError("Ingestion database identity is invalid");
   }
 }
 

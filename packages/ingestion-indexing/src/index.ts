@@ -299,7 +299,10 @@ export {
   INGESTION_DATABASE_APPLICATION_ID,
   INGESTION_DATABASE_SCHEMA_VERSION,
   IngestionDatabaseSchemaError,
+  inspectIngestionDatabase,
   openIngestionDatabase,
+  type IngestionDatabaseInspection,
+  type IngestionDatabaseInspectionProblem,
   type IngestionDatabaseSchemaErrorCode,
 } from "./infrastructure/sqlite-ingestion-database.js";
 export {

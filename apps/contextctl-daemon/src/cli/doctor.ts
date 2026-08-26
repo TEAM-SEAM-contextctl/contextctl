@@ -1,14 +1,13 @@
-import { randomBytes } from "node:crypto";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
-  openIngestionDatabase,
+  inspectIngestionDatabase,
   verifyLocalEmbeddingAssets,
 } from "@contextctl/ingestion-indexing";
-import { openRegistryDatabase } from "@contextctl/registry-lifecycle";
+import { inspectRegistryDatabase } from "@contextctl/registry-lifecycle";
 
 import {
   readDaemonStateIdentity,
@@ -97,12 +96,11 @@ const ASSET_REMEDY =
 /**
  * Runs every check in order and reports all of them.
  *
- * Sequential rather than concurrent, and the order is load-bearing rather than
- * cosmetic: `home-directory` creates the directory that the two database steps
- * then open files inside, so running them in parallel would report two
- * spurious failures whenever the real problem is the home directory. It also
- * reads top to bottom the way an operator fixes things — the environment
- * first, then the state, then the optional backends.
+ * Sequential rather than concurrent so the report reads in the order an
+ * operator fixes things — the environment first, then the state, then the
+ * optional backends. No step creates state: a fresh install stays fresh after
+ * diagnosis, and an existing database is opened read-only by its owning
+ * package.
  */
 export async function runDiagnosis(
   input: DiagnosisInput,
@@ -195,7 +193,7 @@ function checkNodeVersion(): DiagnosisStep {
 }
 
 /**
- * The state root, checked by actually writing to it.
+ * The state root, checked with an ephemeral write probe.
  *
  * A `stat` would tell us the directory exists and would tell us its mode bits,
  * and neither answers the question. Permission is decided by the effective
@@ -204,26 +202,76 @@ function checkNodeVersion(): DiagnosisStep {
  * check whose success means what the operator needs it to mean.
  */
 async function checkHomeDirectory(home: string): Promise<DiagnosisStep> {
-  const probe = join(home, `.doctor-${randomBytes(6).toString("hex")}.tmp`);
   try {
-    await mkdir(home, { recursive: true });
-    await writeFile(probe, "contextctl doctor\n", { flag: "wx" });
+    const metadata = await stat(home);
+    if (!metadata.isDirectory()) {
+      return diagnosis(
+        "home-directory",
+        "fail",
+        `상태 경로가 디렉터리가 아닙니다: ${home}`,
+        "CONTEXTCTL_HOME 으로 디렉터리 경로를 지정하세요.",
+      );
+    }
+    const probe = await mkdtemp(join(home, ".contextctl-doctor-"));
+    try {
+      await stat(probe);
+    } finally {
+      await rm(probe, { recursive: true, force: true }).catch(() => undefined);
+    }
     return diagnosis(
       "home-directory",
       "ok",
       `상태 디렉터리에 읽고 쓸 수 있습니다: ${home}`,
     );
   } catch (error) {
+    if (isMissingPath(error)) {
+      return checkMissingHomeDirectory(home);
+    }
     return diagnosis(
       "home-directory",
       "fail",
-      `상태 디렉터리를 만들거나 쓸 수 없습니다: ${home} (${describeError(error)})`,
+      `상태 디렉터리를 읽거나 쓸 수 없습니다: ${home} (${describeError(error)})`,
       "권한을 확인하거나 CONTEXTCTL_HOME 으로 쓸 수 있는 경로를 지정하세요.",
     );
-  } finally {
-    // Best effort: a probe left behind is litter, not a failure, and reporting
-    // it would bury the finding the operator actually needs.
-    await rm(probe, { force: true }).catch(() => undefined);
+  }
+}
+
+async function checkMissingHomeDirectory(home: string): Promise<DiagnosisStep> {
+  try {
+    const parent = await nearestExistingDirectory(dirname(home));
+    const probe = await mkdtemp(join(parent, ".contextctl-doctor-"));
+    await rm(probe, { recursive: true, force: true });
+    return diagnosis(
+      "home-directory",
+      "warn",
+      `상태 디렉터리가 아직 없습니다. 필요할 때 만들 수 있는 경로입니다: ${home}`,
+      "첫 Source 등록 또는 실행 명령이 상태 디렉터리를 만들며, doctor 자체는 만들지 않습니다.",
+    );
+  } catch (error) {
+    return diagnosis(
+      "home-directory",
+      "fail",
+      `상태 디렉터리를 만들 수 있는 상위 경로가 없습니다: ${home} (${describeError(error)})`,
+      "권한을 확인하거나 CONTEXTCTL_HOME 으로 만들 수 있는 경로를 지정하세요.",
+    );
+  }
+}
+
+async function nearestExistingDirectory(path: string): Promise<string> {
+  let candidate = path;
+  while (true) {
+    try {
+      const metadata = await stat(candidate);
+      if (!metadata.isDirectory()) {
+        throw new Error(`상위 경로가 디렉터리가 아닙니다: ${candidate}`);
+      }
+      return candidate;
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      const parent = dirname(candidate);
+      if (parent === candidate) throw error;
+      candidate = parent;
+    }
   }
 }
 
@@ -268,75 +316,104 @@ async function checkSourcesFile(sourcesFile: string): Promise<DiagnosisStep> {
 }
 
 /**
- * Registry's store, opened and closed again.
- *
- * Opening runs the migrations, so success here means more than "the file is
- * readable": it means this build's schema can be applied to whatever is on
- * disk. The handle is closed in a `finally` because `doctor` runs eight checks
- * in one process and a leaked SQLite handle holds locks that make the *next*
- * check — or the next `doctor` run — fail for a reason that has nothing to do
- * with the operator's install.
+ * Registry's store, inspected through Registry's read-only public surface.
  */
 function checkRegistryDatabase(
   location: string,
   stateIdentity: DaemonStateIdentity,
 ): DiagnosisStep {
-  let database: { close(): void } | undefined;
   try {
-    database = openRegistryDatabase({
+    const inspection = inspectRegistryDatabase({
       location,
       ...stateIdentity,
     });
+    if (inspection.status === "missing") {
+      return diagnosis(
+        "registry-database",
+        "warn",
+        `Registry 저장소가 아직 없습니다: ${location}`,
+        "첫 Registry 작업이 저장소를 초기화합니다. 운영 식별자를 먼저 확정하세요.",
+      );
+    }
+    if (inspection.status === "compatible") {
+      return diagnosis(
+        "registry-database",
+        "ok",
+        `Registry 저장소가 읽기 전용 검사에 통과했습니다(schema ${inspection.schemaVersion}): ${location}`,
+      );
+    }
+    if (inspection.status === "incompatible") {
+      return diagnosis(
+        "registry-database",
+        "fail",
+        `Registry 저장소가 현재 설정과 호환되지 않습니다(${inspection.code}): ${location}`,
+        "상태 식별자와 실행 버전을 확인하고, 변경 전 상태 묶음을 백업한 뒤 지원되는 이관 절차를 사용하세요.",
+      );
+    }
     return diagnosis(
       "registry-database",
-      "ok",
-      `Registry 저장소를 열었습니다: ${location}`,
+      "fail",
+      `Registry 저장소를 읽지 못했습니다: ${location} — ${inspection.detail}`,
+      "파일 경로·읽기 권한과 SQLite 파일 손상 여부를 확인하세요.",
     );
   } catch (error) {
     return diagnosis(
       "registry-database",
       "fail",
-      `Registry 저장소를 열지 못했습니다: ${location} — ${describeError(error)}`,
-      "경로 권한을 확인하거나 CONTEXTCTL_REGISTRY_DATABASE 로 다른 경로를 지정하세요.",
+      `Registry 저장소 설정을 검사하지 못했습니다: ${location} — ${describeError(error)}`,
+      "CONTEXTCTL_REGISTRY_DATABASE 와 상태 식별자 설정을 확인하세요.",
     );
-  } finally {
-    database?.close();
   }
 }
 
 /**
- * Ingestion's store, with the same identity the CLI will use later.
- *
- * The namespace and security domain are passed rather than defaulted locally
- * because `openIngestionDatabase` stamps them into the file and refuses a file
- * stamped with different ones. Diagnosing with a different identity than the
- * real commands use would report a healthy database that `contextctl ingest`
- * then rejects — the exact class of false negative `doctor` exists to remove.
+ * Ingestion's store, inspected with the identity the CLI will use later.
  */
 function checkIngestionDatabase(
   location: string,
   stateIdentity: DaemonStateIdentity,
 ): DiagnosisStep {
-  let database: { close(): void } | undefined;
   try {
-    database = openIngestionDatabase({
+    const inspection = inspectIngestionDatabase({
       location,
       ...stateIdentity,
     });
+    if (inspection.status === "missing") {
+      return diagnosis(
+        "ingestion-database",
+        "warn",
+        `Ingestion 저장소가 아직 없습니다: ${location}`,
+        "첫 수집 작업이 저장소를 초기화합니다. 운영 식별자를 먼저 확정하세요.",
+      );
+    }
+    if (inspection.status === "compatible") {
+      return diagnosis(
+        "ingestion-database",
+        "ok",
+        `Ingestion 저장소가 읽기 전용 검사에 통과했습니다(schema ${inspection.schemaVersion}): ${location}`,
+      );
+    }
+    if (inspection.status === "incompatible") {
+      return diagnosis(
+        "ingestion-database",
+        "fail",
+        `Ingestion 저장소가 현재 설정과 호환되지 않습니다(${inspection.code}): ${location}`,
+        "상태 식별자와 실행 버전을 확인하고, 변경 전 상태 묶음을 백업한 뒤 지원되는 이관 절차를 사용하세요.",
+      );
+    }
     return diagnosis(
       "ingestion-database",
-      "ok",
-      `Ingestion 저장소를 열었습니다: ${location}`,
+      "fail",
+      `Ingestion 저장소를 읽지 못했습니다: ${location} — ${inspection.detail}`,
+      "파일 경로·읽기 권한과 SQLite 파일 손상 여부를 확인하세요.",
     );
   } catch (error) {
     return diagnosis(
       "ingestion-database",
       "fail",
-      `Ingestion 저장소를 열지 못했습니다: ${location} — ${describeError(error)}`,
-      "경로 권한을 확인하거나, 이전 버전이 남긴 파일이면 지운 뒤 다시 실행하세요.",
+      `Ingestion 저장소 설정을 검사하지 못했습니다: ${location} — ${describeError(error)}`,
+      "CONTEXTCTL_INGESTION_DATABASE 와 상태 식별자 설정을 확인하세요.",
     );
-  } finally {
-    database?.close();
   }
 }
 
@@ -618,4 +695,12 @@ function diagnosis(
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingPath(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
