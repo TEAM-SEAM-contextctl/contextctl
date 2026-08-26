@@ -83,6 +83,8 @@ interface CatalogStatistics {
   readonly cards: readonly IndexedCard[];
   readonly documentFrequency: ReadonlyMap<string, number>;
   readonly declaredTermFrequency: ReadonlyMap<string, number>;
+  /** Keeps a unique heading distinctive when its word also appears in body keywords. */
+  readonly aliasTermFrequency: ReadonlyMap<string, number>;
   readonly averageWeightedLength: number;
   /** Each distinct 2/3-character string is retained once per generation. */
   readonly ngramIds: ReadonlyMap<string, number>;
@@ -154,6 +156,7 @@ function buildCatalogStatistics(
   const indexedCards = cards.map((card) => indexCard(card, ngramIds));
   const documentFrequency = new Map<string, number>();
   const declaredTermFrequency = new Map<string, number>();
+  const aliasTermFrequency = new Map<string, number>();
 
   for (const indexed of indexedCards) {
     for (const token of indexed.termFrequency.keys()) {
@@ -169,6 +172,14 @@ function buildCatalogStatistics(
         (declaredTermFrequency.get(token) ?? 0) + 1,
       );
     }
+    const aliases = new Set(
+      indexed.card.meaning.aliases.flatMap((term) =>
+        tokenize(normalizeText(term)),
+      ),
+    );
+    for (const token of aliases) {
+      aliasTermFrequency.set(token, (aliasTermFrequency.get(token) ?? 0) + 1);
+    }
   }
 
   const totalLength = indexedCards.reduce(
@@ -179,6 +190,7 @@ function buildCatalogStatistics(
     cards: indexedCards,
     documentFrequency,
     declaredTermFrequency,
+    aliasTermFrequency,
     averageWeightedLength:
       indexedCards.length === 0 ? 0 : totalLength / indexedCards.length,
     ngramIds,
@@ -377,7 +389,10 @@ function collectDirectSignals(
       ...field.tokens.map((token) =>
         declaredSpecificity(
           statistics.cards.length,
-          statistics.declaredTermFrequency.get(token) ?? statistics.cards.length,
+          (field.field === "alias"
+            ? statistics.aliasTermFrequency
+            : statistics.declaredTermFrequency
+          ).get(token) ?? statistics.cards.length,
         ),
       ),
     );
@@ -427,6 +442,12 @@ function collectDirectSignals(
   const conciseSpecificDeclaration =
     declaredVocabularySize <= 24 && humanAliasCount >= 2;
   const supportedCommonPhrase = matched.length >= 2 && normalizedBm25 >= 0.6;
+  const distinctiveAliasWithContext =
+    matched.some(
+      (entry) => entry.field === "alias" && entry.specificity >= 0.9,
+    ) &&
+    supportedCommonPhrase &&
+    contextualOverlap >= 3;
   const sourceIntentConflict =
     query.sourceIntents.size > 0 &&
     !indexed.card.scopes.some((scope) => query.sourceIntents.has(scope.kind));
@@ -440,6 +461,7 @@ function collectDirectSignals(
     exactMultiTokenAlias ||
     (conciseSpecificDeclaration && strongest >= 0.9) ||
     (conciseSpecificDeclaration && supportedCommonPhrase) ||
+    distinctiveAliasWithContext ||
     strongContextPhrase ||
     smallCatalogStrongContext ||
     (statistics.cards.length <= 3 && strongest >= 0.9) ||

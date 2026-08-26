@@ -272,6 +272,88 @@ describe("scoreCardsAgainstQuery", () => {
     );
   });
 
+  it("admits a broad generated Card when one distinctive heading and several body terms agree", () => {
+    const cards = [
+      cardMeaning(
+        {
+          description: "인사 규정 휴가 반차",
+          representativeQuestions: ["반차?"],
+          aliases: ["반차", "인사 규정 휴가"],
+          keywords: [
+            "오전",
+            "오후",
+            "연차",
+            "차감합니다",
+            ...Array.from(
+              { length: 32 },
+              (_, index) => `본문어휘${String(index)}`,
+            ),
+          ],
+        },
+        "cardv_half_day",
+      ),
+      ...Array.from({ length: 7 }, (_, index) =>
+        cardMeaning(
+          { description: `서로 다른 업무 규정 ${String(index)}` },
+          `cardv_other_${String(index)}`,
+        ),
+      ),
+    ];
+    const scores = scoreCardsAgainstQuery(
+      "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?",
+      cards,
+    );
+    const byVersion = new Map(
+      scores.map((score) => [score.versionId, score]),
+    );
+
+    expect(byVersion.get("cardv_half_day")?.score).toBeGreaterThanOrEqual(
+      DEFAULT_SELECTION_THRESHOLDS.admit,
+    );
+    expect(
+      scores
+        .filter((score) => score.versionId !== "cardv_half_day")
+        .every((score) => score.score < DEFAULT_SELECTION_THRESHOLDS.admit),
+    ).toBe(true);
+  });
+
+  it("does not relax broad generated Cards whose matching heading is shared", () => {
+    const broadMeaning = (suffix: string): ApprovedCardMeaning => ({
+      description: `${suffix} 공통 정책`,
+      representativeQuestions: ["정책?"],
+      aliases: ["정책"],
+      keywords: [
+        "오전",
+        "오후",
+        "연차",
+        ...Array.from(
+          { length: 32 },
+          (_, index) => `${suffix}본문어휘${String(index)}`,
+        ),
+      ],
+    });
+    const cards = [
+      cardMeaning(broadMeaning("첫째"), "cardv_shared_heading_first"),
+      cardMeaning(broadMeaning("둘째"), "cardv_shared_heading_second"),
+      ...Array.from({ length: 6 }, (_, index) =>
+        cardMeaning(
+          { description: `서로 다른 업무 규정 ${String(index)}` },
+          `cardv_other_${String(index)}`,
+        ),
+      ),
+    ];
+    const scores = scoreCardsAgainstQuery(
+      "오전 정책과 오후 정책은 연차를 얼마나 차감하나요?",
+      cards,
+    );
+
+    expect(
+      scores.every(
+        (score) => score.score < DEFAULT_SELECTION_THRESHOLDS.admit,
+      ),
+    ).toBe(true);
+  });
+
   it("ignores an empty declared keyword instead of matching everything", () => {
     const scored = scoreOne("환불", cardMeaning({ keywords: [""] }));
 
