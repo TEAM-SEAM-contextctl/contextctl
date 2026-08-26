@@ -178,6 +178,42 @@ describe("CardCandidateIndex", () => {
     expect(index.topK([1, 0, 0, 0], 5, {})).toHaveLength(2);
   });
 
+  it("matches a full-allocation reference for fixed random catalogs", () => {
+    const random = deterministicRandom(0x51ec710);
+    const records = Array.from({ length: 257 }, (_unused, position) =>
+      record(
+        `cv_${String(position).padStart(3, "0")}`,
+        position === 0
+          ? [0, 0, 0, 0]
+          : Array.from({ length: 4 }, () => random() * 20 - 10),
+      ),
+    );
+    const index = indexOf(records);
+    const eligible = new Set(
+      records
+        .filter((_record, position) => position % 3 !== 0)
+        .map((candidate) => candidate.cardVersionId),
+    );
+
+    for (let queryIndex = 0; queryIndex < 64; queryIndex += 1) {
+      const query =
+        queryIndex === 0
+          ? [0, 0, 0, 0]
+          : Array.from({ length: 4 }, () => random() * 8 - 4);
+      for (const limit of [0, 1, 32, records.length, records.length + 20]) {
+        for (const candidateEligible of [undefined, eligible] as const) {
+          const options =
+            candidateEligible === undefined
+              ? {}
+              : { eligibleVersionIds: candidateEligible };
+          expect(index.topK(query, limit, options)).toEqual(
+            referenceTopK(records, query, limit, candidateEligible),
+          );
+        }
+      }
+    }
+  });
+
   it("reports coverage on the Card Version and its digest together", () => {
     const index = indexOf([record("a", [1, 0, 0, 0])]);
 
@@ -188,6 +224,42 @@ describe("CardCandidateIndex", () => {
     expect(index.covers("b", "sha256:b")).toBe(false);
   });
 });
+
+function referenceTopK(
+  records: readonly CardCandidateRecord[],
+  query: readonly number[],
+  limit: number,
+  eligibleVersionIds?: ReadonlySet<string>,
+) {
+  if (limit <= 0 || Number.isNaN(limit)) return [];
+  return records
+    .filter(
+      (candidate) =>
+        eligibleVersionIds === undefined ||
+        eligibleVersionIds.has(candidate.cardVersionId),
+    )
+    .map((candidate) => ({
+      cardId: candidate.cardId,
+      cardVersionId: candidate.cardVersionId,
+      similarity: cosineSimilarity(query, candidate.embedding),
+    }))
+    .sort((left, right) => {
+      if (left.similarity !== right.similarity) {
+        return right.similarity - left.similarity;
+      }
+      if (left.cardVersionId < right.cardVersionId) return -1;
+      return left.cardVersionId > right.cardVersionId ? 1 : 0;
+    })
+    .slice(0, limit);
+}
+
+function deterministicRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+}
 
 describe("catalogSnapshotVersion", () => {
   const entries = [
