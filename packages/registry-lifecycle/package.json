@@ -2,15 +2,27 @@
   "name": "@contextctl/registry-lifecycle",
   "version": "1.0.0",
   "private": true,
+  "description": "Context Card registry and lifecycle management for Contextctl.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TEAM-SEAM-contextctl/contextctl.git",
+    "directory": "packages/registry-lifecycle"
+  },
+  "homepage": "https://github.com/TEAM-SEAM-contextctl/contextctl#readme",
+  "bugs": {
+    "url": "https://github.com/TEAM-SEAM-contextctl/contextctl/issues"
+  },
+  "keywords": ["contextctl", "registry", "lifecycle", "rag"],
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": { "node": ">=24.18.0 <25" },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "!dist/.tsbuildinfo"],
+  "files": ["dist", "LICENSE", "README.md", "!dist/.tsbuildinfo"],
   "dependencies": {
     "@contextctl/contracts": "1.0.0"
   }

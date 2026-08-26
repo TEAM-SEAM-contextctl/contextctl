@@ -2,8 +2,20 @@
   "name": "@contextctl/daemon",
   "version": "1.0.0",
   "private": true,
+  "description": "Contextctl CLI, MCP server, HTTP adapter, and runtime composition.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TEAM-SEAM-contextctl/contextctl.git",
+    "directory": "apps/contextctl-daemon"
+  },
+  "homepage": "https://github.com/TEAM-SEAM-contextctl/contextctl#readme",
+  "bugs": {
+    "url": "https://github.com/TEAM-SEAM-contextctl/contextctl/issues"
+  },
+  "keywords": ["contextctl", "mcp", "rag", "cli"],
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": { "node": ">=24.18.0 <25" },
   "exports": {
     ".": {
       "types": "./dist/main.d.ts",
@@ -13,7 +25,7 @@
   "bin": {
     "contextctl": "./bin/contextctl.mjs"
   },
-  "files": ["bin", "dist", "demo/docs", "!dist/.tsbuildinfo"],
+  "files": ["bin", "dist", "demo/docs", "LICENSE", "README.md", "!dist/.tsbuildinfo"],
   "dependencies": {
     "@contextctl/ingestion-indexing": "1.0.0",
     "@contextctl/registry-lifecycle": "1.0.0",

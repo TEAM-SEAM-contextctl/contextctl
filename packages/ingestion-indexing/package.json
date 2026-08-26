@@ -2,8 +2,20 @@
   "name": "@contextctl/ingestion-indexing",
   "version": "1.0.0",
   "private": true,
+  "description": "Source ingestion, document indexing, and managed retrieval for Contextctl.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TEAM-SEAM-contextctl/contextctl.git",
+    "directory": "packages/ingestion-indexing"
+  },
+  "homepage": "https://github.com/TEAM-SEAM-contextctl/contextctl#readme",
+  "bugs": {
+    "url": "https://github.com/TEAM-SEAM-contextctl/contextctl/issues"
+  },
+  "keywords": ["contextctl", "ingestion", "indexing", "rag"],
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": { "node": ">=24.18.0 <25" },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,6 +25,8 @@
   },
   "files": [
     "dist",
+    "LICENSE",
+    "README.md",
     "!dist/.tsbuildinfo"
   ],
   "dependencies": {
