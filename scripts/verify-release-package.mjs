@@ -211,13 +211,17 @@ async function assertPublicQuickstartDocumentation() {
     const start = content.indexOf(document.start);
     const end = content.indexOf(document.end, start + document.start.length);
     const section = start < 0 || end < 0 ? "" : content.slice(start, end);
+    // Markdown wraps prose freely. A line break between two words must not turn
+    // a correct quickstart into a failed release, so compare its meaning-bearing
+    // phrases after collapsing whitespace while keeping the section boundary.
+    const normalizedSection = section.replace(/\s+/gu, " ");
     if (
       section === "" ||
-      !section.includes(sourceCommand) ||
-      !section.includes(query) ||
-      !section.includes(expectedSentence) ||
-      !section.includes(document.cardCount) ||
-      section.includes("결제가 실패하면 몇 번 재시도돼?")
+      !normalizedSection.includes(sourceCommand) ||
+      !normalizedSection.includes(query) ||
+      !normalizedSection.includes(expectedSentence) ||
+      !normalizedSection.includes(document.cardCount) ||
+      normalizedSection.includes("결제가 실패하면 몇 번 재시도돼?")
     ) {
       throw new Error(
         `${document.path} quickstart no longer matches the installed leave.md product flow`,
