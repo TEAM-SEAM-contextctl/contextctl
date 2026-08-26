@@ -98,7 +98,11 @@ function wrapForTerminal(text: string, columns: number | undefined): string {
 }
 
 function wrapLine(text: string, columns: number): readonly string[] {
-  if (displayWidth(text) <= columns || text.trim() === "") {
+  if (
+    displayWidth(text) <= columns ||
+    text.trim() === "" ||
+    isColumnarLine(text)
+  ) {
     return [text];
   }
   const indentation = text.match(/^\s*/u)?.[0] ?? "";
@@ -118,6 +122,11 @@ function wrapLine(text: string, columns: number): readonly string[] {
   }
   lines.push(current);
   return lines;
+}
+
+/** Keeps padded tables and aligned status rows byte-for-byte intact. */
+function isColumnarLine(text: string): boolean {
+  return /\S(?: {2,}|\t)\S/u.test(text);
 }
 
 /** Terminal columns, not UTF-16 code units: Hangul and CJK glyphs are wide. */

@@ -125,45 +125,49 @@ export async function runCli(input: {
     }
   }
 
-  const paths = resolveContextctlPaths(input.environment, input.workingDirectory);
   const workingDirectory = input.workingDirectory ?? process.cwd();
 
-  // Both run before any runtime is built, and deliberately so: they are the two
-  // commands an operator reaches for when the runtime will not build. Asking
-  // them to install a 415MB model in order to be told the model is missing
-  // would be the same trap `source` avoids.
-  if (command.kind === "install_assets") {
-    return emit(
-      input,
-      await runInstallAssets({
-        command,
-        environment: input.environment,
-        workingDirectory,
-        progress: input.progress ?? input.stderr,
-        ...(shouldPromptForConsent(command.yes)
-          ? { confirm: () => promptForConsent(input.stderr) }
-          : {}),
-      }),
-    );
-  }
-  if (command.kind === "paths") {
-    return emit(
-      input,
-      await runPaths({ environment: input.environment, workingDirectory }),
-    );
-  }
-  if (command.kind === "doctor") {
-    return emit(
-      input,
-      await runDoctor({
-        command,
-        environment: input.environment,
-        workingDirectory,
-      }),
-    );
-  }
-
   try {
+    const paths = resolveContextctlPaths(
+      input.environment,
+      input.workingDirectory,
+    );
+
+    // These run before any runtime is built, and deliberately so: they are the
+    // commands an operator reaches for when the runtime will not build. They
+    // still stay inside the common failure boundary so a download, permission
+    // or filesystem error becomes one diagnostic and exit 8, not a stack trace.
+    if (command.kind === "install_assets") {
+      return emit(
+        input,
+        await runInstallAssets({
+          command,
+          environment: input.environment,
+          workingDirectory,
+          progress: input.progress ?? input.stderr,
+          ...(shouldPromptForConsent(command.yes)
+            ? { confirm: () => promptForConsent(input.stderr) }
+            : {}),
+        }),
+      );
+    }
+    if (command.kind === "paths") {
+      return emit(
+        input,
+        await runPaths({ environment: input.environment, workingDirectory }),
+      );
+    }
+    if (command.kind === "doctor") {
+      return emit(
+        input,
+        await runDoctor({
+          command,
+          environment: input.environment,
+          workingDirectory,
+        }),
+      );
+    }
+
     if (
       command.kind === "backup_create" ||
       command.kind === "backup_restore"

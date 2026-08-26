@@ -127,6 +127,18 @@ describe("createCliTerminal", () => {
     json.terminal.stdout(document);
     expect(stripAnsi(json.stdout.join("")).trim()).toBe(document);
   });
+
+  it("preserves padded status columns even when the row exceeds the terminal", () => {
+    const { terminal, stdout } = capture({
+      stdoutIsTTY: true,
+      stdoutColumns: 24,
+    });
+    const row = "registry  ready      상태 설명이 터미널보다 깁니다";
+
+    terminal.stdout(row);
+
+    expect(stripAnsi(stdout.join("")).trim()).toBe(row);
+  });
 });
 
 function stripAnsi(text: string): string {
