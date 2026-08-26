@@ -44,7 +44,6 @@ import {
   type StatusObservation,
   type VectorIndexObservation,
 } from "./status.js";
-import { buildPathsReport, renderPathsReport } from "./paths-report.js";
 import {
   describeGrounding,
   renderCardListings,
@@ -1142,26 +1141,4 @@ function renderDiagnosis(report: DiagnosisReport): string {
       : `해결해야 할 문제 ${String(failed)}건. 위의 → 를 따르십시오.`,
   );
   return lines.join("\n");
-}
-
-
-/* ------------------------------------------------------------------- paths */
-
-/**
- * Reports where everything lives. Removes nothing.
- *
- * Runs without a runtime for the same reason `doctor` does: an operator asking
- * where the files are is often asking because something will not start.
- */
-export async function runPaths(input: {
-  readonly environment: Readonly<Partial<Record<string, string>>>;
-  readonly workingDirectory?: string;
-}): Promise<CommandOutcome> {
-  const report = await buildPathsReport({
-    environment: input.environment,
-    ...(input.workingDirectory === undefined
-      ? {}
-      : { workingDirectory: input.workingDirectory }),
-  });
-  return ok(renderPathsReport(report));
 }

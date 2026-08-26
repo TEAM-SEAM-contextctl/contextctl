@@ -119,6 +119,31 @@ describe("paths report", () => {
     expect(revisionEntry?.note).toContain("실제 설치 용량");
   });
 
+  it("does not misreport an unreadable pointer target as absent", async () => {
+    const home = await emptyHome();
+    const digest = "not-a-directory";
+    const revision = join(home, "embedding-assets", "revisions", digest);
+    await mkdir(join(home, "embedding-assets", "revisions"), { recursive: true });
+    await writeFile(revision, "this is a file", "utf8");
+    await writeFile(
+      join(home, "embedding-assets", "active.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        manifestSha256: digest,
+        revisionDirectory: join("revisions", digest),
+      }),
+      "utf8",
+    );
+
+    const report = await buildPathsReport({ environment: { CONTEXTCTL_HOME: home } });
+    const revisionEntry = report.groups
+      .flatMap((group) => group.entries)
+      .find((entry) => entry.label === "현재 revision");
+
+    expect(revisionEntry).toMatchObject({ kind: "unknown", value: revision });
+    expect(revisionEntry?.note).toContain("읽을 수 없습니다");
+  });
+
   it("says the model is absent rather than guessing a revision path", async () => {
     const home = await emptyHome();
 

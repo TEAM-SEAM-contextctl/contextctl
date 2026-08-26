@@ -122,8 +122,8 @@ async function assetEntries(managedRoot: string): Promise<readonly PathEntry[]> 
       {
         label: "현재 revision",
         value: resolution.directory,
-        kind: "absent",
-        note: "포인터가 가리키는 디렉터리가 없습니다. contextctl install-assets 로 복구합니다.",
+        kind: "unknown",
+        note: "포인터 대상의 실제 용량을 읽을 수 없습니다. 권한과 설치 상태를 확인하십시오.",
       },
     ];
   }
