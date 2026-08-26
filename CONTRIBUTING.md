@@ -37,8 +37,9 @@ than the working tree.
 | `npm run test:release-product-local` | the two above plus `CONTEXTCTL_RELEASE_E2E_ASSET_ROOT` |
 
 Development pins Node **24.18.0** and npm **11.16.0** exactly — `.nvmrc` and CI
-say so. The published packages declare only a floor (`>=24.0.0`): the exact pin
-exists to make a build reproducible, not to make it usable.
+say so. Published packages declare `>=24.18.0 <25`: patch and later 24.x releases
+are accepted, while untested Node majors are refused until the release matrix
+covers them.
 
 CI pins Qdrant to an image digest (v1.15.5). The `docker run qdrant/qdrant` line
 in the user documentation is an unpinned tag, so reproduce a CI failure with the

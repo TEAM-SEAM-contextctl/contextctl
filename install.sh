@@ -14,7 +14,11 @@ set -euo pipefail
 
 REPO="TEAM-SEAM-contextctl/contextctl"
 RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
-MINIMUM_NODE_MAJOR=24
+MINIMUM_NODE_VERSION="24.18.0"
+SUPPORTED_NODE_MAJOR=24
+MINIMUM_NODE_MINOR=18
+MAXIMUM_NODE_MAJOR=25
+SUPPORTED_NODE_RANGE="24.18.0 이상 25 미만"
 
 # Order is irrelevant — every tarball is passed to a single `npm i -g`, which
 # resolves the workspace dependencies among them without consulting a registry.
@@ -43,8 +47,8 @@ require_node() {
   if ! command -v node >/dev/null 2>&1; then
     fail "Node.js 를 찾을 수 없습니다."
     fail ""
-    fail "contextctl 은 Node.js ${MINIMUM_NODE_MAJOR} 이상이 필요합니다."
-    fail "저장소가 node:sqlite 위에 있고, 그 모듈은 Node ${MINIMUM_NODE_MAJOR} 미만에 없습니다."
+    fail "contextctl 은 Node.js ${SUPPORTED_NODE_RANGE}을 지원합니다."
+    fail "배포 tarball과 네이티브 런타임을 이 범위에서 검증했습니다."
     fail ""
     fail "설치: https://nodejs.org/en/download"
     # Deliberately not installed for you. A version manager rewrites shell
@@ -54,22 +58,47 @@ require_node() {
     exit 1
   fi
 
-  local version major
+  local version
   version="$(node --version)"
-  major="${version#v}"
-  major="${major%%.*}"
 
-  if [ "${major}" -lt "${MINIMUM_NODE_MAJOR}" ]; then
-    fail "Node.js ${version} 이 활성 상태입니다. ${MINIMUM_NODE_MAJOR} 이상이 필요합니다."
+  if ! node_version_supported "${version}"; then
+    fail "Node.js ${version} 이 활성 상태입니다. 지원 범위는 ${SUPPORTED_NODE_RANGE}입니다."
     fail ""
-    fail "contextctl 의 Registry·Ingestion 저장소는 node:sqlite 를 씁니다."
-    fail "그 모듈은 Node ${MINIMUM_NODE_MAJOR} 에서 처음 제공되므로 낮은 버전에서는 기동조차 하지 못합니다."
+    fail "필수 릴리스 검사는 Node ${MINIMUM_NODE_VERSION}에서 수행되며 Node 25 이상은 아직 검증하지 않았습니다."
     fail ""
-    fail "Node ${MINIMUM_NODE_MAJOR} 이상으로 전환한 뒤 다시 실행하십시오: https://nodejs.org/en/download"
+    fail "Node 24.18.x로 전환한 뒤 다시 실행하십시오: https://nodejs.org/en/download"
     exit 1
   fi
 
   say "Node.js ${version} 을 씁니다."
+}
+
+# npm의 engines 경계(>=24.18.0 <25)와 같은 판정입니다. npm은 기본값으로
+# engines 불일치를 경고만 하고 설치를 계속할 수 있으므로, 설치기가 먼저
+# 닫힌 실패해야 사용자가 비검증 런타임에 설치됐다고 오해하지 않습니다.
+node_version_supported() {
+  local version core major remainder minor patch
+  version="$1"
+  core="${version#v}"
+  major="${core%%.*}"
+  remainder="${core#*.}"
+  if [ "${remainder}" = "${core}" ]; then
+    return 1
+  fi
+  minor="${remainder%%.*}"
+  patch="${remainder#*.}"
+  if [ "${patch}" = "${remainder}" ]; then
+    return 1
+  fi
+  if [ -z "${major}" ] || [ -z "${minor}" ] || [ -z "${patch}" ]; then
+    return 1
+  fi
+  case "${major}:${minor}:${patch}" in
+    *[!0-9:]*) return 1 ;;
+  esac
+  [ "${major}" -eq "${SUPPORTED_NODE_MAJOR}" ] &&
+    [ "${major}" -lt "${MAXIMUM_NODE_MAJOR}" ] &&
+    [ "${minor}" -ge "${MINIMUM_NODE_MINOR}" ]
 }
 
 require_npm() {
