@@ -9,6 +9,7 @@ import {
   SqliteScopeReachabilityStore,
   stalePendingRegistryScopes,
   type ContextCard,
+  type LifecycleEvent,
   type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
 import {
@@ -372,7 +373,7 @@ export async function runCardsList(
     if (card === undefined) {
       continue;
     }
-    const listing = { card, pendingVersionIds: pendingVersionIdsOf(card) };
+    const listing = await cardListingOf(cli, card);
     if (
       command.source !== undefined &&
       !cardHasSource(card, command.source)
@@ -413,7 +414,7 @@ export async function runCardsShow(
       `Card ${command.cardId} 에 버전 ${command.versionId} 이 없습니다.`,
     );
   }
-  const listing = { card, pendingVersionIds: pendingVersionIdsOf(card) };
+  const listing = await cardListingOf(cli, card);
   if (command.json) {
     return ok(
       JSON.stringify(
@@ -431,17 +432,55 @@ export async function runCardsShow(
   return ok(renderCardDetail(listing, command.versionId));
 }
 
-/** Versions that exist but are not the one currently serving. */
-function pendingVersionIdsOf(card: ContextCard): readonly string[] {
+async function cardListingOf(
+  cli: RegistryOnlyRuntime,
+  card: ContextCard,
+): Promise<CardListing> {
+  return {
+    card,
+    pendingVersionIds: pendingVersionIdsOf(
+      card,
+      await cli.lifecycleEvents.listForCard(card.id),
+    ),
+  };
+}
+
+/** Validated versions that have not yet received a human decision. */
+function pendingVersionIdsOf(
+  card: ContextCard,
+  events: readonly LifecycleEvent[],
+): readonly string[] {
+  const versionIndex = new Map(
+    card.versions.versions.map((version, index) => [version.id, index]),
+  );
+  const decided = new Set<string>();
+  let latestPromotedIndex = -1;
+  for (const event of events) {
+    if (
+      event.kind !== "card_version_promoted" &&
+      event.kind !== "card_version_refused"
+    ) {
+      continue;
+    }
+    decided.add(event.versionId);
+    if (event.kind === "card_version_promoted") {
+      latestPromotedIndex = Math.max(
+        latestPromotedIndex,
+        versionIndex.get(event.versionId) ?? -1,
+      );
+    }
+  }
   const currentIndex = card.versions.versions.findIndex(
     (version) => version.id === card.versions.currentVersionId,
   );
+  const reviewedThrough = Math.max(currentIndex, latestPromotedIndex);
   return card.versions.versions
     .filter(
       (version, index) =>
-        version.validationState !== "rejected" &&
+        version.validationState === "validated" &&
+        !decided.has(version.id) &&
         version.id !== card.versions.currentVersionId &&
-        (currentIndex === -1 || index > currentIndex),
+        index > reviewedThrough,
     )
     .map((version) => version.id);
 }
@@ -521,6 +560,10 @@ export async function runCardsDecision(
       case "card_missing":
         return failed(
           `Card ${command.cardId} 를 찾을 수 없습니다. contextctl cards list 로 확인하세요.`,
+        );
+      case "no_pending":
+        return failed(
+          `Card ${command.cardId} 에 승인 대기 버전이 없습니다. 다시 활성화하려면 contextctl cards show ${command.cardId} 로 확인한 버전 식별자를 명시하세요.`,
         );
       default:
         return failed(
@@ -957,6 +1000,7 @@ type ApprovalTarget =
   | { readonly kind: "version"; readonly versionId: string }
   | { readonly kind: "card_missing" }
   | { readonly kind: "no_versions" }
+  | { readonly kind: "no_pending" }
   | { readonly kind: "already_current"; readonly currentVersionId: string };
 
 async function resolveApprovalTarget(
@@ -969,7 +1013,10 @@ async function resolveApprovalTarget(
   }
   // Newest first by append order: the latest version is the one an operator
   // means when they name no version at all.
-  const pending = pendingVersionIdsOf(card).at(-1);
+  const pending = pendingVersionIdsOf(
+    card,
+    await cli.lifecycleEvents.listForCard(card.id),
+  ).at(-1);
   if (pending !== undefined) {
     return { kind: "version", versionId: pending };
   }
@@ -977,7 +1024,9 @@ async function resolveApprovalTarget(
   if (current !== undefined) {
     return { kind: "already_current", currentVersionId: current };
   }
-  return { kind: "no_versions" };
+  return card.versions.versions.length === 0
+    ? { kind: "no_versions" }
+    : { kind: "no_pending" };
 }
 
 /**

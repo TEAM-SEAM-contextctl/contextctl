@@ -153,7 +153,7 @@ describe("cards", () => {
     expect(commandOf(["cards", "list", "--json"])).toEqual({
       kind: "cards_list",
       json: true,
-      filter: "pending",
+      filter: "all",
       compact: true,
     });
   });

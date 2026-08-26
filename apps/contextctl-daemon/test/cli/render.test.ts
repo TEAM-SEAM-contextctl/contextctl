@@ -451,11 +451,25 @@ describe("compact Card inspection", () => {
   });
 
   it("shows all evidence for only the requested version", () => {
+    const oldMeaning = {
+      description: "현재 서빙 중인 이전 설명",
+      representativeQuestions: ["이전 질문"],
+      aliases: ["이전"],
+      keywords: ["old"],
+    };
+    const newMeaning = {
+      description: "검토할 새 버전 설명",
+      representativeQuestions: ["새 질문"],
+      aliases: ["신규"],
+      keywords: ["new"],
+    };
     const listing = {
       card: card({
+        description: oldMeaning.description,
+        keywords: oldMeaning.keywords,
         versions: [
-          cardVersion("cv-old", "validated"),
-          cardVersion("cv-new", "validated"),
+          { ...cardVersion("cv-old", "validated"), meaning: oldMeaning },
+          { ...cardVersion("cv-new", "validated"), meaning: newMeaning },
         ],
         currentVersionId: "cv-old",
       }),
@@ -466,8 +480,38 @@ describe("compact Card inspection", () => {
 
     expect(rendered).toContain("cv-new");
     expect(rendered).not.toContain("cv-old (");
+    expect(rendered).toContain(newMeaning.description);
+    expect(rendered).not.toContain(oldMeaning.description);
     expect(rendered).toContain("설명:");
     expect(rendered).toContain("키워드:");
+  });
+
+  it("summarizes the pending version and links to that exact evidence", () => {
+    const pendingMeaning = {
+      description: "새 배송 지연 규정",
+      representativeQuestions: ["배송이 늦으면 어떻게 하나요?"],
+      aliases: ["배송 지연"],
+      keywords: ["배송", "지연"],
+    };
+    const listing = {
+      card: card({
+        description: "현재 결제 규정",
+        versions: [
+          cardVersion("cv-old", "validated"),
+          { ...cardVersion("cv-new", "validated"), meaning: pendingMeaning },
+        ],
+        currentVersionId: "cv-old",
+      }),
+      pendingVersionIds: ["cv-new"],
+    };
+
+    const rendered = renderCompactCardListings([listing], "pending");
+
+    expect(rendered).toContain(pendingMeaning.description);
+    expect(rendered).not.toContain("현재 결제 규정");
+    expect(rendered).toContain(
+      `contextctl cards show ${listing.card.id} cv-new`,
+    );
   });
 });
 

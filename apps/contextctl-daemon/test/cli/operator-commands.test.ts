@@ -10,6 +10,7 @@ import {
   createContextCard,
   openRegistryDatabase,
   SqliteCardStore,
+  SqliteLifecycleEventStore,
   withCardVersions,
   type CardVersion,
   type ContextCard,
@@ -129,6 +130,7 @@ beforeEach(async () => {
     },
     database,
     cards,
+    lifecycleEvents: new SqliteLifecycleEventStore(database),
     publications: new SqliteIngestionPublicationStore(ingestionDatabase),
     indexPublications: new SqliteIndexPublicationStore(ingestionDatabase),
     close: () => {
@@ -246,6 +248,28 @@ describe("cards inspection", () => {
     expect(outcome.stdout).not.toContain("cv_1 (");
     expect(outcome.stdout).toContain("키워드:");
     expect(outcome.stdout).toContain("근거:");
+  });
+
+  it("does not resurface an operator-refused version as pending or auto-approve it", async () => {
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "reject", "card_payments", "cv_2", "--by", "kim"]),
+    );
+
+    const listing = await runCardsList(cli, {
+      kind: "cards_list",
+      json: false,
+      filter: "pending",
+      compact: true,
+    });
+    expect(listing.stdout).toContain("cv_1");
+    expect(listing.stdout).not.toContain("cv_2");
+
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
+    );
+    expect(await currentVersionOf("card_payments")).toBe("cv_1");
   });
 });
 

@@ -147,6 +147,8 @@ SHA-256 검증을 통과해야 하므로** 다른 모델을 넣는 우회로는 
 `cards list` 는 많은 Card를 훑기 위한 표면입니다. 기본값은 승인 대기 Card만 간략히 보여주며,
 `--approved`·`--all`로 상태를 바꾸고 `--source <ref>`로 한 Source나 connector만 좁힙니다.
 `--verbose`는 필터 결과의 전체 근거를 펼칩니다. 한 Card만 검토할 때는 `cards show`를 씁니다.
+기존 자동화와의 호환을 위해 상태 필터 없는 `--json`은 전체 Card를 반환합니다. JSON도 대기
+목록만 필요하면 `--pending --json`을 함께 지정합니다.
 
 `cards show`와 상세 목록은 버전마다 **판정 근거**를 빠짐없이 보여줍니다 — 검증 판정
 (`validated` / `needs_review` / `rejected`), 무엇이 문구를 만들었는지(결정적 생성기 / 모델 /

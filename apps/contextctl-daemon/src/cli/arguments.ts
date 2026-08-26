@@ -626,10 +626,13 @@ function parseCardsCommand(rest: readonly string[]): ParsedArguments {
         );
       }
       const source = stringOf(outcome.values["source"]);
+      const json = outcome.values["json"] === true;
       return ok({
         kind: "cards_list",
-        json: outcome.values["json"] === true,
-        filter: selectedFilters[0] ?? "pending",
+        json,
+        // Preserve the existing machine surface: people open on the review
+        // queue, while an unqualified JSON request still returns every Card.
+        filter: selectedFilters[0] ?? (json ? "all" : "pending"),
         compact: outcome.values["verbose"] !== true,
         ...(source === undefined ? {} : { source }),
       });
