@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml/badge.svg)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)
+![Node](https://img.shields.io/badge/node-24.18.x-brightgreen)
 [![검증 플랫폼: Ubuntu 24.04](https://img.shields.io/badge/%EA%B2%80%EC%A6%9D%20%ED%94%8C%EB%9E%AB%ED%8F%BC-Ubuntu%2024.04-blue)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 
 [English](README.md)
@@ -50,7 +50,7 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 
 | | |
 |---|---|
-| **Node.js** | **24.18.0 이상인 24.x** — 필수 릴리스 검사를 수행한 공식 지원 범위입니다 |
+| **Node.js** | **24.18.0 이상, 25 미만** — 필수 릴리스 검사를 수행한 공식 지원 범위입니다 |
 | **Qdrant** | 필수입니다. `CONTEXTCTL_QDRANT_URL` 이 없으면 `ingest`·`query`·`serve` 가 시작을 거부합니다 |
 | **디스크** | 임베딩 모델 **396.1 MiB(약 415 MB)** — 기본 로컬 실행 기준. 두 임베딩 계층을 모두 원격으로 쓰면 필요 없습니다 |
 | **메모리** | 호스트 최소·권장 RAM 은 아직 단정하지 않습니다. 필수 CI 는 daemon 프로세스를 10,000 Card 부하에서 **최고 RSS 1,536 MiB 이하**로 검증하지만, 이 값에는 Qdrant 와 운영체제 메모리가 포함되지 않습니다 |
