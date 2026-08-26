@@ -24,6 +24,7 @@ import { isAbsolute, resolve } from "node:path";
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
+  DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   DirectoryLocalEmbeddingAssetSource,
   installLocalEmbeddingAssets,
   type LocalEmbeddingAssetManifest,
@@ -396,7 +397,10 @@ function reportingSource(
 async function findInstalledRevisionDirectory(
   targetDirectory: string,
 ): Promise<string | undefined> {
-  const resolution = await resolveActiveAssetDirectory(targetDirectory);
+  const resolution = await resolveActiveAssetDirectory(
+    targetDirectory,
+    DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
+  );
   return resolution.status === "resolved" ? resolution.directory : undefined;
 }
 

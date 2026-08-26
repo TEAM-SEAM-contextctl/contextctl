@@ -1,8 +1,7 @@
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 
-import { DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST } from "@contextctl/ingestion-indexing";
-
-import { resolveActiveAssetDirectory } from "./asset-directory.js";
+import { inspectActiveAssetDirectory } from "./asset-directory.js";
 import { resolveContextctlPaths } from "./paths.js";
 import { readNonEmpty } from "./paths.js";
 
@@ -93,7 +92,7 @@ async function assetEntries(managedRoot: string): Promise<readonly PathEntry[]> 
     managedRoot,
     "통째로 지워도 contextctl install-assets 로 복구됩니다.",
   );
-  const resolution = await resolveActiveAssetDirectory(managedRoot);
+  const resolution = await inspectActiveAssetDirectory(managedRoot);
   if (resolution.status !== "resolved") {
     return [
       root,
@@ -105,21 +104,44 @@ async function assetEntries(managedRoot: string): Promise<readonly PathEntry[]> 
       },
     ];
   }
-  return [
-    root,
-    {
-      label: "현재 revision",
-      value: resolution.directory,
-      kind: "present",
-      // Summed from the manifest rather than walked, so the figure is the same
-      // one `install-assets` quotes before downloading.
-      bytes: DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST.files.reduce(
-        (total, file) => total + file.bytes,
-        0,
-      ),
-      note: "이 디렉터리만 지우면 모델이 사라집니다.",
-    },
-  ];
+  try {
+    const bytes = await directoryBytes(resolution.directory);
+    return [
+      root,
+      {
+        label: "현재 revision",
+        value: resolution.directory,
+        kind: "present",
+        bytes,
+        note: "실제 설치 용량입니다. 이 디렉터리만 지우면 모델이 사라집니다.",
+      },
+    ];
+  } catch {
+    return [
+      root,
+      {
+        label: "현재 revision",
+        value: resolution.directory,
+        kind: "absent",
+        note: "포인터가 가리키는 디렉터리가 없습니다. contextctl install-assets 로 복구합니다.",
+      },
+    ];
+  }
+}
+
+/** Counts regular files without following links outside the managed revision. */
+async function directoryBytes(directory: string): Promise<number> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  let bytes = 0;
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      bytes += await directoryBytes(path);
+    } else if (entry.isFile()) {
+      bytes += (await stat(path)).size;
+    }
+  }
+  return bytes;
 }
 
 function vectorEntry(

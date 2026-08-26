@@ -120,6 +120,9 @@ import {
 import {
   assertDaemonStateReady,
 } from "./runtime/state-readiness.js";
+import { EMBEDDING_ASSETS_MISSING_GUIDANCE } from "./embedding-guidance.js";
+
+export { EMBEDDING_ASSETS_MISSING_GUIDANCE } from "./embedding-guidance.js";
 
 export {
   DaemonStateIdentityConfigurationError,
@@ -361,10 +364,6 @@ export interface DaemonRuntimeOptions {
 /** Compatibility projection of the default deployment identity. */
 export const DEFAULT_STATE_NAMESPACE_ID =
   DEFAULT_DAEMON_STATE_IDENTITY.stateNamespaceId;
-
-/** Shown when a production profile has no installed assets to read. */
-export const EMBEDDING_ASSETS_MISSING_GUIDANCE =
-  "Embedding assets are not installed. Install the pinned revision, then set the artifact directory.";
 
 /**
  * The assembled graph.
