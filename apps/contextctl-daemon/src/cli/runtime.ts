@@ -17,6 +17,7 @@ import {
 import {
   openRegistryDatabase,
   SqliteCardStore,
+  SqliteLifecycleEventStore,
 } from "@contextctl/registry-lifecycle";
 
 import {
@@ -92,6 +93,8 @@ export interface RegistryOnlyRuntime {
   readonly stateIdentity: DaemonStateIdentity;
   readonly database: DatabaseSync;
   readonly cards: SqliteCardStore;
+  /** Human decisions needed to distinguish unreviewed from refused versions. */
+  readonly lifecycleEvents: SqliteLifecycleEventStore;
   /**
    * How far each Source has been published, read from Ingestion's own store.
    *
@@ -160,6 +163,7 @@ export function openRegistryOnlyRuntime(input: {
     stateIdentity,
     database,
     cards: new SqliteCardStore(database),
+    lifecycleEvents: new SqliteLifecycleEventStore(database),
     get publications(): SqliteIngestionPublicationStore {
       if (publications === undefined) {
         publications = new SqliteIngestionPublicationStore(openIngestion());

@@ -306,7 +306,7 @@ function refuseUnknownFulfillment(fulfillment: never): never {
  */
 export interface CardListing {
   readonly card: ContextCard;
-  /** 승인 대기 중인 버전들 = currentVersionId 가 아닌 것들. CLI 가 계산해 넘긴다. */
+  /** 검증을 통과했고 아직 사람의 승격·거부 결정을 받지 않은 버전들. */
   readonly pendingVersionIds: readonly string[];
 }
 
@@ -366,8 +366,19 @@ export function renderCompactCardListings(
         pendingVersionIds.length === 0
           ? "대기 없음"
           : `대기 ${String(pendingVersionIds.length)} (${pendingVersionIds.at(-1)})`;
-      const description = card.meaning.description.replace(/\s+/gu, " ").trim();
-      return `[${String(index + 1)}] ${card.id} · ${state} · ${pending} · ${description}\n    상세: contextctl cards show ${card.id}`;
+      const detailVersionId =
+        filter === "pending"
+          ? pendingVersionIds.at(-1)
+          : filter === "approved"
+            ? card.versions.currentVersionId
+            : (pendingVersionIds.at(-1) ?? card.versions.currentVersionId);
+      const detailVersion = card.versions.versions.find(
+        (version) => version.id === detailVersionId,
+      );
+      const meaning = detailVersion?.meaning ?? card.meaning;
+      const description = meaning.description.replace(/\s+/gu, " ").trim();
+      const detailTarget = `${card.id}${detailVersionId === undefined ? "" : ` ${detailVersionId}`}`;
+      return `[${String(index + 1)}] ${card.id} · ${state} · ${pending} · ${description}\n    상세: contextctl cards show ${detailTarget}`;
     }),
   ].join("\n");
 }
@@ -390,6 +401,7 @@ export function renderCardDetail(
     ...listing,
     card: {
       ...listing.card,
+      meaning: version.meaning ?? listing.card.meaning,
       versions: { ...listing.card.versions, versions: [version] },
     },
   };
