@@ -26,7 +26,12 @@ import {
   DEFAULT_STATE_NAMESPACE_ID,
 } from "../../src/main.js";
 import { parseCliArguments } from "../../src/cli/arguments.js";
-import { runCardsDecision, runReachability } from "../../src/cli/commands.js";
+import {
+  runCardsDecision,
+  runCardsList,
+  runCardsShow,
+  runReachability,
+} from "../../src/cli/commands.js";
 import { EXIT_CODES } from "../../src/cli/exit-codes.js";
 import {
   openRegistryOnlyRuntime,
@@ -172,6 +177,75 @@ describe("cards approve", () => {
     );
 
     expect(outcome.stdout).toContain("결정자:");
+  });
+});
+
+describe("cards inspection", () => {
+  it("defaults to a compact list of versions awaiting approval", async () => {
+    const outcome = await runCardsList(cli, {
+      kind: "cards_list",
+      json: false,
+      filter: "pending",
+      compact: true,
+    });
+
+    expect(outcome.exitCode).toBe(EXIT_CODES.ok);
+    expect(outcome.stdout).toContain("승인 대기 Card 1개");
+    expect(outcome.stdout).toContain("card_payments");
+    expect(outcome.stdout).toContain("상세: contextctl cards show card_payments");
+    expect(outcome.stdout).not.toContain("키워드:");
+  });
+
+  it("keeps the previous full JSON shape behind an explicit all filter", async () => {
+    const outcome = await runCardsList(cli, {
+      kind: "cards_list",
+      json: true,
+      filter: "all",
+      compact: true,
+    });
+    const parsed = JSON.parse(outcome.stdout) as readonly {
+      readonly card: { readonly id: string };
+      readonly pendingVersionIds: readonly string[];
+    }[];
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.card.id).toBe("card_payments");
+    expect(parsed[0]?.pendingVersionIds).toEqual(["cv_1", "cv_2"]);
+  });
+
+  it("filters by the source carried by a managed document Scope", async () => {
+    const matching = await runCardsList(cli, {
+      kind: "cards_list",
+      json: false,
+      filter: "all",
+      compact: true,
+      source: "src_payments",
+    });
+    const absent = await runCardsList(cli, {
+      kind: "cards_list",
+      json: false,
+      filter: "all",
+      compact: true,
+      source: "src_other",
+    });
+
+    expect(matching.stdout).toContain("card_payments");
+    expect(absent.stdout).not.toContain("card_payments");
+  });
+
+  it("shows complete evidence for one exact version", async () => {
+    const outcome = await runCardsShow(cli, {
+      kind: "cards_show",
+      cardId: "card_payments",
+      versionId: "cv_2",
+      json: false,
+    });
+
+    expect(outcome.stdout).toContain("Card card_payments");
+    expect(outcome.stdout).toContain("cv_2");
+    expect(outcome.stdout).not.toContain("cv_1 (");
+    expect(outcome.stdout).toContain("키워드:");
+    expect(outcome.stdout).toContain("근거:");
   });
 });
 

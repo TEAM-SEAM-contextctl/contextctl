@@ -36,7 +36,8 @@ contextctl source add <path> [--name <ref>] [--display-name <text>]
 contextctl source list
 contextctl source remove <ref>
 contextctl ingest [<ref>]
-contextctl cards list [--json]
+contextctl cards list [--pending|--approved|--all] [--source <ref>] [--compact|--verbose] [--json]
+contextctl cards show <cardId> [<versionId>] [--json]
 contextctl cards approve <cardId> [<versionId>] [--by <who>] [--note <text>]
 contextctl cards reject <cardId> <versionId> [--by <who>] [--note <text>]
 contextctl cards disable <cardId> [--by <who>] [--note <text>]
@@ -136,15 +137,21 @@ SHA-256 검증을 통과해야 하므로** 다른 모델을 넣는 우회로는 
 
 | 명령 | 무엇을 |
 | -- | -- |
-| `cards list` | Card 와 승인 상태. `--json` 은 도구용 |
+| `cards list` | 기본은 승인 대기 Card의 간략 목록. 상태·Source 필터와 `--json` 지원 |
+| `cards show <cardId> [<versionId>]` | 승인 판단에 필요한 설명·키워드·별칭·전체 근거 |
 | `cards approve <cardId> [<versionId>]` | 버전을 승인해 서비스에 넣습니다 |
 | `cards reject <cardId> <versionId>` | 그 버전을 쓰지 않기로 기록합니다 (지우지 않습니다) |
 | `cards disable <cardId>` | 서비스 중인 Card 를 내립니다 |
 | `cards rollback <cardId> <versionId>` | 이전 버전으로 되돌립니다 |
 
-`cards list` 는 버전마다 **판정 근거**를 함께 보여줍니다 — 검증 판정(`validated` /
-`needs_review` / `rejected`), 무엇이 문구를 만들었는지(결정적 생성기 / 모델 / 모델 장애로
-대체), 관측된 사실을 얼마나 반영했는지(`사실 반영 7/8`), 이전 버전과 무엇이 달라졌는지.
+`cards list` 는 많은 Card를 훑기 위한 표면입니다. 기본값은 승인 대기 Card만 간략히 보여주며,
+`--approved`·`--all`로 상태를 바꾸고 `--source <ref>`로 한 Source나 connector만 좁힙니다.
+`--verbose`는 필터 결과의 전체 근거를 펼칩니다. 한 Card만 검토할 때는 `cards show`를 씁니다.
+
+`cards show`와 상세 목록은 버전마다 **판정 근거**를 빠짐없이 보여줍니다 — 검증 판정
+(`validated` / `needs_review` / `rejected`), 무엇이 문구를 만들었는지(결정적 생성기 / 모델 /
+모델 장애로 대체), 관측된 사실을 얼마나 반영했는지(`사실 반영 7/8`), 이전 버전과 무엇이
+달라졌는지.
 모델이 쓴 버전은 항상 `needs_review` 입니다 — 승격은 되지만, 문장이 영역을 잘 설명하는지는
 기계가 증명하지 않으므로 사람의 검토 대상임을 표시합니다. `cards approve` 는 승인 시점에 같은
 근거를 다시 출력합니다.

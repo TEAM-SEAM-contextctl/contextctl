@@ -310,7 +310,7 @@ export interface CardListing {
   readonly pendingVersionIds: readonly string[];
 }
 
-/** `contextctl cards list` 의 사람용 출력. 인자는 CLI 가 모은 것. */
+/** `contextctl cards list --verbose` 의 사람용 출력. 인자는 CLI 가 모은 것. */
 export function renderCardListings(listings: readonly CardListing[]): string {
   if (listings.length === 0) {
     return line(
@@ -328,11 +328,79 @@ export function renderCardListings(listings: readonly CardListing[]): string {
   ]);
 }
 
+/** A scan-friendly index; all approval evidence remains available through show. */
+export function renderCompactCardListings(
+  listings: readonly CardListing[],
+  filter: "pending" | "approved" | "all",
+): string {
+  if (listings.length === 0) {
+    const subject =
+      filter === "pending"
+        ? "승인 대기 Card"
+        : filter === "approved"
+          ? "승인된 Card"
+          : "등록된 Card";
+    return [
+      `${subject}가 없습니다.`,
+      filter === "all"
+        ? "`contextctl ingest` 를 먼저 실행하십시오."
+        : "전체 목록: contextctl cards list --all",
+    ].join("\n");
+  }
+
+  const heading =
+    filter === "pending"
+      ? "승인 대기"
+      : filter === "approved"
+        ? "승인됨"
+        : "등록됨";
+  return [
+    `${heading} Card ${String(listings.length)}개`,
+    ...listings.map((listing, index) => {
+      const { card, pendingVersionIds } = listing;
+      const state =
+        card.versions.currentVersionId === undefined
+          ? "미승인"
+          : `승인 ${card.versions.currentVersionId}`;
+      const pending =
+        pendingVersionIds.length === 0
+          ? "대기 없음"
+          : `대기 ${String(pendingVersionIds.length)} (${pendingVersionIds.at(-1)})`;
+      const description = card.meaning.description.replace(/\s+/gu, " ").trim();
+      return `[${String(index + 1)}] ${card.id} · ${state} · ${pending} · ${description}\n    상세: contextctl cards show ${card.id}`;
+    }),
+  ].join("\n");
+}
+
+/** Complete approval evidence for one Card, optionally narrowed to one version. */
+export function renderCardDetail(
+  listing: CardListing,
+  versionId?: string,
+): string {
+  if (versionId === undefined) {
+    return renderCardListing(listing, 1).replace(/^\[1\]/u, "Card");
+  }
+  const version = listing.card.versions.versions.find(
+    (candidate) => candidate.id === versionId,
+  );
+  if (version === undefined) {
+    throw new Error(`Card ${listing.card.id} 에 버전 ${versionId} 이 없습니다.`);
+  }
+  const narrowed: CardListing = {
+    ...listing,
+    card: {
+      ...listing.card,
+      versions: { ...listing.card.versions, versions: [version] },
+    },
+  };
+  return renderCardListing(narrowed, 1).replace(/^\[1\]/u, "Card");
+}
+
 /**
  * Description and keywords are printed whole, and that is the point of the
  * command.
  *
- * An operator runs `cards list` to decide whether a Card is worth approving,
+ * An operator runs `cards show` or `cards list --verbose` before approving,
  * and the only evidence they have for that is what the Card claims to mean and
  * which words route a query to it. Both are LLM-generated, so a truncated
  * description hides exactly the sort of drift the approval step exists to

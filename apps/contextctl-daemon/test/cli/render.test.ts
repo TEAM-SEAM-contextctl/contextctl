@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   renderCardListings,
+  renderCardDetail,
+  renderCompactCardListings,
   renderResolution,
   renderSourceListing,
 } from "../../src/cli/render.js";
@@ -426,6 +428,46 @@ describe("renderCardListings", () => {
     ]);
 
     expect(rendered).toContain("키워드: (없음)");
+  });
+});
+
+describe("compact Card inspection", () => {
+  it("keeps the list scan-friendly and points to the complete detail", () => {
+    const listing = {
+      card: card({
+        description: "결제 실패 뒤 재시도 횟수와 간격을 설명한다.",
+        versions: [cardVersion("cv-2", "validated")],
+      }),
+      pendingVersionIds: ["cv-2"],
+    };
+
+    const rendered = renderCompactCardListings([listing], "pending");
+
+    expect(rendered).toContain("승인 대기 Card 1개");
+    expect(rendered).toContain("cv-2");
+    expect(rendered).toContain(`contextctl cards show ${listing.card.id}`);
+    expect(rendered).not.toContain("키워드:");
+    expect(renderCardDetail(listing)).toContain("키워드:");
+  });
+
+  it("shows all evidence for only the requested version", () => {
+    const listing = {
+      card: card({
+        versions: [
+          cardVersion("cv-old", "validated"),
+          cardVersion("cv-new", "validated"),
+        ],
+        currentVersionId: "cv-old",
+      }),
+      pendingVersionIds: ["cv-new"],
+    };
+
+    const rendered = renderCardDetail(listing, "cv-new");
+
+    expect(rendered).toContain("cv-new");
+    expect(rendered).not.toContain("cv-old (");
+    expect(rendered).toContain("설명:");
+    expect(rendered).toContain("키워드:");
   });
 });
 
