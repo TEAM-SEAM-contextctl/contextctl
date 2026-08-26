@@ -4,7 +4,7 @@ import type {
 } from "./card-catalog.js";
 
 /** Identifies the lexical rules that produced a candidate score. */
-export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v3" as const;
+export const QUERY_SCORING_POLICY_VERSION = "selection-lexical-v4" as const;
 
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
@@ -12,9 +12,8 @@ const BM25_WEIGHT = 0.75;
 const NGRAM_WEIGHT = 0.25;
 /** Fuzzy evidence alone must remain on the rejecting side of the band. */
 const MAX_INDIRECT_SCORE = 0.34;
-/** Incidental character overlap below this score is not large-catalog evidence. */
-const LARGE_CATALOG_MIN_INDIRECT_SCORE = 0.05;
-const LARGE_CATALOG_MIN_CANDIDATES = 128;
+/** Smaller character overlap may rank rejects but is not auditable evidence. */
+const MIN_AUDITABLE_INDIRECT_SCORE = 0.05;
 /** A declared but non-distinctive term may defer, but never admit by itself. */
 const MAX_WEAK_DIRECT_SCORE = 0.84;
 
@@ -74,20 +73,33 @@ interface IndexedCard {
   readonly card: ApprovedCard;
   readonly fields: readonly WeightedField[];
   readonly termFrequency: ReadonlyMap<string, number>;
+  readonly declaredVocabularySize: number;
+  readonly humanAliasCount: number;
+  readonly broadGenerated: boolean;
   readonly weightedLength: number;
   /** Shared immutable rejection record for queries with no usable evidence. */
   readonly noScore: CandidateScore;
+  /**
+   * Last negligible indirect candidate. It retains no query material and
+   * avoids allocating the same reject-band record on repeated scoring runs.
+   */
+  weakIndirect: CandidateScore | undefined;
 }
 
-interface CatalogStatistics {
+interface CatalogIndex {
   readonly cards: readonly IndexedCard[];
+  /** Each distinct 2/3-character string is retained once per generation. */
+  readonly ngramIds: ReadonlyMap<string, number>;
+}
+
+interface QueryStatistics {
+  /** Query-relevant population used by relative lexical statistics. */
+  readonly scoringCardCount: number;
   readonly documentFrequency: ReadonlyMap<string, number>;
   readonly declaredTermFrequency: ReadonlyMap<string, number>;
   /** Keeps a unique heading distinctive when its word also appears in body keywords. */
   readonly aliasTermFrequency: ReadonlyMap<string, number>;
   readonly averageWeightedLength: number;
-  /** Each distinct 2/3-character string is retained once per generation. */
-  readonly ngramIds: ReadonlyMap<string, number>;
 }
 
 interface QueryNgrams {
@@ -105,19 +117,28 @@ interface QueryAnalysis {
   readonly sourceIntents: ReadonlySet<SourceIntent>;
 }
 
+interface DirectEvidenceCompetition {
+  /** The only broad generated Card with the most declared query matches. */
+  readonly strongLeaderVersionId: string | undefined;
+}
+
 /**
- * BM25 corpus statistics belong to an immutable approved-catalog generation,
- * not to a query. A weak key releases them when that generation is retired.
+ * Lexical Card indexes belong to an immutable approved-catalog generation.
+ * Query-relative statistics stay ephemeral, and a weak key releases the
+ * reusable indexes when that generation is retired.
  */
-const catalogStatisticsCache = new WeakMap<
+const catalogIndexCache = new WeakMap<
   readonly ApprovedCard[],
-  CatalogStatistics
+  CatalogIndex
 >();
 
 /**
  * Scores every approved Card against one query.
  *
- * v3 computes catalog statistics once and requires BM25 or multi-token context
+ * v4 computes immutable catalog indexes once, then derives relative statistics
+ * from only the Cards that share query vocabulary. Appending an unrelated Card
+ * therefore cannot change existing scores. It still requires BM25 or
+ * multi-token context
  * before a declaration can cross the admit threshold. A term shared by many
  * Cards is weak evidence; a distinctive, corroborated declaration is strong
  * evidence. This prevents one generic derived keyword from admitting a Card.
@@ -128,72 +149,135 @@ export function scoreCardsAgainstQuery(
 ): readonly CandidateScore[] {
   const query = normalizeText(queryText);
   const tokens = tokenize(query);
-  const statistics = catalogStatistics(cards);
+  const catalog = catalogIndex(cards);
   const analysis: QueryAnalysis = {
     tokens,
     uniqueTokens: uniqueInOrder(tokens),
-    ngrams: queryNgrams(query, statistics.ngramIds),
+    ngrams: queryNgrams(query, catalog.ngramIds),
     sourceIntents: inferSourceIntents(tokens),
   };
+  const statistics = queryRelevantStatistics(analysis.uniqueTokens, catalog);
+  const competition = directEvidenceCompetition(analysis, catalog.cards);
 
-  return statistics.cards.map((indexed) =>
-    scoreCard(analysis, indexed, statistics),
+  return catalog.cards.map((indexed) =>
+    scoreCard(analysis, indexed, statistics, competition),
   );
 }
 
-function catalogStatistics(cards: readonly ApprovedCard[]): CatalogStatistics {
-  const cached = catalogStatisticsCache.get(cards);
-  if (cached !== undefined) return cached;
-  const statistics = buildCatalogStatistics(cards);
-  catalogStatisticsCache.set(cards, statistics);
-  return statistics;
+function directEvidenceCompetition(
+  query: QueryAnalysis,
+  cards: readonly IndexedCard[],
+): DirectEvidenceCompetition {
+  let maximum = 0;
+  let leaderVersionId: string | undefined;
+  let tied = false;
+  for (const indexed of cards) {
+    if (!indexed.broadGenerated) continue;
+    const count = matchedDeclaredFieldCount(query, indexed.fields);
+    if (count > maximum) {
+      maximum = count;
+      leaderVersionId = indexed.card.versionId;
+      tied = false;
+    } else if (count === maximum && count > 0) {
+      tied = true;
+    }
+  }
+  return {
+    strongLeaderVersionId:
+      maximum >= 3 && !tied ? leaderVersionId : undefined,
+  };
 }
 
-function buildCatalogStatistics(
+function matchedDeclaredFieldCount(
+  query: QueryAnalysis,
+  fields: readonly WeightedField[],
+): number {
+  const matchedTokens = new Set<string>();
+  for (const field of fields) {
+    if (field.field !== "keyword" && field.field !== "alias") continue;
+    if (isOpaqueDeclaredIdentifier(field.text)) continue;
+    if (!field.tokens.every((token) => queryContainsDeclaredToken(query.tokens, token))) {
+      continue;
+    }
+    for (const token of field.tokens) matchedTokens.add(token);
+  }
+  return matchedTokens.size;
+}
+
+function catalogIndex(cards: readonly ApprovedCard[]): CatalogIndex {
+  const cached = catalogIndexCache.get(cards);
+  if (cached !== undefined) return cached;
+  const index = buildCatalogIndex(cards);
+  catalogIndexCache.set(cards, index);
+  return index;
+}
+
+function buildCatalogIndex(
   cards: readonly ApprovedCard[],
-): CatalogStatistics {
+): CatalogIndex {
   const ngramIds = new Map<string, number>();
   const indexedCards = cards.map((card) => indexCard(card, ngramIds));
+  return {
+    cards: indexedCards,
+    ngramIds,
+  };
+}
+
+/**
+ * Keeps relative lexical statistics invariant when Cards that share no query
+ * vocabulary are appended to the catalog. Such Cards cannot contribute
+ * evidence for this query and therefore must not change existing evidence.
+ */
+function queryRelevantStatistics(
+  queryTokens: readonly string[],
+  catalog: CatalogIndex,
+): QueryStatistics {
   const documentFrequency = new Map<string, number>();
   const declaredTermFrequency = new Map<string, number>();
   const aliasTermFrequency = new Map<string, number>();
-
-  for (const indexed of indexedCards) {
-    for (const token of indexed.termFrequency.keys()) {
-      documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+  const declaredTokensSeen = new Set<string>();
+  const aliasTokensSeen = new Set<string>();
+  let scoringCardCount = 0;
+  let totalLength = 0;
+  for (const indexed of catalog.cards) {
+    if (!indexedCardContainsAnyQueryToken(indexed, queryTokens)) {
+      continue;
     }
-    const declared = new Set(
-      [...indexed.card.meaning.keywords, ...indexed.card.meaning.aliases]
-        .flatMap((term) => tokenize(normalizeText(term))),
-    );
-    for (const token of declared) {
+    scoringCardCount += 1;
+    totalLength += indexed.weightedLength;
+    for (const token of queryTokens) {
+      if (indexed.termFrequency.has(token)) {
+        documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+      }
+    }
+    declaredTokensSeen.clear();
+    aliasTokensSeen.clear();
+    for (const field of indexed.fields) {
+      if (field.field !== "keyword" && field.field !== "alias") continue;
+      for (const token of field.tokens) {
+        if (!queryContainsDeclaredToken(queryTokens, token)) continue;
+        declaredTokensSeen.add(token);
+        if (field.field === "alias") aliasTokensSeen.add(token);
+      }
+    }
+    for (const token of declaredTokensSeen) {
       declaredTermFrequency.set(
         token,
         (declaredTermFrequency.get(token) ?? 0) + 1,
       );
     }
-    const aliases = new Set(
-      indexed.card.meaning.aliases.flatMap((term) =>
-        tokenize(normalizeText(term)),
-      ),
-    );
-    for (const token of aliases) {
+    for (const token of aliasTokensSeen) {
       aliasTermFrequency.set(token, (aliasTermFrequency.get(token) ?? 0) + 1);
     }
   }
 
-  const totalLength = indexedCards.reduce(
-    (sum, indexed) => sum + indexed.weightedLength,
-    0,
-  );
   return {
-    cards: indexedCards,
+    scoringCardCount,
     documentFrequency,
     declaredTermFrequency,
     aliasTermFrequency,
     averageWeightedLength:
-      indexedCards.length === 0 ? 0 : totalLength / indexedCards.length,
-    ngramIds,
+      scoringCardCount === 0 ? 0 : totalLength / scoringCardCount,
   };
 }
 
@@ -234,10 +318,26 @@ function indexCard(
       termFrequency.set(token, (termFrequency.get(token) ?? 0) + field.weight);
     }
   }
+  const humanAliases = card.meaning.aliases.filter(
+    (value) => !isOpaqueDeclaredIdentifier(value),
+  );
+  const humanKeywords = card.meaning.keywords.filter(
+    (value) => !isOpaqueDeclaredIdentifier(value),
+  );
+  const humanDeclaredTokens: string[] = [];
+  for (const token of [...humanKeywords, ...humanAliases].flatMap((term) =>
+    tokenize(normalizeText(term)),
+  )) {
+    if (!humanDeclaredTokens.includes(token)) humanDeclaredTokens.push(token);
+  }
   return {
     card,
     fields,
     termFrequency,
+    declaredVocabularySize: humanDeclaredTokens.length,
+    humanAliasCount: humanAliases.length,
+    broadGenerated:
+      humanDeclaredTokens.length > 24 && humanAliases.length >= 2,
     weightedLength,
     noScore: Object.freeze({
       cardId: card.cardId,
@@ -245,6 +345,7 @@ function indexCard(
       score: 0,
       signals: NO_SCORE_SIGNALS,
     }),
+    weakIndirect: undefined,
   };
 }
 
@@ -273,7 +374,8 @@ function appendFields(
 function scoreCard(
   query: QueryAnalysis,
   indexed: IndexedCard,
-  statistics: CatalogStatistics,
+  statistics: QueryStatistics,
+  competition: DirectEvidenceCompetition,
 ): CandidateScore {
   if (query.tokens.length === 0) return indexed.noScore;
 
@@ -284,24 +386,29 @@ function scoreCard(
     indexed,
     statistics,
     normalizedBm25,
+    competition,
   );
   const direct = directSignals.reduce(
     (maximum, signal) => Math.max(maximum, signal.contribution),
     0,
   );
-  const ngram = bestNgramScore(query.ngrams, indexed.fields);
+  const ngramContribution = bestNgramContribution(query.ngrams, indexed.fields);
   const rawIndirect = Math.min(
     MAX_INDIRECT_SCORE,
-    BM25_WEIGHT * normalizedBm25 + NGRAM_WEIGHT * ngram.contribution,
+    BM25_WEIGHT * normalizedBm25 + NGRAM_WEIGHT * ngramContribution,
   );
-  const indirect =
-    statistics.cards.length >= LARGE_CATALOG_MIN_CANDIDATES &&
-    rawIndirect < LARGE_CATALOG_MIN_INDIRECT_SCORE
-      ? 0
-      : rawIndirect;
+  const indirect = rawIndirect;
   if (direct === 0 && indirect === 0) {
     return indexed.noScore;
   }
+  if (
+    direct === 0 &&
+    bm25 === 0 &&
+    indirect < MIN_AUDITABLE_INDIRECT_SCORE
+  ) {
+    return weakIndirectCandidate(indexed, indirect);
+  }
+  const ngram = bestNgramScore(query.ngrams, indexed.fields);
   const signals: ScoreSignal[] = [...directSignals];
   if (bm25 > 0) {
     signals.push({
@@ -327,19 +434,35 @@ function scoreCard(
   };
 }
 
+function weakIndirectCandidate(
+  indexed: IndexedCard,
+  score: number,
+): CandidateScore {
+  if (indexed.weakIndirect?.score === score) return indexed.weakIndirect;
+  const candidate = Object.freeze({
+    cardId: indexed.card.cardId,
+    versionId: indexed.card.versionId,
+    score,
+    signals: NO_SCORE_SIGNALS,
+  });
+  indexed.weakIndirect = candidate;
+  return candidate;
+}
+
 function collectDirectSignals(
   query: QueryAnalysis,
   indexed: IndexedCard,
-  statistics: CatalogStatistics,
+  statistics: QueryStatistics,
   normalizedBm25: number,
+  competition: DirectEvidenceCompetition,
 ): readonly ScoreSignal[] {
-  const matched: {
+  let matched: {
     readonly field: "keyword" | "alias" | "scope";
     readonly text: string;
     readonly tokens: readonly string[];
     readonly specificity: number;
-  }[] = [];
-  const matchedDeclarations = new Set<string>();
+  }[] | undefined;
+  let matchedDeclarations: Set<string> | undefined;
 
   for (const field of indexed.fields) {
     if (field.field === "scope") {
@@ -348,9 +471,9 @@ function collectDirectSignals(
         field.tokens.every((token, index) => token === query.tokens[index]);
       if (exactCoordinate) {
         const declarationKey = `scope-coordinate:${field.tokens.join(" ")}`;
-        if (!matchedDeclarations.has(declarationKey)) {
-          matchedDeclarations.add(declarationKey);
-          matched.push({
+        if (!matchedDeclarations?.has(declarationKey)) {
+          (matchedDeclarations ??= new Set()).add(declarationKey);
+          (matched ??= []).push({
             field: "scope",
             text: field.text,
             tokens: field.tokens,
@@ -364,15 +487,15 @@ function collectDirectSignals(
         if (field.tokens.indexOf(token) !== index) continue;
         if (!query.uniqueTokens.includes(token)) continue;
         const declarationKey = `scope:${token}`;
-        if (matchedDeclarations.has(declarationKey)) continue;
-        matchedDeclarations.add(declarationKey);
-        matched.push({
+        if (matchedDeclarations?.has(declarationKey)) continue;
+        (matchedDeclarations ??= new Set()).add(declarationKey);
+        (matched ??= []).push({
           field: "scope",
           text: token,
           tokens: [token],
           specificity: declaredSpecificity(
-            statistics.cards.length,
-            statistics.documentFrequency.get(token) ?? statistics.cards.length,
+            statistics.scoringCardCount,
+            statistics.documentFrequency.get(token) ?? statistics.scoringCardCount,
           ),
         });
       }
@@ -383,20 +506,20 @@ function collectDirectSignals(
       continue;
     }
     const declarationKey = `${field.field}:${field.tokens.join(" ")}`;
-    if (matchedDeclarations.has(declarationKey)) continue;
-    matchedDeclarations.add(declarationKey);
+    if (matchedDeclarations?.has(declarationKey)) continue;
+    (matchedDeclarations ??= new Set()).add(declarationKey);
     const specificity = Math.max(
       ...field.tokens.map((token) =>
         declaredSpecificity(
-          statistics.cards.length,
+          statistics.scoringCardCount,
           (field.field === "alias"
             ? statistics.aliasTermFrequency
             : statistics.declaredTermFrequency
-          ).get(token) ?? statistics.cards.length,
+          ).get(token) ?? statistics.scoringCardCount,
         ),
       ),
     );
-    matched.push({
+    (matched ??= []).push({
       field: field.field,
       text: field.text,
       tokens: field.tokens,
@@ -404,7 +527,7 @@ function collectDirectSignals(
     });
   }
 
-  if (matched.length === 0) return NO_SCORE_SIGNALS;
+  if (matched === undefined) return NO_SCORE_SIGNALS;
   const strongest = Math.max(...matched.map((entry) => entry.specificity));
   let contextualOverlap = 0;
   for (const queryToken of query.uniqueTokens) {
@@ -419,8 +542,6 @@ function collectDirectSignals(
     0.42 +
     0.4 * strongest +
     0.18 * Math.min(matched.length / 2, 1);
-  const smallCatalogStrongContext =
-    statistics.cards.length <= 3 && contextualOverlap >= 3;
   const onlyTerm = matched.length === 1 ? matched[0]!.tokens : [];
   const weakSingleTerm =
     onlyTerm.length === 1 &&
@@ -431,17 +552,17 @@ function collectDirectSignals(
   const exactMultiTokenAlias = matched.some(
     (entry) => entry.field === "alias" && entry.tokens.length >= 2,
   );
-  const declaredVocabularySize = new Set(
-    [...indexed.card.meaning.keywords, ...indexed.card.meaning.aliases]
-      .filter((value) => !isOpaqueDeclaredIdentifier(value))
-      .flatMap((value) => tokenize(normalizeText(value))),
-  ).size;
-  const humanAliasCount = indexed.card.meaning.aliases.filter(
-    (value) => !isOpaqueDeclaredIdentifier(value),
-  ).length;
   const conciseSpecificDeclaration =
-    declaredVocabularySize <= 24 && humanAliasCount >= 2;
-  const supportedCommonPhrase = matched.length >= 2 && normalizedBm25 >= 0.6;
+    indexed.declaredVocabularySize <= 24 && indexed.humanAliasCount >= 2;
+  const supportedCommonPhrase =
+    matched.length >= 2 &&
+    (normalizedBm25 >= 0.6 ||
+      (conciseSpecificDeclaration &&
+        contextualOverlap >= 2 &&
+        normalizedBm25 >= 0.54) ||
+      (conciseSpecificDeclaration &&
+        matched.length >= 3 &&
+        contextualOverlap >= 3));
   const distinctiveAliasWithContext =
     matched.some(
       (entry) => entry.field === "alias" && entry.specificity >= 0.9,
@@ -458,24 +579,27 @@ function collectDirectSignals(
     !exactMultiTokenAlias &&
     !supportedCommonPhrase;
   const wellCorroboratedDirect =
+    competition.strongLeaderVersionId === indexed.card.versionId ||
     exactMultiTokenAlias ||
     (conciseSpecificDeclaration && strongest >= 0.9) ||
     (conciseSpecificDeclaration && supportedCommonPhrase) ||
     distinctiveAliasWithContext ||
     strongContextPhrase ||
-    smallCatalogStrongContext ||
-    (statistics.cards.length <= 3 && strongest >= 0.9) ||
+    (statistics.scoringCardCount === 1 && strongest >= 0.9) ||
     normalizedBm25 >= 0.86 ||
     (strongest >= 0.9 && normalizedBm25 >= 0.84);
+  const strongDirectFloor =
+    strongContextPhrase ||
+    competition.strongLeaderVersionId === indexed.card.versionId
+      ? 0.91
+      : 0;
   const contribution = clampToUnitInterval(
     weakSingleTerm ||
     commonTermsWithoutContext ||
     !wellCorroboratedDirect ||
     (sourceIntentConflict && strongest < 0.85)
       ? Math.min(rawContribution, MAX_WEAK_DIRECT_SCORE)
-      : smallCatalogStrongContext || strongContextPhrase
-        ? Math.max(rawContribution, 0.91)
-        : rawContribution,
+      : Math.max(rawContribution, strongDirectFloor),
   );
   return matched.map((entry) => ({
     field: entry.field,
@@ -507,6 +631,16 @@ function indexedCardContainsQueryToken(
     ) {
       return true;
     }
+  }
+  return false;
+}
+
+function indexedCardContainsAnyQueryToken(
+  indexed: IndexedCard,
+  queryTokens: readonly string[],
+): boolean {
+  for (const token of queryTokens) {
+    if (indexedCardContainsQueryToken(indexed, token)) return true;
   }
   return false;
 }
@@ -579,9 +713,9 @@ function declaredSpecificity(cardCount: number, frequency: number): number {
 function bm25Score(
   uniqueQueryTokens: readonly string[],
   indexed: IndexedCard,
-  statistics: CatalogStatistics,
+  statistics: QueryStatistics,
 ): number {
-  if (statistics.cards.length === 0 || statistics.averageWeightedLength === 0) return 0;
+  if (statistics.scoringCardCount === 0 || statistics.averageWeightedLength === 0) return 0;
   let score = 0;
   for (const token of uniqueQueryTokens) {
     const frequency = indexed.termFrequency.get(token) ?? 0;
@@ -589,7 +723,7 @@ function bm25Score(
     const documentFrequency = statistics.documentFrequency.get(token) ?? 0;
     const idf = Math.log(
       1 +
-        (statistics.cards.length - documentFrequency + 0.5) /
+        (statistics.scoringCardCount - documentFrequency + 0.5) /
           (documentFrequency + 0.5),
     );
     const denominator =
@@ -620,6 +754,19 @@ function bestNgramScore(
     if (contribution > best.contribution) {
       best = { field: field.field, matched: field.text, contribution };
     }
+  }
+  return best;
+}
+
+function bestNgramContribution(
+  queryNgrams: QueryNgrams,
+  fields: readonly WeightedField[],
+): number {
+  let best = 0;
+  for (const field of fields) {
+    const similarity = ngramDice(queryNgrams, field.ngramIds);
+    const contribution = similarity * Math.min(field.weight / FIELD_WEIGHTS.keyword, 1);
+    if (contribution > best) best = contribution;
   }
   return best;
 }
@@ -686,6 +833,15 @@ function uniqueInOrder(values: readonly string[]): readonly string[] {
 
 function normalizeKoreanSuffix(value: string): string {
   if (!/[가-힣]/u.test(value) || value.length < 3) return value;
+  // A derived keyword keeps the source inflection, while a user naturally
+  // asks with another inflection. Normalize only the passive `되다` forms we
+  // can strip without a morphological dictionary; this is deliberately not a
+  // general Korean stemmer.
+  for (const suffix of ["되어", "되는", "되면", "되고", "되지", "된"]) {
+    if (value.endsWith(suffix) && value.length > suffix.length + 1) {
+      return value.slice(0, -suffix.length);
+    }
+  }
   for (const suffix of [
     "에서는", "으로는", "에게는", "부터는", "까지는", "이라는", "라고는",
     "으로", "에서", "에게", "까지", "부터", "처럼", "보다", "이나", "거나",

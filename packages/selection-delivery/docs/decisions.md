@@ -2,7 +2,7 @@
 
 ## 이 문서의 목적
 
-`adr/`에는 기록이 13건 있고 그중 5건(0002·0004·0006·0007·0010)은 뒤 기록이 대체했다. 파일을
+`adr/`에는 기록이 14건 있고 그중 5건(0002·0004·0006·0007·0010)은 뒤 기록이 대체했다. 파일을
 번호 순서로 읽으면 대체된 결정을 현행으로 오독하기 쉽다 — 0008이 스스로 적은 위험이고, 각
 파일의 상태 행과 README 표가 막아 주지만 독자가 그것을 먼저 보아야 한다.
 
@@ -61,14 +61,18 @@ ADR 0008은 설계안을 **초안 판본**(`최종설계안.md`, 3,287행 이상
 
 ## 점수 계산
 
-- **`selection-lexical-v3`는 넓은 선언 어휘에 BM25·문맥 보강을 요구하고,
-  `selection-hybrid-v3`는 차이가 작은 의미 1위에 절대 유사도나 어휘 보강을 요구한다.** 간접
-  신호와 비선두 의미 후보는 거부 영역에 머물며 두 약한 신호를 더하지 않는다. 손작성 Card의
-  `selection-eval-v1`과 실제 생성 Card의 `generated-card-selection-v1`을 모두 필수 Granite
-  검사로 실행한다. Card 128개 이상에서는 `0.05` 미만의 간접 점수를 우연한 문자 겹침으로 0
-  처리한다.
+- **`selection-lexical-v4`의 상대 통계는 질의 어휘와 관련된 Card만 사용하고,
+  `selection-hybrid-v4`는 직접 근거와 의미 근거의 선두가 충돌할 때 더 강한 독립 근거를
+  우선한다.** 무관한 Card 증가는 기존 점수와 승인 집합을 바꾸지 않는다. 넓은 생성 Card는
+  선언 토큰 수의 유일한 선두만 강한 직접 근거를 얻고, 승인선 바로 아래의 유일한 어휘 선두는
+  의미 순위와 좁은 범위에서 합의할 때만 복구한다. 파생 키워드와 질의의 제한된 `되다`
+  활용형은 같은 어간으로 정규화한다. 간접 점수 `0.05` 미만은 모든 카탈로그 크기에서 수치
+  순위만 보존하고 감사 신호 객체를 만들지 않는다. 그 밖의 간접 신호와 비선두 의미 후보는
+  거부 영역에 머물며 두 약한 점수를 더하지 않는다. 손작성 Card의 `selection-eval-v1`과 실제
+  생성 Card의 보정·봉인·규모 검사를 모두 실행한다.
   — [ADR 0011](./adr/0011-calibrate-lexical-and-hybrid-scoring-with-selection-eval-v1.md),
-  [ADR 0013](./adr/0013-gate-generated-cards-and-require-corroborated-selection-evidence.md)
+  [ADR 0013](./adr/0013-gate-generated-cards-and-require-corroborated-selection-evidence.md),
+  [ADR 0014](./adr/0014-make-selection-evidence-invariant-under-unrelated-catalog-growth.md)
 
 - **`selection-scale-v1`의 RSS는 `daemon-runtime-profile-v1`과 같은 `1,536MiB` 상한을 사용한다.**
   Granite fp32 구성요소 상한 `1,024MiB`보다 작았던 초기 `768MiB` 모순을 제거한 것이며, p95
