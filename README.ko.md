@@ -50,7 +50,7 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 
 | | |
 |---|---|
-| **Node.js** | **24 이상** — 저장소가 `node:sqlite` 위에 있고, 그 모듈은 Node 24 에서 처음 제공됩니다 |
+| **Node.js** | **24.18.0 이상인 24.x** — 필수 릴리스 검사를 수행한 공식 지원 범위입니다 |
 | **Qdrant** | 필수입니다. `CONTEXTCTL_QDRANT_URL` 이 없으면 `ingest`·`query`·`serve` 가 시작을 거부합니다 |
 | **디스크** | 임베딩 모델 **396.1 MiB** — 기본 로컬 실행 기준. 두 임베딩 계층을 모두 원격으로 쓰면 필요 없습니다 |
 
@@ -64,9 +64,12 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
 ```
 
-스크립트가 하는 일은 셋뿐입니다 — Node 버전 확인, 패키지 5개 내려받아 `npm i -g`, `PATH` 도달
-확인. **모델은 받지 않습니다.** 396 MiB 다운로드는 별도 동의가 필요한 일이라 다음 단계에서
-직접 물어봅니다.
+스크립트는 하나의 불변 릴리스 태그를 먼저 확정하고, 그 릴리스의 `SHA256SUMS`와 패키지 5개를
+대조한 뒤 한 번의 `npm i -g`로 설치합니다. digest가 하나라도 다르면 npm을 호출하기 전에
+멈춥니다. 특정 버전을 다시 설치할 때는 파이프로 넘기는 Bash 인자 뒤에
+`-s -- --version vX.Y.Z`를 붙입니다. 전체 명령은 운영 안내서에 있습니다.
+
+**모델은 받지 않습니다.** 별도의 396 MiB 다운로드는 다음 단계에서 동의를 묻습니다.
 
 `PATH` 에서 찾지 못하면 스크립트가 실제 `bin` 경로와 `export PATH=…` 한 줄을 알려주고 멈춥니다.
 설치된 위치는 나중에 `contextctl paths` 로도 확인할 수 있습니다.

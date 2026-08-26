@@ -9,11 +9,14 @@
 # already checked by digest, and it would drift.
 #
 #   curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash -s -- --version v1.1.0
 #
 set -euo pipefail
 
 REPO="TEAM-SEAM-contextctl/contextctl"
-RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
+RELEASE_TAG=""
+RELEASE_BASE=""
+REQUESTED_RELEASE_TAG=""
 MINIMUM_NODE_VERSION="24.18.0"
 SUPPORTED_NODE_MAJOR=24
 MINIMUM_NODE_MINOR=18
@@ -40,6 +43,64 @@ trap cleanup EXIT
 
 say() { printf '%s\n' "$*"; }
 fail() { printf '%s\n' "$*" >&2; }
+
+usage() {
+  say "사용법: install.sh [--version <vX.Y.Z>]"
+  say ""
+  say "버전을 생략하면 GitHub의 최신 정식 릴리스를 설치합니다."
+}
+
+parse_arguments() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --version)
+        if [ "$#" -lt 2 ]; then
+          fail "--version 뒤에 릴리스 태그가 필요합니다."
+          exit 2
+        fi
+        REQUESTED_RELEASE_TAG="$2"
+        shift 2
+        ;;
+      --version=*)
+        REQUESTED_RELEASE_TAG="${1#--version=}"
+        shift
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "알 수 없는 설치 옵션입니다: $1"
+        fail "install.sh --help 로 사용법을 확인하세요."
+        exit 2
+        ;;
+    esac
+  done
+}
+
+validate_release_tag() {
+  if [[ ! "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+    fail "릴리스 버전은 vX.Y.Z 형식이어야 합니다: $1"
+    exit 2
+  fi
+}
+
+resolve_release() {
+  if [ -n "${REQUESTED_RELEASE_TAG}" ]; then
+    RELEASE_TAG="${REQUESTED_RELEASE_TAG}"
+  else
+    local resolved_url
+    if ! resolved_url="$(curl -fsSL --retry 2 --connect-timeout 20 -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"; then
+      fail "최신 릴리스 버전을 확인하지 못했습니다."
+      fail "릴리스 목록: https://github.com/${REPO}/releases"
+      exit 1
+    fi
+    RELEASE_TAG="${resolved_url##*/}"
+  fi
+  validate_release_tag "${RELEASE_TAG}"
+  RELEASE_BASE="${CONTEXTCTL_INSTALL_RELEASE_BASE:-https://github.com/${REPO}/releases/download/${RELEASE_TAG}}"
+  say "릴리스 ${RELEASE_TAG} 를 설치합니다."
+}
 
 # --------------------------------------------------------------------- node
 
@@ -108,12 +169,29 @@ require_npm() {
   fi
 }
 
+require_download_tools() {
+  if ! command -v curl >/dev/null 2>&1; then
+    fail "curl 을 찾을 수 없습니다. 릴리스 자산을 내려받는 데 필요합니다."
+    exit 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    fail "SHA-256 검증 도구를 찾을 수 없습니다(sha256sum 또는 shasum 필요)."
+    exit 1
+  fi
+}
+
 # ----------------------------------------------------------------- download
 
 download_packages() {
   WORK_DIR="$(mktemp -d)"
-  say "패키지를 내려받습니다..."
-  local name url
+  say "패키지와 SHA-256 목록을 내려받습니다..."
+  local checksums_url name url expected actual
+  checksums_url="${RELEASE_BASE}/SHA256SUMS"
+  if ! curl -fsSL --retry 2 --connect-timeout 20 -o "${WORK_DIR}/SHA256SUMS" "${checksums_url}"; then
+    fail "검증 목록을 내려받지 못했습니다: ${checksums_url}"
+    fail "검증 목록이 없는 릴리스는 설치하지 않습니다."
+    exit 1
+  fi
   for name in "${PACKAGES[@]}"; do
     url="${RELEASE_BASE}/${name}.tgz"
     if ! curl -fsSL --retry 2 --connect-timeout 20 -o "${WORK_DIR}/${name}.tgz" "${url}"; then
@@ -123,8 +201,46 @@ download_packages() {
       fail "릴리스 목록: https://github.com/${REPO}/releases"
       exit 1
     fi
-    say "  ${name}.tgz"
+    expected="$(expected_digest "${name}.tgz")" || {
+      fail "SHA256SUMS에 ${name}.tgz 항목이 정확히 하나 있어야 합니다."
+      exit 1
+    }
+    actual="$(compute_sha256 "${WORK_DIR}/${name}.tgz")"
+    if [ "${actual}" != "${expected}" ]; then
+      fail "SHA-256 검증에 실패했습니다: ${name}.tgz"
+      fail "  기대: ${expected}"
+      fail "  실제: ${actual}"
+      fail "npm 설치를 시작하지 않았습니다."
+      exit 1
+    fi
+    say "  ${name}.tgz  ${actual}"
   done
+}
+
+expected_digest() {
+  local filename="$1"
+  awk -v expected_file="${filename}" '
+    {
+      file = $2
+      sub(/^\*/, "", file)
+      if (file == expected_file) {
+        count += 1
+        digest = tolower($1)
+      }
+    }
+    END {
+      if (count != 1 || length(digest) != 64 || digest ~ /[^0-9a-f]/) exit 1
+      print digest
+    }
+  ' "${WORK_DIR}/SHA256SUMS"
+}
+
+compute_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print tolower($1) }'
+  else
+    shasum -a 256 "$1" | awk '{ print tolower($1) }'
+  fi
 }
 
 # ------------------------------------------------------------------ install
@@ -218,8 +334,11 @@ next_steps() {
 }
 
 main() {
+  parse_arguments "$@"
   require_node
   require_npm
+  require_download_tools
+  resolve_release
   download_packages
   install_packages
   verify_reachable
