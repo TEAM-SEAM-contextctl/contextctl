@@ -228,15 +228,32 @@ export class CardCandidateIndex {
     for (let index = 0; index < this.#records.length; index += 1) {
       const record = this.#records[index]!;
       if (eligible !== undefined && !eligible.has(record.cardVersionId)) continue;
+      const similarity = cosineSimilarityWithMagnitudes(
+        queryVector,
+        record.embedding,
+        queryMagnitude,
+        this.#recordMagnitudes[index] ?? 0,
+      );
+      const worst = closest[closest.length - 1];
+      // Once the bounded result is full, most of a large catalog loses here.
+      // Compare the scalar fields first so those records never allocate a
+      // short-lived CardSimilarity object only for insertClosest to discard it.
+      if (
+        closest.length === limit &&
+        worst !== undefined &&
+        compareSimilarityValues(
+          similarity,
+          record.cardVersionId,
+          worst.similarity,
+          worst.cardVersionId,
+        ) >= 0
+      ) {
+        continue;
+      }
       const candidate: CardSimilarity = {
         cardId: record.cardId,
         cardVersionId: record.cardVersionId,
-        similarity: cosineSimilarityWithMagnitudes(
-          queryVector,
-          record.embedding,
-          queryMagnitude,
-          this.#recordMagnitudes[index] ?? 0,
-        ),
+        similarity,
       };
       insertClosest(closest, candidate, limit);
     }
@@ -274,16 +291,30 @@ function compareBySimilarity(
   left: CardSimilarity,
   right: CardSimilarity,
 ): number {
-  if (left.similarity !== right.similarity) {
-    return right.similarity - left.similarity;
+  return compareSimilarityValues(
+    left.similarity,
+    left.cardVersionId,
+    right.similarity,
+    right.cardVersionId,
+  );
+}
+
+function compareSimilarityValues(
+  leftSimilarity: number,
+  leftCardVersionId: string,
+  rightSimilarity: number,
+  rightCardVersionId: string,
+): number {
+  if (leftSimilarity !== rightSimilarity) {
+    return rightSimilarity - leftSimilarity;
   }
   // `<` / `>` rather than `localeCompare`, for the reason `selection-verdict.ts`
   // gives: a locale-sensitive comparison makes the same input rank differently
   // on two machines.
-  if (left.cardVersionId < right.cardVersionId) {
+  if (leftCardVersionId < rightCardVersionId) {
     return -1;
   }
-  return left.cardVersionId > right.cardVersionId ? 1 : 0;
+  return leftCardVersionId > rightCardVersionId ? 1 : 0;
 }
 
 /**
