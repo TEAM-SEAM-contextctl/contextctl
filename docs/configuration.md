@@ -35,9 +35,10 @@ contextctl doctor    # 설정이 유효한지, 무엇이 비었는지
 | `CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY` | `$CONTEXTCTL_HOME/embedding-assets` |
 
 저장소가 둘로 나뉘어 있는 것은 도메인이 둘이기 때문입니다. `registry.db` 에 Card·승인·이력이
-있고, `ingestion.db` 에 관측·게시 이력이 있습니다. 둘은 독립적으로 실패하고 독립적으로
-재시도합니다 — 그래서 하나만 지워 복구하는 것도 가능합니다
-→ [운영](operations.md#색인이-비었을-때)
+있고, `ingestion.db` 에 관측·게시 이력이 있습니다. 두 영역은 실행 중 독립적으로 실패하고
+재시도하지만, **복원할 때는 Qdrant까지 한 시점의 운영 상태로 함께 다룹니다.** 파일 하나만
+지우는 것은 정상 복원이 아니라 식별자와 승인 연결을 잃는 파괴적 재구축입니다
+→ [운영](operations.md#색인이-비었을-때-파괴적-최후-수단)
 
 ---
 
@@ -163,7 +164,7 @@ Card 선택용(`CONTEXTCTL_CARD_EMBEDDING_*`)은 벡터·색인·재생성 주�
 resolve           not_ready  임베딩 제공자를 조립할 수 없어 질문을 벡터로 만들 수 없습니다: document embedding remote binding is invalid: endpoint_missing
 ```
 
-두 계층이 모두 원격이면 아래 로컬 모델(396.1 MiB)은 필요하지 않고, `status` 가
+두 계층이 모두 원격이면 아래 로컬 모델(396.1 MiB, 약 415 MB)은 필요하지 않고, `status` 가
 `로컬 자산이 필요하지 않습니다` 로 알려줍니다.
 
 ### 로컬 모델 — 기본값이고 고정입니다
@@ -177,7 +178,7 @@ resolve           not_ready  임베딩 제공자를 조립할 수 없어 질문�
 | 라이선스 | Apache-2.0 |
 | 실행 | transformers.js + ONNX, fp32, 로컬 CPU |
 | 벡터 | 384차원, cls pooling, L2 정규화, cosine |
-| 용량 | 5개 파일 396.1 MiB |
+| 용량 | 5개 파일 396.1 MiB(약 415 MB) |
 
 파일마다 SHA-256 이 코드에 박혀 있어 설치 시 전량 검증합니다. 바꿀 수 있는 것은 **어디에
 설치할지**(`--target`, `CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY`)뿐이고 무엇을 설치할지가
@@ -232,8 +233,9 @@ export CONTEXTCTL_CARD_MEANING_API_KEY=...
 > 납니다. `contextctl doctor` 가 실제로 요청할 URL 을 보여주고, `/v1` 로 끝나면 경고합니다.
 
 > ★ **생성기를 바꿔도 이미 만든 Card 는 바뀌지 않습니다.** 의미는 수집 시점에 굳습니다. 모델을
-> 나중에 붙였다면 다시 `ingest` 해야 하고, 문서가 그대로라면 색인부터 다시 만들어야 합니다
-> → [운영](operations.md#색인이-비었을-때)
+> 나중에 붙였다면 다음 문서 개정부터 적용됩니다. 문서가 그대로인 상태에서 기존 의미만 바꾸기
+> 위해 저장소 하나를 지우는 것은 지원되는 갱신 경로가 아닙니다. 백업 없이 파괴적으로 다시
+> 만드는 경우의 대가는 → [운영](operations.md#색인이-비었을-때-파괴적-최후-수단)
 
 ### 모델이 정할 수 없는 것
 
