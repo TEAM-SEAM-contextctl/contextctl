@@ -52,6 +52,7 @@ import {
 import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
 import type { ContextctlPaths } from "./paths.js";
 import { verifyRequiredRetainedLocalBindings } from "./retained-embedding-assets.js";
+import { inspectSelectionAuditDatabase } from "../selection-audit/sqlite-selection-audit-store.js";
 
 /**
  * What `contextctl doctor` reports, and why it is not the composition root.
@@ -136,6 +137,7 @@ export async function runDiagnosis(
     await checkSourcesFile(paths.sourcesFile),
     checkRegistryDatabase(paths.registryDatabase, stateIdentity),
     checkIngestionDatabase(paths.ingestionDatabase, stateIdentity),
+    checkSelectionAuditDatabase(paths.selectionAuditDatabase, stateIdentity),
     await inspectConfiguredEmbeddingAssets(
       input.environment,
       paths,
@@ -151,6 +153,34 @@ export async function runDiagnosis(
     steps,
     healthy: steps.every((step) => step.status !== "fail"),
   };
+}
+
+function checkSelectionAuditDatabase(
+  location: string,
+  stateIdentity: DaemonStateIdentity,
+): DiagnosisStep {
+  const inspection = inspectSelectionAuditDatabase({ location, stateIdentity });
+  if (inspection.status === "missing") {
+    return diagnosis(
+      "selection-audit-database",
+      "warn",
+      `Selection 감사 저장소가 아직 없습니다: ${location}`,
+      "다음 query 또는 serve 시작이 보호된 저장소를 초기화합니다.",
+    );
+  }
+  if (inspection.status === "compatible") {
+    return diagnosis(
+      "selection-audit-database",
+      "ok",
+      `Selection 감사 저장소가 읽기 전용 검사에 통과했습니다(기록 ${inspection.recordCount}건): ${location}`,
+    );
+  }
+  return diagnosis(
+    "selection-audit-database",
+    "fail",
+    `Selection 감사 저장소가 현재 설정과 호환되지 않습니다: ${location} — ${inspection.detail}`,
+    "상태 식별자와 파일 경로를 확인하고, 보존이 필요하면 파일을 격리한 뒤 새 저장소를 초기화하세요.",
+  );
 }
 
 async function inspectConfiguredEmbeddingAssets(

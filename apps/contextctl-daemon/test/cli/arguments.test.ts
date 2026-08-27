@@ -56,6 +56,39 @@ describe("parseCliArguments", () => {
   });
 });
 
+describe("audit", () => {
+  it("parses bounded local audit listing and detail lookup", () => {
+    expect(commandOf(["audit", "list"])).toEqual({
+      kind: "audit_list",
+      limit: 20,
+      json: false,
+    });
+    expect(commandOf(["audit", "list", "--limit", "7", "--json"])).toEqual({
+      kind: "audit_list",
+      limit: 7,
+      json: true,
+    });
+    expect(
+      commandOf([
+        "audit",
+        "show",
+        "sa_00000000000000000000000000000001",
+        "--json",
+      ]),
+    ).toEqual({
+      kind: "audit_show",
+      auditId: "sa_00000000000000000000000000000001",
+      json: true,
+    });
+  });
+
+  it("rejects unbounded limits and malformed identifiers", () => {
+    expect(statusOf(["audit", "list", "--limit", "0"])).toBe("usage_error");
+    expect(statusOf(["audit", "list", "--limit", "101"])).toBe("usage_error");
+    expect(statusOf(["audit", "show", "query-text"])).toBe("usage_error");
+  });
+});
+
 describe("source add", () => {
   it("takes the path alone", () => {
     const command = commandOf(["source", "add", "/tmp/a.md"]);

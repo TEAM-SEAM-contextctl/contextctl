@@ -48,6 +48,7 @@ import {
   DETERMINISTIC_CARD_SELECTION_PROFILE,
   DeterministicCardEmbeddingAdapter,
   InMemoryCardCandidateIndexStore,
+  InMemorySelectionAuditStore,
   runStdioServer,
   type ApprovedCardCatalog,
   type CardCandidateIndexStore,
@@ -57,6 +58,7 @@ import {
   type McpQueryServer,
   type PolicyContext,
   type ResolveContextApplication,
+  type SelectionAuditStore,
 } from "@contextctl/selection-delivery";
 
 import {
@@ -213,10 +215,14 @@ export interface DaemonRuntimeOptions {
    * Where Registry's SQLite database lives. Defaults to `":memory:"`, which
    * makes an unconfigured daemon start with an empty catalog rather than
    * pick a directory on the operator's behalf.
-   */
+  */
   readonly registryDatabaseLocation?: string;
   /** Protected counts-only per-process activity directory used by the local operator CLI. */
   readonly runtimeActivityDirectory?: string;
+  /** Selection decision audit store; bounded in memory when not supplied. */
+  readonly selectionAuditStore?: SelectionAuditStore;
+  /** Protected local correlation sink for committed Selection audit IDs. */
+  readonly onSelectionAuditRecorded?: (auditId: string) => void;
   /** One identity shared by Registry, Ingestion, Index Catalog and Qdrant. */
   readonly stateIdentity?: DaemonStateIdentity;
   readonly connectorId?: string;
@@ -381,6 +387,7 @@ export const DEFAULT_STATE_NAMESPACE_ID =
 export interface DaemonRuntime {
   readonly database: DatabaseSync;
   readonly cards: SqliteCardStore;
+  readonly selectionAuditStore: SelectionAuditStore;
   /** The approved Card read model both query surfaces select over. */
   readonly catalog: ApprovedCardCatalog;
   /**
@@ -500,6 +507,9 @@ export function createDaemonRuntime(
     securityDomain,
   });
   const cards = new SqliteCardStore(database);
+  const selectionAuditStore =
+    options.selectionAuditStore ??
+    new InMemorySelectionAuditStore(() => Date.parse(now()));
 
   const vectorIndex = options.vectorIndex;
   const vectorIndexes = new StaticVectorIndexConnectorRegistry([
@@ -721,6 +731,14 @@ export function createDaemonRuntime(
       index: preparedCardCandidateIndex,
       profile: cardSelectionProfile,
     },
+    selectionAudit: {
+      store: selectionAuditStore,
+      nextId: () => `sa_${randomUUID().replaceAll("-", "")}`,
+      now,
+      ...(options.onSelectionAuditRecorded === undefined
+        ? {}
+        : { onRecorded: options.onSelectionAuditRecorded }),
+    },
   });
   // Every transport receives the controlled surface, never the pipeline. Handing
   // one of them the pipeline directly would give that transport an unmetered
@@ -778,6 +796,7 @@ export function createDaemonRuntime(
   return {
     database,
     cards,
+    selectionAuditStore,
     catalog,
     contextApplication,
     mcpServer: createMcpQueryServer(contextApplication),

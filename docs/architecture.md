@@ -41,6 +41,8 @@
 ```
 
 - 수집(`ingest`)과 질의(`query`/`serve`) 모두 Qdrant 를 씁니다. 인메모리 색인은 테스트 전용입니다.
+- Selection 판정은 원문 검색 전에 보호된 로컬 감사 저장소에 기록됩니다. 원문 질의와 일치 문자열은
+  투영에서 제외하며, 조회는 로컬 `audit` CLI에만 둡니다.
   `CONTEXTCTL_QDRANT_URL` 이 없으면 데이터베이스를 열기 전에 `qdrant_endpoint_required` 로 실패하므로,
   벡터 없이 게시 완료 상태만 남는 일이 없습니다.
 - Registry, Ingestion, Qdrant 색인은 하나의 운영 상태입니다. 일부만 지워 재구축하는 복구 절차는

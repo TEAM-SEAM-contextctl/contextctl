@@ -72,6 +72,16 @@ export type CliCommand =
    * consumer is a monitor rather than a person.
    */
   | { readonly kind: "status"; readonly json: boolean }
+  | {
+      readonly kind: "audit_list";
+      readonly limit: number;
+      readonly json: boolean;
+    }
+  | {
+      readonly kind: "audit_show";
+      readonly auditId: string;
+      readonly json: boolean;
+    }
   | { readonly kind: "backup_create"; readonly destination: string }
   | {
       readonly kind: "backup_restore";
@@ -221,6 +231,18 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
       "실행 영역별로 지금 일을 할 수 있는지 보여준다(resolve, registry, selection_assets, ingestion). 못 하는 영역이 있으면 0이 아닌 코드로 끝난다.",
   },
   {
+    topic: "audit list",
+    line: "contextctl audit list [--limit <n>] [--json]",
+    summary:
+      "최근 선택 판정 감사 기록을 보여준다. 원문 질의와 일치 문자열은 저장하거나 출력하지 않는다.",
+  },
+  {
+    topic: "audit show",
+    line: "contextctl audit show <auditId> [--json]",
+    summary:
+      "감사 식별자 하나의 점수·판정·최소 집합 계획을 보호된 로컬 저장소에서 읽는다.",
+  },
+  {
     topic: "backup create",
     line: "contextctl backup create <directory>",
     summary: "Registry·Ingestion SQLite와 참조 중인 Qdrant 컬렉션을 한 복구 묶음으로 저장한다.",
@@ -318,6 +340,8 @@ export function parseCliArguments(argv: readonly string[]): ParsedArguments {
       return parseReachabilityCommand(argv.slice(1));
     case "status":
       return parseStatusCommand(argv.slice(1));
+    case "audit":
+      return parseAuditCommand(argv.slice(1));
     case "serve":
       return parseServeCommand(argv.slice(1));
     case "help":
@@ -582,6 +606,64 @@ function parseStatusCommand(rest: readonly string[]): ParsedArguments {
     return usageError("status 는 인자를 받지 않습니다.", "status");
   }
   return ok({ kind: "status", json: outcome.values["json"] === true });
+}
+
+function parseAuditCommand(rest: readonly string[]): ParsedArguments {
+  const subcommand = rest[0];
+  if (subcommand === "list") {
+    const outcome = tokenize(
+      rest.slice(1),
+      { limit: { type: "string" }, json: { type: "boolean" } },
+      "audit list",
+    );
+    if (outcome.status === "usage_error") return outcome;
+    if (outcome.positionals.length > 0) {
+      return usageError("audit list 는 인자를 받지 않습니다.", "audit list");
+    }
+    const rawLimit = stringOf(outcome.values["limit"]);
+    const limit = rawLimit === undefined ? 20 : Number(rawLimit);
+    if (
+      !/^[0-9]+$/u.test(rawLimit ?? "20") ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    ) {
+      return usageError(
+        "--limit 는 1 이상 100 이하의 정수여야 합니다.",
+        "audit list",
+      );
+    }
+    return ok({
+      kind: "audit_list",
+      limit,
+      json: outcome.values["json"] === true,
+    });
+  }
+  if (subcommand === "show") {
+    const outcome = tokenize(
+      rest.slice(1),
+      { json: { type: "boolean" } },
+      "audit show",
+    );
+    if (outcome.status === "usage_error") return outcome;
+    const auditId = outcome.positionals[0];
+    if (auditId === undefined || outcome.positionals.length !== 1) {
+      return usageError(
+        "audit show 는 감사 식별자 하나가 필요합니다.",
+        "audit show",
+      );
+    }
+    if (!/^sa_[a-f0-9]{32}$/u.test(auditId)) {
+      return usageError("감사 식별자 형식이 올바르지 않습니다.", "audit show");
+    }
+    return ok({ kind: "audit_show", auditId, json: outcome.values["json"] === true });
+  }
+  return usageError(
+    subcommand === undefined
+      ? "audit 에는 하위 명령이 필요합니다: list, show"
+      : `알 수 없는 하위 명령입니다: audit ${subcommand}`,
+    "audit",
+  );
 }
 
 function parseCardsCommand(rest: readonly string[]): ParsedArguments {

@@ -12,6 +12,9 @@ import {
   type ApprovedCardCatalog,
   type ContextResolution,
   type ContextResolutionItem,
+  type SelectionAuditRecord,
+  type SelectionAuditStore,
+  summarizeSelectionAuditRecord,
 } from "@contextctl/selection-delivery";
 import { describe, expect, it } from "vitest";
 
@@ -19,6 +22,7 @@ import {
   DaemonContextApplication,
   type ManagedDocumentSearchPort,
 } from "../src/context-application.js";
+import { ManualRuntimeClock } from "../src/runtime/clock.js";
 
 const QUERY = "환불 불가 상품";
 const SECURITY_DOMAIN = "payments";
@@ -141,6 +145,98 @@ function fulfilledItem(resolution: ContextResolution): ContextResolutionItem {
 }
 
 describe("DaemonContextApplication", () => {
+  it("persists a text-free decision audit before executing managed search", async () => {
+    const records: SelectionAuditRecord[] = [];
+    const correlations: string[] = [];
+    const store: SelectionAuditStore = {
+      append: (record) => {
+        records.push(record);
+        return Promise.resolve();
+      },
+      list: () => Promise.resolve(records.map(summarizeSelectionAuditRecord)),
+      find: (auditId) =>
+        Promise.resolve(records.find((record) => record.auditId === auditId)),
+    };
+    const search = new RecordingSearch((command) =>
+      command.targets.map((target) => ({
+        targetKey: target.targetKey,
+        status: "fulfilled" as const,
+        hits: [],
+      })),
+    );
+    const application = new DaemonContextApplication({
+      catalog: catalogOf([documentCard()]),
+      search,
+      securityDomain: SECURITY_DOMAIN,
+      selectionAudit: {
+        store,
+        nextId: () => "sa_00000000000000000000000000000001",
+        now: () => "2026-08-27T00:00:00.000Z",
+        onRecorded: (auditId) => correlations.push(auditId),
+      },
+    });
+
+    await application.resolveContext({ query: QUERY });
+
+    expect(records).toHaveLength(1);
+    expect(JSON.stringify(records[0])).not.toContain(QUERY);
+    expect(correlations).toEqual(["sa_00000000000000000000000000000001"]);
+    expect(search.commands).toHaveLength(1);
+  });
+
+  it("executes no managed target when the protected audit cannot be committed", async () => {
+    const search = new RecordingSearch(() => []);
+    const unavailable: SelectionAuditStore = {
+      append: () => Promise.reject(new Error("audit unavailable")),
+      list: () => Promise.resolve([]),
+      find: () => Promise.resolve(undefined),
+    };
+    const application = new DaemonContextApplication({
+      catalog: catalogOf([documentCard()]),
+      search,
+      securityDomain: SECURITY_DOMAIN,
+      selectionAudit: {
+        store: unavailable,
+        nextId: () => "sa_00000000000000000000000000000001",
+        now: () => "2026-08-27T00:00:00.000Z",
+      },
+    });
+
+    await expect(application.resolveContext({ query: QUERY })).rejects.toThrow(
+      /audit unavailable/u,
+    );
+    expect(search.commands).toEqual([]);
+  });
+
+  it("discards an audit write that consumes the assembly reserve", async () => {
+    const clock = new ManualRuntimeClock();
+    const search = new RecordingSearch(() => []);
+    const store: SelectionAuditStore = {
+      append: () => {
+        clock.advance(2_500);
+        return Promise.resolve();
+      },
+      list: () => Promise.resolve([]),
+      find: () => Promise.resolve(undefined),
+    };
+    const application = new DaemonContextApplication({
+      catalog: catalogOf([documentCard()]),
+      search,
+      securityDomain: SECURITY_DOMAIN,
+      clock,
+      selectionAudit: {
+        store,
+        nextId: () => "sa_00000000000000000000000000000001",
+        now: () => "2026-08-27T00:00:00.000Z",
+      },
+    });
+
+    await expect(application.resolveContext({ query: QUERY })).rejects.toThrow(
+      /selection_audit exceeded/u,
+    );
+    expect(search.commands).toEqual([]);
+  });
+
   it("names the selected Cards in the resolution rather than listing the catalog", async () => {
     const application = applicationOver(
       [documentCard()],

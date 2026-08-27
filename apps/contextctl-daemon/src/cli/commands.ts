@@ -55,6 +55,7 @@ import {
 import type { RegistryIntakeResult } from "../registry-intake.js";
 import { resolveVectorBackend } from "../vector-backend.js";
 import { DEFAULT_CONNECTOR_ID } from "../main.js";
+import { inspectSelectionAuditDatabase } from "../selection-audit/sqlite-selection-audit-store.js";
 
 /** A Source that Registry refused, with the diagnostic that says why. */
 type IngestRefusal = Extract<
@@ -683,6 +684,7 @@ export async function runStatus(
       cli,
       context.environment,
       paths.ingestionDatabase,
+      paths.selectionAuditDatabase,
     ),
     embedding: await observeEmbeddingBindings(
       cli,
@@ -724,8 +726,19 @@ async function observeStateReadiness(
   cli: RegistryOnlyRuntime,
   environment: Readonly<Partial<Record<string, string>>>,
   ingestionDatabase: string,
+  selectionAuditDatabase: string,
 ): Promise<StatusObservation["stateReadiness"]> {
   try {
+    const auditInspection = inspectSelectionAuditDatabase({
+      location: selectionAuditDatabase,
+      stateIdentity: cli.stateIdentity,
+    });
+    if (auditInspection.status === "incompatible") {
+      return {
+        status: "unavailable",
+        detail: `selection_audit:${auditInspection.detail}`,
+      };
+    }
     if (!existsSync(ingestionDatabase)) {
       const cards = await cli.cards.listApprovedCards();
       const hasManagedScope = cards.cards.some((card) =>

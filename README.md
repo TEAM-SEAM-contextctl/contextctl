@@ -203,6 +203,7 @@ In a terminal the CLI tells you itself.
 contextctl help                 # everything
 contextctl help cards approve   # one command
 contextctl status               # which execution lane cannot work right now
+contextctl audit list           # recent Card and minimum-scope decisions
 ```
 
 ## Contributing

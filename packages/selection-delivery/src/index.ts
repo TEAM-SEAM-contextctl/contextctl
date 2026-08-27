@@ -198,6 +198,32 @@ export {
   type SelectionVerdict,
 } from "./domain/selection-verdict.js";
 export {
+  assertSelectionAuditRecord,
+  createSelectionAuditRecord,
+  SELECTION_AUDIT_DETAIL_LIMIT,
+  SELECTION_AUDIT_RETENTION_POLICY,
+  SELECTION_AUDIT_SCHEMA_VERSION,
+  type SelectionAuditCandidate,
+  type SelectionAuditCoverage,
+  type SelectionAuditDecision,
+  type SelectionAuditFacet,
+  type SelectionAuditFindingRule,
+  type SelectionAuditPlanningDecision,
+  type SelectionAuditPolicyExclusion,
+  type SelectionAuditRecord,
+  type SelectionAuditSignal,
+} from "./domain/selection-audit.js";
+export {
+  assertSelectionAuditSummary,
+  summarizeSelectionAuditRecord,
+  type SelectionAuditStore,
+  type SelectionAuditSummary,
+} from "./ports/selection-audit-store.js";
+export {
+  assertSelectionAuditListLimit,
+  InMemorySelectionAuditStore,
+} from "./infrastructure/in-memory-selection-audit-store.js";
+export {
   CardEmbeddingUnavailableError,
   EmptyQueryError,
   InvalidContextBudgetError,

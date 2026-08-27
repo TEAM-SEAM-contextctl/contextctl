@@ -19,6 +19,7 @@ import {
   SqliteCardStore,
   SqliteLifecycleEventStore,
 } from "@contextctl/registry-lifecycle";
+import type { SelectionAuditStore } from "@contextctl/selection-delivery";
 
 import {
   createDaemonRuntime,
@@ -54,6 +55,10 @@ import { resolvePolicyContext } from "./policy-context.js";
 import { resolveContextctlPaths, type ContextctlPaths } from "./paths.js";
 import { readSourcesFile, toSourceConfigurations } from "./sources-file.js";
 import { resolveVectorBackend, type VectorBackend } from "../vector-backend.js";
+import {
+  openSelectionAuditDatabase,
+} from "../selection-audit/sqlite-selection-audit-store.js";
+import { WorkerThreadSelectionAuditStore } from "../selection-audit/worker-thread-selection-audit-store.js";
 
 /**
  * The runtime one CLI invocation runs against, plus what an operator has to be
@@ -253,6 +258,20 @@ export async function buildCliRuntime(
     location: paths.ingestionDatabase,
     ...stateIdentity,
   });
+  let selectionAuditStore: WorkerThreadSelectionAuditStore;
+  try {
+    openSelectionAuditDatabase({
+      location: paths.selectionAuditDatabase,
+      stateIdentity,
+    }).close();
+    selectionAuditStore = new WorkerThreadSelectionAuditStore({
+      location: paths.selectionAuditDatabase,
+      stateIdentity,
+    });
+  } catch (error) {
+    ingestionDatabase.close();
+    throw error;
+  }
 
   let embeddingRuntime: ResolvedCliEmbeddingRuntime;
   try {
@@ -263,6 +282,7 @@ export async function buildCliRuntime(
       stateIdentity,
     });
   } catch (error) {
+    await selectionAuditStore.close().catch(() => undefined);
     ingestionDatabase.close();
     throw error;
   }
@@ -279,6 +299,7 @@ export async function buildCliRuntime(
         meaningBackend,
         embeddingRuntime,
         stateIdentity,
+        selectionAuditStore,
       }),
     );
   } catch (error) {
@@ -286,6 +307,7 @@ export async function buildCliRuntime(
     // path only the Ingestion one is ours to close. Leaking it would hold a WAL
     // lock that the operator's next attempt, after installing assets, would
     // then have to wait on.
+    await selectionAuditStore.close().catch(() => undefined);
     ingestionDatabase.close();
     throw error;
   }
@@ -295,6 +317,7 @@ export async function buildCliRuntime(
   } catch (error) {
     await runtime.control.lifecycle.shutdown();
     runtime.database.close();
+    await selectionAuditStore.close().catch(() => undefined);
     ingestionDatabase.close();
     throw error;
   }
@@ -307,6 +330,7 @@ export async function buildCliRuntime(
     async close(): Promise<void> {
       await runtime.control.lifecycle.shutdown();
       runtime.database.close();
+      await selectionAuditStore.close();
       ingestionDatabase.close();
     },
   };
@@ -345,11 +369,17 @@ export function cliRuntimeOptions(input: {
   readonly embeddingRuntime: ResolvedCliEmbeddingRuntime;
   /** Already resolved; this function must not read identity from the environment. */
   readonly stateIdentity: DaemonStateIdentity;
+  /** Durable, bounded operator audit storage owned by Selection. */
+  readonly selectionAuditStore: SelectionAuditStore;
 }): DaemonRuntimeOptions {
   const { ingestionDatabase } = input;
   return {
     registryDatabaseLocation: input.paths.registryDatabase,
     runtimeActivityDirectory: input.paths.runtimeActivityDirectory,
+    selectionAuditStore: input.selectionAuditStore,
+    onSelectionAuditRecorded: (auditId) => {
+      process.stderr.write(`선택 감사 식별자: ${auditId}\n`);
+    },
     stateIdentity: input.stateIdentity,
     embedding: input.embeddingRuntime.configuration,
     embeddingProfile: input.embeddingRuntime.profiles.document,

@@ -44,6 +44,7 @@ import {
   remoteCardProfile,
   remoteDocumentProfile,
 } from "../embedding/fakes.js";
+import { openSelectionAuditDatabase } from "../../src/selection-audit/sqlite-selection-audit-store.js";
 
 /**
  * `contextctl doctor`, exercised against a real filesystem and nothing else.
@@ -172,6 +173,10 @@ function initializeState(
     location: join(home, "ingestion.db"),
     stateNamespaceId,
     securityDomain,
+  }).close();
+  openSelectionAuditDatabase({
+    location: join(home, "selection-audit.db"),
+    stateIdentity: { stateNamespaceId, securityDomain },
   }).close();
 }
 
@@ -479,6 +484,7 @@ describe("runDiagnosis / report", () => {
       "sources-file",
       "registry-database",
       "ingestion-database",
+      "selection-audit-database",
       "embedding-assets",
       "vector-backend",
       "card-meaning",
