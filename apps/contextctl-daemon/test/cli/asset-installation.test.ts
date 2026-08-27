@@ -17,6 +17,10 @@ import {
   planAssetInstallation,
   runAssetInstallation,
 } from "../../src/cli/asset-installation.js";
+import {
+  DEFAULT_GRANITE_ASSET_SIZE_COMPACT,
+  DEFAULT_GRANITE_ASSET_TOTAL_BYTES,
+} from "../../src/embedding-guidance.js";
 
 /**
  * The install command's decisions, none of which involve a network.
@@ -97,6 +101,10 @@ function validPointer(): string {
 }
 
 describe("planAssetInstallation", () => {
+  it("keeps lightweight CLI guidance aligned with the owning manifest", () => {
+    expect(DEFAULT_GRANITE_ASSET_TOTAL_BYTES).toBe(TOTAL_BYTES);
+  });
+
   it("restates the manifest and nothing else", () => {
     const plan = planAssetInstallation({ targetDirectory: "/tmp/target" });
 
@@ -128,8 +136,7 @@ describe("describeAssetInstallationPlan", () => {
       planAssetInstallation({ targetDirectory: "/tmp/target" }),
     );
 
-    expect(text).toContain("396.1 MiB");
-    expect(text).toContain("약 415 MB");
+    expect(text).toContain(DEFAULT_GRANITE_ASSET_SIZE_COMPACT);
     expect(text).toContain("Apache-2.0");
     expect(text).toContain(MANIFEST.repository);
     expect(text).toContain(MANIFEST.revision);

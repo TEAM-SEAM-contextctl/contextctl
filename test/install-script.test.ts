@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { DEFAULT_GRANITE_ASSET_SIZE_INLINE } from "../apps/contextctl-daemon/src/embedding-guidance.js";
+
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const installer = resolve(repositoryRoot, "install.sh");
 const packageNames = [
@@ -33,6 +35,12 @@ afterEach(() => {
 });
 
 describe("release installer", () => {
+  it("keeps its next-step model size aligned with the packaged CLI", () => {
+    expect(readFileSync(installer, "utf8")).toContain(
+      DEFAULT_GRANITE_ASSET_SIZE_INLINE,
+    );
+  });
+
   it("installs one explicitly selected release after verifying every package", () => {
     const fixture = createFixture();
 
