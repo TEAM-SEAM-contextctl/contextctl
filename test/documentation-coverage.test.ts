@@ -26,12 +26,13 @@ function read(relativePath: string): string {
  * this test exists to prevent.
  *
  * A cross-document link pointing at nothing is the second. Relative links
- * between four files break whenever a heading is renamed, and nothing in a
- * TypeScript build looks at Markdown.
+ * between the public documents break whenever a heading is renamed, and
+ * nothing in a TypeScript build looks at Markdown.
  */
 describe("documentation coverage", () => {
   const commands = [
     "install-assets",
+    "demo init",
     "paths",
     "doctor",
     "source add",
@@ -39,14 +40,19 @@ describe("documentation coverage", () => {
     "source remove",
     "ingest",
     "cards list",
+    "cards show",
     "cards approve",
     "cards reject",
     "cards disable",
     "cards rollback",
     "reachability",
     "status",
+    "backup create",
+    "backup restore",
     "query",
     "serve",
+    "help",
+    "--version",
   ] as const;
 
   it("documents every command the CLI advertises", () => {
@@ -119,6 +125,45 @@ describe("documentation coverage", () => {
     }
   });
 
+  it("states the released Source support without claiming deferred adapters", () => {
+    expect(read("README.md")).toContain(
+      "their capture adapters are not included in this release",
+    );
+    expect(read("README.ko.md")).toContain(
+      "해당 수집 어댑터는 이 릴리스에 포함하지 않습니다",
+    );
+    expect(read("docs/architecture.md")).toContain("Source (markdown)");
+    expect(read("docs/cli.md")).toContain("Markdown 문서 파일 하나");
+    expect(usageText()).toContain("Markdown 문서 파일 하나");
+    expect(usageText()).not.toContain("문서 파일이나 디렉터리");
+  });
+
+  it("distinguishes a complete state backup from source content and destructive rebuild", () => {
+    const cli = read("docs/cli.md");
+    const operations = read("docs/operations.md");
+
+    expect(cli.replaceAll(/\s+/gu, " ")).toContain(
+      "원본 Markdown 파일은 포함하지 않습니다",
+    );
+    expect(operations).toContain("색인이 비었을 때: 파괴적 최후 수단");
+    expect(operations).toContain("정상 복구 경로");
+    expect(operations).toContain("새 Source·문서·Scope·Card를 만드는 파괴적");
+  });
+
+  it("does not render duplicate thematic breaks", () => {
+    for (const path of [
+      "README.md",
+      "README.ko.md",
+      "docs/architecture.md",
+      "docs/cli.md",
+      "docs/configuration.md",
+      "docs/operations.md",
+    ]) {
+      expect(read(path), `${path} contains consecutive thematic breaks`)
+        .not.toMatch(/^---\n\n---$/mu);
+    }
+  });
+
   it("lists every document in the docs index", () => {
     // `docs/README.md` is what GitHub renders when someone opens the folder, so
     // a document missing from it is a document nobody browsing finds. Read from
@@ -141,6 +186,7 @@ describe("documentation coverage", () => {
       "README.md",
       "README.ko.md",
       "docs/README.md",
+      "docs/architecture.md",
       "docs/cli.md",
       "docs/configuration.md",
       "docs/operations.md",

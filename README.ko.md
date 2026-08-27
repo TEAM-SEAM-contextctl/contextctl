@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml/badge.svg)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-24.18.x-brightgreen)
+![Node](https://img.shields.io/badge/node-24.18%2B%20%3C25-brightgreen)
 [![검증 플랫폼: Ubuntu 24.04](https://img.shields.io/badge/%EA%B2%80%EC%A6%9D%20%ED%94%8C%EB%9E%AB%ED%8F%BC-Ubuntu%2024.04-blue)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 
 [English](README.md)
@@ -28,18 +28,17 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 
 | | |
 |---|---|
-| **표현** | 외부 지식을 구조와 의미를 보존한 검색 단위로 만듭니다. Markdown 은 문서 구조를 따라 의미 단위와 청크로 쪼개고 임베딩해 색인에 게시합니다. PostgreSQL·OpenAPI 는 원본을 복제하지 않고 **좌표만** 게시합니다 |
+| **표현** | 현재 릴리스는 Markdown을 문서 구조에 따른 의미 단위와 청크로 쪼개고 임베딩해 색인에 게시합니다. 계약은 PostgreSQL·OpenAPI 좌표를 표현할 수 있지만 해당 수집 어댑터는 이 릴리스에 포함하지 않습니다 |
 | **생명주기** | 수집과 등록이 **독립 주기로** 돕니다. 문서가 바뀌면 바뀐 청크만 다시 임베딩하고, 등록 쪽이 밀리면 그 지연을 숨기지 않고 관측합니다. Card 는 덮어쓰지 않고 버전을 쌓으며, 검증된 버전만 서비스로 승격됩니다 |
 | **선택** | 질문에 적합한 지식 영역과 검색 범위를 고릅니다. 순위 목록이 아니라 **승인·보류·기각 판정**을 내고, 무엇을 왜 버렸는지도 함께 보고합니다 |
-| **전달** | 관리 문서는 본문 근거까지 같은 요청에서 조립해 주고, DB·API 는 **안전하게 검증 가능한 조회 좌표**를 줍니다 |
+| **전달** | 관리 대상 Markdown 문서는 본문까지 같은 요청에서 조립합니다. DB·API 가이드 형식은 후속 어댑터를 위해 계약에 있지만, 이 릴리스는 해당 시스템을 수집하거나 실행하지 않습니다 |
 
 ### 하지 않는 일
 
 책임 범위를 좁게 두는 것이 설계입니다. 미구현이 아닙니다.
 
-- **SQL 을 만들거나 실행하지 않습니다.** 자연어를 SQL 로 바꾸는 대신, 검증 가능한 좌표
-  (schema·table·column·허용 연산)까지만 줍니다
-- **HTTP API 를 호출하지 않습니다.** 어느 오퍼레이션인지까지만 줍니다
+- **SQL을 만들거나 실행하지 않고, HTTP API도 호출하지 않습니다.** DB·API 가이드 계약은
+  검증 가능한 좌표까지만 표현하며, 해당 수집 어댑터는 이 릴리스에 없습니다
 - **최종 답변을 만들지 않습니다.** 근거를 조립해 주고, 답은 호출자가 만듭니다
 - **가져온 문서 본문을 지시로 해석하지 않습니다.** 응답은 항상 `contentTrust: untrusted` 로
   표시됩니다 — 검색된 텍스트는 데이터입니다
@@ -50,10 +49,10 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 
 | | |
 |---|---|
-| **Node.js** | **24.18.0 이상, 25 미만** — 필수 릴리스 검사를 수행한 공식 지원 범위입니다 |
+| **Node.js** | **24.18.0 이상, 25 미만** — 설치기와 패키지가 허용하며, 필수 CI는 24.18.0에서 검증합니다 |
 | **Qdrant** | 필수입니다. `CONTEXTCTL_QDRANT_URL` 이 없으면 `ingest`·`query`·`serve` 가 시작을 거부합니다 |
 | **디스크** | 임베딩 모델 **396.1 MiB(약 415 MB)** — 기본 로컬 실행 기준. 두 임베딩 계층을 모두 원격으로 쓰면 필요 없습니다 |
-| **메모리** | 호스트 최소·권장 RAM 은 아직 단정하지 않습니다. 필수 CI 는 daemon 프로세스를 10,000 Card 부하에서 **최고 RSS 1,536 MiB 이하**로 검증하지만, 이 값에는 Qdrant 와 운영체제 메모리가 포함되지 않습니다 |
+| **메모리** | 호스트 최소·권장 RAM은 아직 단정하지 않습니다. 필수 CI는 Granite와 10,000 Card를 포함한 규모 검사 프로세스를 **최고 RSS 1,536 MiB 이하**로 검증하며, Qdrant와 운영체제는 이 프로세스 밖에 있습니다 |
 
 > ★ **`fnm` · `nvm` · `asdf` 를 쓴다면**: 이들은 **활성 Node 버전의 `bin` 에만** 설치합니다.
 > 버전을 바꾸면 `contextctl` 이 사라진 것처럼 보입니다. `contextctl paths` 가 현재 어느 Node
@@ -80,13 +79,12 @@ curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/mai
 
 ## 5분 만에 해보기
 
-> **모든 명령이 `SQLite is an experimental feature` 경고를 `stderr` 로 냅니다. 정상입니다.**
-> 저장소가 Node 내장 `node:sqlite` 를 쓰기 때문이고 무해합니다. 억제 플래그는 안내하지
-> 않습니다 — 이 경고를 끄면 정작 중요한 경고도 함께 사라집니다.
+> 상태를 여는 명령의 `stderr`에 `SQLite is an experimental feature` 경고가 나올 수 있습니다.
+> Node 내장 `node:sqlite`의 예고이며, 중요한 경고까지 숨기지 않도록 억제하지 않습니다.
 
 ```bash
 # 1. 벡터 색인을 띄웁니다
-docker run -d -p 6333:6333 qdrant/qdrant
+docker run --rm -d --name contextctl-qdrant -p 127.0.0.1:6333:6333 -v contextctl-qdrant-data:/qdrant/storage qdrant/qdrant:v1.15.5
 export CONTEXTCTL_QDRANT_URL=http://localhost:6333
 
 # 2. 임베딩 모델을 설치합니다 (396.1 MiB, 약 415 MB, 동의를 묻습니다)

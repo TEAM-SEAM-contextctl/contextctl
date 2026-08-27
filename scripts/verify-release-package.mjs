@@ -188,6 +188,8 @@ async function readReleaseVersion() {
 
 async function assertPublicQuickstartDocumentation() {
   const query = "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?";
+  const qdrantCommand =
+    "docker run --rm -d --name contextctl-qdrant -p 127.0.0.1:6333:6333 -v contextctl-qdrant-data:/qdrant/storage qdrant/qdrant:v1.15.5";
   const sourceCommand = "contextctl source add ./contextctl-demo/leave.md";
   const expectedSentence =
     "반차는 오전 반차와 오후 반차로 나뉘며 연차 0.5일을 차감합니다.";
@@ -217,6 +219,7 @@ async function assertPublicQuickstartDocumentation() {
     const normalizedSection = section.replace(/\s+/gu, " ");
     if (
       section === "" ||
+      !normalizedSection.includes(qdrantCommand) ||
       !normalizedSection.includes(sourceCommand) ||
       !normalizedSection.includes(query) ||
       !normalizedSection.includes(expectedSentence) ||

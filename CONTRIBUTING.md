@@ -18,7 +18,7 @@ publication recovery intent, Registry delay isolation, credential non-exposure,
 and the rule that external document text is never read as instruction.
 
 Tests that need a real Qdrant or the real Granite artifact are kept out of
-`npm test`, because a suite that cannot run without a 396 MiB download and a
+`npm test`, because a suite that cannot run without a 396.1 MiB download and a
 running server is a suite that stops being run.
 
 ```bash
@@ -41,9 +41,9 @@ say so. Published packages declare `>=24.18.0 <25`: patch and later 24.x release
 are accepted, while untested Node majors are refused until the release matrix
 covers them.
 
-CI pins Qdrant to an image digest (v1.15.5). The `docker run qdrant/qdrant` line
-in the user documentation is an unpinned tag, so reproduce a CI failure with the
-image in `.github/workflows/ci.yml` rather than with that line.
+The user quickstart pins Qdrant to the `v1.15.5` tag. CI pins that version to an
+exact image digest, so reproduce a CI failure with the image in
+`.github/workflows/ci.yml` rather than relying on the mutable tag.
 
 ## Workspaces
 
