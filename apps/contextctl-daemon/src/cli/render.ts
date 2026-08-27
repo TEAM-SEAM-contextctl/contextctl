@@ -401,11 +401,16 @@ export function renderCardDetail(
     ...listing,
     card: {
       ...listing.card,
-      meaning: version.meaning ?? listing.card.meaning,
       versions: { ...listing.card.versions, versions: [version] },
     },
+    pendingVersionIds: listing.pendingVersionIds.filter(
+      (candidate) => candidate === versionId,
+    ),
   };
-  return renderCardListing(narrowed, 1).replace(/^\[1\]/u, "Card");
+  return renderCardListing(narrowed, 1, {
+    kind: "selected_version",
+    meaning: version.meaning,
+  }).replace(/^\[1\]/u, "Card");
 }
 
 /**
@@ -418,9 +423,20 @@ export function renderCardDetail(
  * description hides exactly the sort of drift the approval step exists to
  * catch.
  */
-function renderCardListing(listing: CardListing, position: number): string {
+function renderCardListing(
+  listing: CardListing,
+  position: number,
+  meaningView:
+    | { readonly kind: "card" }
+    | {
+        readonly kind: "selected_version";
+        readonly meaning: CardVersion["meaning"];
+      } = { kind: "card" },
+): string {
   const { card, pendingVersionIds } = listing;
   const currentVersionId = card.versions.currentVersionId;
+  const meaning =
+    meaningView.kind === "card" ? card.meaning : meaningView.meaning;
 
   const lines: string[] = [
     line(0, `[${String(position)}] ${card.id}`),
@@ -431,11 +447,22 @@ function renderCardListing(listing: CardListing, position: number): string {
         : `상태: 승인됨 (현재 버전 ${currentVersionId})`,
     ),
     line(1, `민감(sensitive): ${String(card.policy.sensitive)}`),
-    line(1, "설명:"),
-    indentBlock(card.meaning.description, 2),
-    line(1, `키워드: ${joinOrEmpty(card.meaning.keywords)}`),
-    line(1, `별칭: ${joinOrEmpty(card.meaning.aliases)}`),
   ];
+
+  if (meaning === undefined) {
+    lines.push(
+      line(1, "설명: 버전별 기록 없음 (grounding-v1 이전 버전)"),
+      line(1, "키워드: 버전별 기록 없음"),
+      line(1, "별칭: 버전별 기록 없음"),
+    );
+  } else {
+    lines.push(
+      line(1, "설명:"),
+      indentBlock(meaning.description, 2),
+      line(1, `키워드: ${joinOrEmpty(meaning.keywords)}`),
+      line(1, `별칭: ${joinOrEmpty(meaning.aliases)}`),
+    );
+  }
 
   const versions = card.versions.versions;
   if (versions.length === 0) {

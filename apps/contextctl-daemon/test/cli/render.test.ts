@@ -486,6 +486,32 @@ describe("compact Card inspection", () => {
     expect(rendered).toContain("키워드:");
   });
 
+  it("does not attribute the current Card meaning to a legacy version", () => {
+    const currentMeaning = {
+      description: "현재 버전에만 기록된 설명",
+      representativeQuestions: ["현재 질문"],
+      aliases: ["현재"],
+      keywords: ["current"],
+    };
+    const listing = {
+      card: card({
+        description: currentMeaning.description,
+        keywords: currentMeaning.keywords,
+        versions: [
+          { ...cardVersion("cv-legacy", "validated"), meaning: undefined },
+          { ...cardVersion("cv-current", "validated"), meaning: currentMeaning },
+        ],
+        currentVersionId: "cv-current",
+      }),
+      pendingVersionIds: [],
+    };
+
+    const rendered = renderCardDetail(listing, "cv-legacy");
+
+    expect(rendered).toContain("버전별 기록 없음 (grounding-v1 이전 버전)");
+    expect(rendered).not.toContain(currentMeaning.description);
+  });
+
   it("summarizes the pending version and links to that exact evidence", () => {
     const pendingMeaning = {
       description: "새 배송 지연 규정",
