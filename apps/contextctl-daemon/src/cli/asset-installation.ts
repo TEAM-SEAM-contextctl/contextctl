@@ -31,6 +31,7 @@ import {
   type LocalEmbeddingAssetSource,
 } from "@contextctl/ingestion-indexing";
 
+import { formatEmbeddingAssetSize } from "../embedding-guidance.js";
 import { resolveActiveAssetDirectory } from "./asset-directory.js";
 import { resolveContextctlPaths } from "./paths.js";
 
@@ -107,7 +108,7 @@ export function describeAssetInstallationPlan(
   plan: AssetInstallationPlan,
 ): string {
   return [
-    `${plan.fileCount}개 파일 ${formatBytes(plan.totalBytes)}(약 ${formatDecimalMegabytes(plan.totalBytes)})를 내려받습니다.`,
+    `${plan.fileCount}개 파일 ${formatEmbeddingAssetSize(plan.totalBytes, "compact")}를 내려받습니다.`,
     `  저장소   ${plan.repository}`,
     `  리비전   ${plan.revision}`,
     `  라이선스 ${plan.license}`,
@@ -420,10 +421,6 @@ function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value.toFixed(1)} ${units[unit] ?? "GiB"}`;
-}
-
-function formatDecimalMegabytes(bytes: number): string {
-  return `${Math.round(bytes / 1_000_000)} MB`;
 }
 
 /** A cause carries the transport's reason; a bare message usually does not. */

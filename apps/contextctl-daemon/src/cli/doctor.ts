@@ -14,6 +14,7 @@ import {
   readDaemonStateIdentity,
   type DaemonStateIdentity,
 } from "../main.js";
+import { DEFAULT_GRANITE_ASSET_SIZE_INLINE } from "../embedding-guidance.js";
 import {
   describeAssetDirectoryProblem,
   resolveActiveAssetDirectory,
@@ -92,7 +93,7 @@ export interface DiagnosisInput {
 const MINIMUM_NODE_MAJOR = 24;
 
 const ASSET_REMEDY =
-  "contextctl install-assets 를 실행해 고정된 임베딩 모델(396.1 MiB, 약 415 MB)을 설치하세요.";
+  `contextctl install-assets 를 실행해 고정된 임베딩 모델(${DEFAULT_GRANITE_ASSET_SIZE_INLINE})을 설치하세요.`;
 
 /**
  * Runs every check in order and reports all of them.
