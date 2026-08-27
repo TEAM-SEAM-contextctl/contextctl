@@ -131,6 +131,8 @@ beforeEach(async () => {
     database,
     cards,
     lifecycleEvents: new SqliteLifecycleEventStore(database),
+    sourceReferenceFor: async (sourceId) =>
+      sourceId === "src_payments" ? "source.payments" : undefined,
     publications: new SqliteIngestionPublicationStore(ingestionDatabase),
     indexPublications: new SqliteIndexPublicationStore(ingestionDatabase),
     close: () => {
@@ -215,13 +217,13 @@ describe("cards inspection", () => {
     expect(parsed[0]?.pendingVersionIds).toEqual(["cv_1", "cv_2"]);
   });
 
-  it("filters by the source carried by a managed document Scope", async () => {
+  it("filters a managed document Card by its operator-facing Source reference", async () => {
     const matching = await runCardsList(cli, {
       kind: "cards_list",
       json: false,
       filter: "all",
       compact: true,
-      source: "src_payments",
+      source: "source.payments",
     });
     const absent = await runCardsList(cli, {
       kind: "cards_list",
@@ -270,6 +272,35 @@ describe("cards inspection", () => {
       decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
     );
     expect(await currentVersionOf("card_payments")).toBe("cv_1");
+  });
+
+  it("does not requeue reviewed versions after promotion and withdrawal", async () => {
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
+    );
+    await runCardsDecision(
+      cli,
+      decisionOf(["cards", "disable", "card_payments", "--by", "kim"]),
+    );
+
+    const listing = await runCardsList(cli, {
+      kind: "cards_list",
+      json: false,
+      filter: "pending",
+      compact: true,
+    });
+    const implicitApproval = await runCardsDecision(
+      cli,
+      decisionOf(["cards", "approve", "card_payments", "--by", "kim"]),
+    );
+
+    expect(listing.stdout).toContain("승인 대기 Card가 없습니다.");
+    expect(implicitApproval.exitCode).toBe(EXIT_CODES.genericFailure);
+    expect(implicitApproval.stderr.join("\n")).toContain(
+      "승인 대기 버전이 없습니다",
+    );
+    expect(await currentVersionOf("card_payments")).toBeUndefined();
   });
 });
 

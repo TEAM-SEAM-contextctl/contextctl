@@ -359,6 +359,16 @@ export async function runCardsList(
     .all();
 
   const listings: CardListing[] = [];
+  const sourceReferences = new Map<string, Promise<string | undefined>>();
+  const sourceReferenceFor = (sourceId: string): Promise<string | undefined> => {
+    const cached = sourceReferences.get(sourceId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const pending = cli.sourceReferenceFor(sourceId);
+    sourceReferences.set(sourceId, pending);
+    return pending;
+  };
   for (const row of rows) {
     // Narrowed rather than cast. `node:sqlite` types a column as the union of
     // everything SQLite can return, so asserting the row shape would be this
@@ -373,13 +383,13 @@ export async function runCardsList(
     if (card === undefined) {
       continue;
     }
-    const listing = await cardListingOf(cli, card);
     if (
       command.source !== undefined &&
-      !cardHasSource(card, command.source)
+      !(await cardHasSource(card, command.source, sourceReferenceFor))
     ) {
       continue;
     }
+    const listing = await cardListingOf(cli, card);
     if (!listingMatchesFilter(listing, command.filter)) {
       continue;
     }
@@ -498,14 +508,29 @@ function listingMatchesFilter(
   return true;
 }
 
-function cardHasSource(card: ContextCard, source: string): boolean {
-  return card.versions.versions.some((version) =>
-    version.scopes.some((scope) =>
-      scope.kind === "managed_document"
-        ? scope.documentIndex.sourceId === source
-        : scope.connector === source,
-    ),
-  );
+async function cardHasSource(
+  card: ContextCard,
+  source: string,
+  sourceReferenceFor: (sourceId: string) => Promise<string | undefined>,
+): Promise<boolean> {
+  for (const version of card.versions.versions) {
+    for (const scope of version.scopes) {
+      if (scope.kind !== "managed_document") {
+        if (scope.connector === source) {
+          return true;
+        }
+        continue;
+      }
+      const sourceId = scope.documentIndex.sourceId;
+      if (
+        sourceId === source ||
+        (await sourceReferenceFor(sourceId)) === source
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /**

@@ -96,13 +96,22 @@ export interface RegistryOnlyRuntime {
   /** Human decisions needed to distinguish unreviewed from refused versions. */
   readonly lifecycleEvents: SqliteLifecycleEventStore;
   /**
+   * Resolves Ingestion's opaque Source identity back to the operator-facing
+   * registration reference. Card Scopes intentionally carry only `sourceId`,
+   * so the daemon performs this translation without teaching Registry about
+   * Ingestion checkpoints.
+   */
+  readonly sourceReferenceFor: (sourceId: string) => Promise<string | undefined>;
+  /**
    * How far each Source has been published, read from Ingestion's own store.
    *
    * Needed for the processing delay: the reachability report compares what
    * Registry consumed against what Ingestion made ready, and only Ingestion knows
-   * the second half. Opening its database costs nothing an operator has to
-   * install — it is a second SQLite file, not the embedding artifact — so the
-   * decision commands stay runnable on a machine with no model.
+   * the second half. The same lightweight database also resolves a managed
+   * document `sourceId` to the registration reference used by `cards list --source`.
+   * Opening it costs nothing an operator has to install — it is a
+   * second SQLite file, not the embedding artifact — so the commands stay
+   * runnable on a machine with no model.
    */
   readonly publications: SqliteIngestionPublicationStore;
   /**
@@ -136,13 +145,14 @@ export function openRegistryOnlyRuntime(input: {
     ...stateIdentity,
   });
 
-  // Opened on first use, not up front. Only the reachability report reads
-  // Ingestion; a Card decision never does, and eagerly opening the second
-  // database made `contextctl cards approve` create an `ingestion.db` it would
-  // never read — a file an operator then has to wonder about.
+  // Opened on first use, not up front. Reachability, status and a Source-filtered
+  // Card list read Ingestion; a Card decision does not. Eagerly opening the
+  // second database made `contextctl cards approve` create an `ingestion.db` it
+  // would never read — a file an operator then has to wonder about.
   let ingestionDatabase: DatabaseSync | undefined;
   let publications: SqliteIngestionPublicationStore | undefined;
   let indexPublications: SqliteIndexPublicationStore | undefined;
+  let checkpoints: SqliteMarkdownPublicationCheckpointStore | undefined;
 
   // Both Ingestion-backed stores share one connection, opened by whichever is
   // touched first. Two `openIngestionDatabase` calls against one file would each
@@ -164,6 +174,12 @@ export function openRegistryOnlyRuntime(input: {
     database,
     cards: new SqliteCardStore(database),
     lifecycleEvents: new SqliteLifecycleEventStore(database),
+    sourceReferenceFor: async (sourceId) => {
+      checkpoints ??= new SqliteMarkdownPublicationCheckpointStore(
+        openIngestion(),
+      );
+      return (await checkpoints.findBySourceId(sourceId))?.source.configReference;
+    },
     get publications(): SqliteIngestionPublicationStore {
       if (publications === undefined) {
         publications = new SqliteIngestionPublicationStore(openIngestion());
