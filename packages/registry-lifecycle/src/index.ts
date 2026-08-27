@@ -23,6 +23,7 @@ export {
   type CardVersionId,
   type MeaningChangeComparison,
 } from "./domain/card-version.js";
+export { pendingReviewCardVersionIds } from "./domain/card-review-state.js";
 export {
   checkCatalogSnapshotLimits,
   computeCatalogSnapshotVersion,
