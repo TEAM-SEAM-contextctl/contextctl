@@ -70,13 +70,9 @@ Keeping the responsibility narrow is the design, not a missing feature.
 curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
 ```
 
-The script resolves one immutable release tag, verifies all five package
-tarballs against that release's `SHA256SUMS`, installs them together, and
-confirms that `PATH` reaches the command. A digest mismatch stops before npm is
-called. When piping the script into Bash, append `-s -- --version vX.Y.Z` to
-reproduce an exact release; the operations guide has the full command.
-
-**It does not download the model.** The separate 396 MiB download asks for consent next.
+The script pins one release, verifies its five tarballs against `SHA256SUMS`,
+installs them together, and checks `PATH`. It does not download the model; the
+operations guide covers exact-version installs, and the next step asks before downloading 396 MiB.
 
 If `PATH` does not reach the install, the script stops and prints the real `bin`
 directory with the `export PATH=…` line to add. `contextctl paths` reports the

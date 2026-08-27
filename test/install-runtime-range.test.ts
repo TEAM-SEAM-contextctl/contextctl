@@ -40,7 +40,9 @@ async function runWithNode(version: string): Promise<{
   await executable(bin, "curl", "exit 1");
 
   return await new Promise((settle, reject) => {
-    const child = spawn("/bin/bash", [installer], {
+    // Pin a syntactically valid release so this test isolates the Node range
+    // decision from the separate latest-release resolution contract.
+    const child = spawn("/bin/bash", [installer, "--version", "v1.2.3"], {
       cwd: repositoryRoot,
       env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
       stdio: ["ignore", "pipe", "pipe"],
@@ -79,7 +81,7 @@ describe("release installer Node range", () => {
       // decision. Reaching it is the assertion; no release bytes are fetched.
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout).toContain(`Node.js ${version} 을 씁니다.`);
-      expect(result.stdout).toContain("패키지를 내려받습니다");
+      expect(result.stdout).toContain("패키지와 SHA-256 목록을 내려받습니다");
       expect(result.stderr).not.toContain("지원 범위는");
     },
   );

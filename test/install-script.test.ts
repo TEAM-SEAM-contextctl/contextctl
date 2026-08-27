@@ -95,7 +95,7 @@ describe("release installer", () => {
       const result = runInstaller(fixture, ["--version", "v1.2.3"]);
 
       expect(result.status, nodeVersion).toBe(1);
-      expect(result.stderr).toContain("24.18.0 이상인 24.x가 필요합니다");
+      expect(result.stderr).toContain("지원 범위는 24.18.0 이상 25 미만");
       expect(() => readFileSync(fixture.curlMarker)).toThrow();
     }
   });
