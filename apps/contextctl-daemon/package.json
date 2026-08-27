@@ -1,6 +1,6 @@
 {
   "name": "@contextctl/daemon",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Contextctl CLI, MCP server, HTTP adapter, and runtime composition.",
   "license": "MIT",
@@ -27,8 +27,8 @@
   },
   "files": ["bin", "dist", "demo/docs", "LICENSE", "README.md", "!dist/.tsbuildinfo"],
   "dependencies": {
-    "@contextctl/ingestion-indexing": "1.0.0",
-    "@contextctl/registry-lifecycle": "1.0.0",
-    "@contextctl/selection-delivery": "1.0.0"
+    "@contextctl/ingestion-indexing": "1.0.1",
+    "@contextctl/registry-lifecycle": "1.0.1",
+    "@contextctl/selection-delivery": "1.0.1"
   }
 }
