@@ -330,6 +330,27 @@ export async function verifyLocalEmbeddingAssets(
   artifactDirectory: string,
   profile: DocumentRetrievalEmbeddingProfile,
 ): Promise<LocalEmbeddingAssetManifest> {
+  return verifyLocalEmbeddingAssetSet(artifactDirectory, profile, true);
+}
+
+/**
+ * Verifies the pinned manifest and every asset's path and byte length without
+ * hashing the model payload. Runtime startup still uses the full verifier;
+ * routine status surfaces use this bounded-I/O form and reserve content hashes
+ * for an explicit deep diagnosis.
+ */
+export async function verifyLocalEmbeddingAssetLayout(
+  artifactDirectory: string,
+  profile: DocumentRetrievalEmbeddingProfile,
+): Promise<LocalEmbeddingAssetManifest> {
+  return verifyLocalEmbeddingAssetSet(artifactDirectory, profile, false);
+}
+
+async function verifyLocalEmbeddingAssetSet(
+  artifactDirectory: string,
+  profile: DocumentRetrievalEmbeddingProfile,
+  verifyContent: boolean,
+): Promise<LocalEmbeddingAssetManifest> {
   assertValidEmbeddingProfile(profile);
   if (!isAbsolute(artifactDirectory) || profile.execution.kind !== "local") {
     throw artifactUnavailable();
@@ -358,7 +379,7 @@ export async function verifyLocalEmbeddingAssets(
       throw artifactUnavailable();
     }
     for (const file of manifest.files) {
-      await verifyAssetFile(root, file);
+      await verifyAssetFile(root, file, verifyContent);
     }
     return manifest;
   } catch (error) {
@@ -589,6 +610,7 @@ async function readVerifiedFile(
 async function verifyAssetFile(
   root: string,
   expected: LocalEmbeddingAssetFile,
+  verifyContent: boolean,
 ): Promise<void> {
   const resolved = await resolveVerifiedPath(root, expected.path);
   const handle = await open(
@@ -600,6 +622,7 @@ async function verifyAssetFile(
     if (!metadata.isFile() || metadata.size !== expected.bytes) {
       throw artifactUnavailable();
     }
+    if (!verifyContent) return;
     const digest = createHash("sha256");
     const stream = handle.createReadStream({ autoClose: false });
     for await (const chunk of stream) digest.update(chunk);

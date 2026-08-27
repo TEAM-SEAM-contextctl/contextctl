@@ -4,7 +4,6 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
-  isDocumentRetrievalEmbeddingProfile,
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   openIngestionDatabase,
   SqliteIndexPublicationStore,
@@ -33,7 +32,6 @@ import {
   readActiveEmbeddingProfiles,
   readEmbeddingCompositionConfiguration,
   assertRequiredDocumentProfileBindings,
-  DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
   type ActiveEmbeddingProfiles,
   type EmbeddingCompositionConfiguration,
 } from "../embedding/configuration.js";
@@ -42,10 +40,12 @@ import {
   type RequiredEmbeddingBindings,
 } from "../embedding/required-bindings.js";
 import {
-  describeAssetDirectoryProblem,
   resolveActiveAssetDirectory,
-  type AssetDirectoryProblem,
 } from "./asset-directory.js";
+import {
+  EmbeddingAssetsUnavailableError,
+  verifyRequiredRetainedLocalBindings,
+} from "./retained-embedding-assets.js";
 import {
   resolveCardMeaningBackend,
   type CardMeaningBackend,
@@ -451,10 +451,11 @@ export async function resolveCliEmbeddingRuntime(input: {
 
   assertRequiredDocumentProfileBindings(
     configuration,
+    requiredBindings.currentDocumentProfile,
     requiredBindings.documentProfiles,
   );
 
-  await verifyRetainedLocalBindings(configuration, requiredBindings);
+  await verifyRequiredRetainedLocalBindings(configuration, requiredBindings);
   const activeLocal =
     configuration.document.mode === "local" || configuration.card.mode === "local";
   if (!activeLocal) return { configuration, profiles, requiredBindings };
@@ -478,55 +479,4 @@ export async function resolveCliEmbeddingRuntime(input: {
   };
 }
 
-async function verifyRetainedLocalBindings(
-  configuration: EmbeddingCompositionConfiguration,
-  requiredBindings: RequiredEmbeddingBindings,
-): Promise<void> {
-  const current = requiredBindings.documentProfiles[0];
-  for (const profile of requiredBindings.documentProfiles) {
-    if (
-      (profile.id === current?.id && profile.version === current.version) ||
-      !isDocumentRetrievalEmbeddingProfile(profile) ||
-      profile.execution.kind !== "local"
-    ) {
-      continue;
-    }
-    const binding = (configuration.retainedDocumentBindings ?? []).find(
-      (candidate) =>
-        candidate.profileId === profile.id &&
-        candidate.profileVersion === profile.version,
-    );
-    if (binding?.mode !== "local") {
-      // The composition will report the exact missing profile. This early
-      // refusal prevents the CLI from claiming no local asset is needed and
-      // starting a graph that cannot serve a reachable Scope.
-      throw new EmbeddingAssetsUnavailableError({
-        kind: "not_installed",
-        pointerPath: DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
-        reason: `retained binding missing for ${profile.id} ${profile.version}`,
-      });
-    }
-    await verifyLocalEmbeddingAssets(binding.artifactDirectory, profile);
-  }
-}
-
-
-/**
- * The composition refused to start because no usable revision is installed.
- *
- * A distinct type rather than a generic failure, because the CLI answers it
- * with an install instruction and answers nothing else that way. It also keeps
- * the distinction the adapter cannot make: `verifyLocalEmbeddingAssets` folds a
- * missing install, a wrong digest and a short file into one
- * `embedding_artifact_unavailable`, and "you have not installed it" needs a
- * different next step from "what is installed is not what this build pins".
- */
-export class EmbeddingAssetsUnavailableError extends Error {
-  readonly problem: AssetDirectoryProblem;
-
-  constructor(problem: AssetDirectoryProblem) {
-    super(describeAssetDirectoryProblem(problem));
-    this.name = "EmbeddingAssetsUnavailableError";
-    this.problem = problem;
-  }
-}
+export { EmbeddingAssetsUnavailableError } from "./retained-embedding-assets.js";

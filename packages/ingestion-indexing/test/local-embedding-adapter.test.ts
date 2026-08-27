@@ -18,6 +18,7 @@ import {
   embeddingProfilesMatch,
   serializeLocalEmbeddingAssetManifest,
   validateEmbeddingProfile,
+  verifyLocalEmbeddingAssetLayout,
   verifyLocalEmbeddingAssets,
   type DocumentRetrievalEmbeddingProfile,
   type LocalEmbeddingAssetManifest,
@@ -260,6 +261,24 @@ describe("Transformers.js local embedding adapter", () => {
     const escaping = await createAssetFixture({ symlinkedArtifact: true });
     await expect(
       verifyLocalEmbeddingAssets(escaping.artifactDirectory, escaping.profile),
+    ).rejects.toMatchObject({ code: "embedding_artifact_unavailable" });
+  });
+
+  it("keeps routine layout checks bounded while deep verification detects bit rot", async () => {
+    const fixture = await createAssetFixture();
+    await writeFile(
+      join(fixture.artifactDirectory, "model_quantized.onnx"),
+      Buffer.alloc(Buffer.byteLength("verified-local-model", "utf8"), 0x78),
+    );
+
+    await expect(
+      verifyLocalEmbeddingAssetLayout(
+        fixture.artifactDirectory,
+        fixture.profile,
+      ),
+    ).resolves.toBeDefined();
+    await expect(
+      verifyLocalEmbeddingAssets(fixture.artifactDirectory, fixture.profile),
     ).rejects.toMatchObject({ code: "embedding_artifact_unavailable" });
   });
 

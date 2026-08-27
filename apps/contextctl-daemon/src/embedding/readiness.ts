@@ -25,6 +25,8 @@ export type EmbeddingObservation =
        * searchable, so the requirement outlives the configuration.
        */
       readonly requiresLocalAssets: boolean;
+      /** Whether the managed active revision selected by install-assets is used. */
+      readonly requiresManagedAssets: boolean;
       /** Profiles bound only because something still reaches them. */
       readonly restoredProfiles: readonly string[];
     }
@@ -51,6 +53,8 @@ export function observeEmbedding(input: {
     documentMode: input.document.mode,
     cardMode: input.card.mode,
     requiresLocalAssets: input.required.needsLocalAssets,
+    requiresManagedAssets:
+      input.document.mode === "local" || input.card.mode === "local",
     restoredProfiles: input.restoredProfiles,
   };
 }
@@ -66,10 +70,10 @@ export function observeEmbedding(input: {
  * An unassembled composition is fatal regardless. Not knowing which bindings are
  * required is not the same as knowing none are.
  */
-export function localAssetsAreRequired(
+export function managedAssetsAreRequired(
   observation: EmbeddingObservation,
 ): boolean {
-  return observation.status !== "composed" || observation.requiresLocalAssets;
+  return observation.status !== "composed" || observation.requiresManagedAssets;
 }
 
 /**

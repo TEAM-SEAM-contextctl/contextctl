@@ -64,6 +64,8 @@ export interface EmbeddingBindingRequirement {
  * query that touches it.
  */
 export interface RequiredEmbeddingBindings {
+  /** The profile new document publications are written under. */
+  readonly currentDocumentProfile: EmbeddingProfile;
   /**
    * Distinct document profiles needing a registered query provider.
    *
@@ -202,6 +204,7 @@ export async function computeRequiredEmbeddingBindings(
   });
 
   return {
+    currentDocumentProfile: input.documentProfile,
     documentProfiles: [...documentProfiles.values()],
     cardProfile: input.cardProfile,
     requirements,
@@ -234,6 +237,17 @@ export function cardProfileNeedsLocalAssets(
 ): boolean {
   return (
     isCardSelectionEmbeddingProfile(profile) && profile.execution.kind === "local"
+  );
+}
+
+/** Profiles kept only because an approved Scope still reaches them. */
+export function retainedDocumentProfiles(
+  required: RequiredEmbeddingBindings,
+): readonly EmbeddingProfile[] {
+  return required.documentProfiles.filter(
+    (profile) =>
+      profile.id !== required.currentDocumentProfile.id ||
+      profile.version !== required.currentDocumentProfile.version,
   );
 }
 

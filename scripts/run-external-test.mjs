@@ -23,6 +23,7 @@ const targets = Object.freeze({
     ]),
     testFiles: Object.freeze([
       "packages/ingestion-indexing/test/local-embedding-adapter.integration.test.ts",
+      "apps/contextctl-daemon/test/retained-local-embedding.integration.test.ts",
       "apps/contextctl-daemon/test/embedding-runtime-load.integration.test.ts",
       "apps/contextctl-daemon/test/selection-eval.integration.test.ts",
       "apps/contextctl-daemon/test/generated-card-selection.integration.test.ts",
