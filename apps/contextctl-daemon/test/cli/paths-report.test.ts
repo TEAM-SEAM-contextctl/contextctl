@@ -52,6 +52,7 @@ describe("paths report", () => {
     expect(values).toContain(join(home, "sources.json"));
     expect(values).toContain(join(home, "registry.db"));
     expect(values).toContain(join(home, "ingestion.db"));
+    expect(values).toContain(join(home, "runtime-activity"));
   });
 
   it("survives a home where nothing has been created", async () => {

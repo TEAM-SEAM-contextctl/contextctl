@@ -8,8 +8,8 @@ import { readNonEmpty } from "./paths.js";
 /**
  * Everything this tool wrote, and where.
  *
- * There is deliberately no `uninstall` beside it. Two of the four things below
- * are not ours to remove: the Registry database holds Cards an operator
+ * There is deliberately no `uninstall` beside it. Two things below are not
+ * ours to remove: the Registry database holds Cards an operator
  * approved, and a Qdrant instance is something they started and may be sharing
  * with anything else. A script that deleted both because the binary was being
  * removed would destroy work on the strength of an unrelated intent.
@@ -48,7 +48,11 @@ export async function buildPathsReport(input: {
       {
         title: "상태 (지우면 등록한 소스와 승인한 Card 가 사라집니다)",
         entries: [
-          await fileEntry("상태 디렉터리", paths.home, "아래 세 파일을 담고 있습니다."),
+          await fileEntry(
+            "상태 디렉터리",
+            paths.home,
+            "영속 상태 세 파일과 실행 중 임시 상태를 담습니다.",
+          ),
           await fileEntry("Source 설정", paths.sourcesFile, "등록한 문서 목록입니다."),
           await fileEntry(
             "Registry 저장소",
@@ -59,6 +63,16 @@ export async function buildPathsReport(input: {
             "Ingestion 저장소",
             paths.ingestionDatabase,
             "관측·게시 이력. 지우면 같은 문서를 다시 수집합니다.",
+          ),
+        ],
+      },
+      {
+        title: "실행 중 임시 상태 (daemon 종료 시 사라집니다)",
+        entries: [
+          await fileEntry(
+            "실행 상태",
+            paths.runtimeActivityDirectory,
+            "serve 프로세스별 queue·RSS·event loop 수치만 담습니다.",
           ),
         ],
       },

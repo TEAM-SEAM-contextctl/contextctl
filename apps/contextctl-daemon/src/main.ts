@@ -121,6 +121,7 @@ import {
   assertDaemonStateReady,
 } from "./runtime/state-readiness.js";
 import { EMBEDDING_ASSETS_MISSING_GUIDANCE } from "./embedding-guidance.js";
+import { createRuntimeActivityPublisher } from "./cli/runtime-activity-file.js";
 
 export { EMBEDDING_ASSETS_MISSING_GUIDANCE } from "./embedding-guidance.js";
 
@@ -214,6 +215,8 @@ export interface DaemonRuntimeOptions {
    * pick a directory on the operator's behalf.
    */
   readonly registryDatabaseLocation?: string;
+  /** Protected counts-only per-process activity directory used by the local operator CLI. */
+  readonly runtimeActivityDirectory?: string;
   /** One identity shared by Registry, Ingestion, Index Catalog and Qdrant. */
   readonly stateIdentity?: DaemonStateIdentity;
   readonly connectorId?: string;
@@ -1133,6 +1136,29 @@ export async function runDaemon(
   lifecycle.registerCloseable("registry_database", () => {
     runtime.database.close();
   });
+  const activityPublisher =
+    options?.runtimeActivityDirectory === undefined
+      ? undefined
+      : createRuntimeActivityPublisher({
+          directory: options.runtimeActivityDirectory,
+          stateIdentity: runtime.stateIdentity,
+          onError: (error) => {
+            process.stderr.write(
+              `실행 상태 기록에 실패했습니다: ${describeUnknownError(error)}\n`,
+            );
+          },
+        });
+  if (activityPublisher !== undefined) {
+    lifecycle.registerCloseable("runtime_activity", () =>
+      activityPublisher.close(),
+    );
+    try {
+      await activityPublisher.start(() => runtime.control.activity());
+    } catch (error) {
+      reportShutdownFailures(await lifecycle.shutdown());
+      throw error;
+    }
+  }
   lifecycle.registerDrainHook(() => {
     runtime.ingestionMaintenanceWorker.beginDraining();
   });
@@ -1234,6 +1260,10 @@ function reportShutdownFailures(
       `종료 중 ${failure.resource} 정리에 실패했습니다: ${failure.reason}\n`,
     );
   }
+}
+
+function describeUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Whether this module was executed, as opposed to imported. */

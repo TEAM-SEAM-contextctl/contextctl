@@ -190,6 +190,10 @@ Markdown 문서 파일 하나를 소스로 등록합니다. 디렉터리 단위 
 
 MCP 서버로 뜹니다. `stdout` 은 JSON-RPC 전용이고 진단은 전부 `stderr` 로 나갑니다.
 
+실행 중에는 `contextctl status` 가 같은 `CONTEXTCTL_HOME`의 보호된 임시 파일을 통해 lane별
+active·queue 수와 임베딩 스케줄러의 event loop 지연·RSS를 함께 보여줍니다. 이 파일에는 질의,
+Card, Scope, 엔드포인트나 비밀 값이 없고 프로세스가 정상 종료하면 삭제됩니다.
+
 에이전트에 노출되는 도구는 `resolve_context` **하나**입니다. 승인·거부 같은 제어 명령은
 의도적으로 없습니다 → [README](../README.ko.md#mcp-로-붙이기)
 

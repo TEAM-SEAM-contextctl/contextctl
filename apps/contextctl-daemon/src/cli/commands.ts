@@ -76,6 +76,7 @@ import {
 } from "../embedding/required-bindings.js";
 import type { EmbeddingObservation } from "../embedding/readiness.js";
 import { verifyRequiredRetainedLocalBindings } from "./retained-embedding-assets.js";
+import { readRuntimeActivity } from "./runtime-activity-file.js";
 import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
 import { readSourcesFile } from "./sources-file.js";
 
@@ -689,7 +690,13 @@ export async function runStatus(
       paths.ingestionDatabase,
     ),
   };
-  const report = judgeLanes(observation);
+  const report = judgeLanes(
+    observation,
+    await readRuntimeActivity({
+      directory: paths.runtimeActivityDirectory,
+      stateIdentity: cli.stateIdentity,
+    }),
+  );
   const stdout = command.json
     ? JSON.stringify(report, undefined, 2)
     : renderStatusReport(report);

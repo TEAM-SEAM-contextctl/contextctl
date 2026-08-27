@@ -40,6 +40,7 @@ import {
 } from "../../src/cli/runtime.js";
 import { runStatus } from "../../src/cli/commands.js";
 import { runDiagnosis } from "../../src/cli/doctor.js";
+import { createRuntimeActivityPublisher } from "../../src/cli/runtime-activity-file.js";
 import {
   CARD_EMBEDDING_API_KEY_VARIABLE,
   CARD_EMBEDDING_ENDPOINT_VARIABLE,
@@ -263,6 +264,87 @@ describe("retained document binding startup", () => {
     const assets = diagnosis.steps.find((step) => step.name === "embedding-assets");
     expect(assets).toMatchObject({ status: "fail" });
     expect(assets?.detail).toContain("shared-memory index");
+  });
+
+  it("attaches fresh activity from the running daemon to status", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contextctl-live-status-"));
+    temporaryDirectories.push(home);
+    const environment = remoteEnvironment(home);
+    const paths = resolveContextctlPaths(environment, home);
+    const publisher = createRuntimeActivityPublisher({
+      directory: paths.runtimeActivityDirectory,
+      stateIdentity: {
+        stateNamespaceId: STATE_NAMESPACE_ID,
+        securityDomain: SECURITY_DOMAIN,
+      },
+    });
+    await publisher.start(() => ({
+      lifecycle: "accepting",
+      profileVersion: "daemon-runtime-profile-v1",
+      depths: [
+        {
+          lane: "resolve",
+          active: 2,
+          queued: 1,
+          concurrency: 8,
+          queueDepth: 32,
+        },
+        {
+          lane: "registry_consume",
+          active: 0,
+          queued: 0,
+          concurrency: 1,
+          queueDepth: 8,
+        },
+        {
+          lane: "selection_assets",
+          active: 0,
+          queued: 0,
+          concurrency: 1,
+          queueDepth: 1,
+        },
+        {
+          lane: "ingestion",
+          active: 0,
+          queued: 0,
+          concurrency: 1,
+          queueDepth: 4,
+        },
+      ],
+      embedding: {
+        profileVersion: "embedding-runtime-scheduler-v1",
+        accepting: true,
+        active: 1,
+        resolveStarts: 4,
+        backgroundStarts: 1,
+        resolveReservations: 2,
+        resolveQueued: 0,
+        backgroundQueued: 0,
+        eventLoopLagMs: 7,
+        eventLoopState: "normal",
+        rssBytes: 256 * 1024 * 1024,
+        rssLimitBytes: 1_536 * 1024 * 1024,
+        memoryState: "normal",
+        backgroundStartsSuppressed: false,
+      },
+    }));
+
+    const registry = openRegistryOnlyRuntime({ environment, workingDirectory: home });
+    try {
+      const outcome = await runStatus(
+        registry,
+        { kind: "status", json: true },
+        { environment, workingDirectory: home },
+      );
+      const report = JSON.parse(outcome.stdout) as {
+        readonly activity?: { readonly profileVersion: string };
+      };
+
+      expect(report.activity?.profileVersion).toBe("daemon-runtime-profile-v1");
+    } finally {
+      registry.close();
+      await publisher.close();
+    }
   });
 });
 

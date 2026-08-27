@@ -136,6 +136,12 @@ describe("CLI runtime options", () => {
     });
   });
 
+  it("binds the CLI-owned protected activity path into the daemon", () => {
+    const { options, paths } = build({});
+
+    expect(options.runtimeActivityDirectory).toBe(paths.runtimeActivityDirectory);
+  });
+
   it("reopens both durable databases only under the identity first injected", async () => {
     const home = mkdtempSync(join(tmpdir(), "contextctl-state-identity-"));
     temporaryDirectories.push(home);
