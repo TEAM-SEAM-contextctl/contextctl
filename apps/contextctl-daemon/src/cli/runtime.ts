@@ -349,6 +349,7 @@ export function cliRuntimeOptions(input: {
   const { ingestionDatabase } = input;
   return {
     registryDatabaseLocation: input.paths.registryDatabase,
+    runtimeActivityDirectory: input.paths.runtimeActivityDirectory,
     stateIdentity: input.stateIdentity,
     embedding: input.embeddingRuntime.configuration,
     embeddingProfile: input.embeddingRuntime.profiles.document,

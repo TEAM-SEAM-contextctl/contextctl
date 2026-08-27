@@ -12,11 +12,13 @@ import { isAbsolute, join, resolve } from "node:path";
  * composition. A CLI process starts and exits between every step an operator
  * takes, so state that is merely in memory is state the next command cannot see.
  *
- * Every value is overridable, and the override is read from the environment
- * rather than from a config file. There is deliberately no second configuration
- * format here: `sources.json` records what an operator declared, and everything
- * else is deployment wiring that an operator sets once, in the shell, beside the
- * command they are running.
+ * Every durable value is overridable, and the override is read from the
+ * environment rather than from a config file. There is deliberately no second
+ * configuration format here: `sources.json` records what an operator declared,
+ * and everything else is deployment wiring that an operator sets once, in the
+ * shell, beside the command they are running. The ephemeral activity file is
+ * fixed under `home` so `serve`, `status` and `paths` cannot disagree about a
+ * private process-to-process surface.
  */
 export interface ContextctlPaths {
   /** Root of the CLI's own state. Everything below defaults inside it. */
@@ -26,6 +28,8 @@ export interface ContextctlPaths {
   readonly ingestionDatabase: string;
   /** Where the pinned embedding assets were installed. */
   readonly embeddingAssetDirectory: string;
+  /** Protected, ephemeral per-process activity snapshots written by `serve`. */
+  readonly runtimeActivityDirectory: string;
 }
 
 export const CONTEXTCTL_HOME_VARIABLE = "CONTEXTCTL_HOME";
@@ -38,9 +42,10 @@ export function defaultContextctlHome(): string {
 /**
  * Resolves every path the CLI uses, environment first.
  *
- * Each variable is read independently rather than derived from `home` at use
- * time, so an operator can move exactly one thing — point the registry at a
- * scratch database, say — without restating the other four. Relative values are
+ * Each durable/configurable value is read independently rather than derived
+ * from `home` at use time, so an operator can move exactly one thing — point
+ * the registry at a scratch database, say — without restating the other four.
+ * Relative values are
  * resolved against the process working directory, because a relative path in an
  * environment variable means "relative to where I am", and the stores below
  * receive absolute paths only: `verifyLocalEmbeddingAssets` refuses a relative
@@ -68,6 +73,7 @@ export function resolveContextctlPaths(
       "CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY",
       "embedding-assets",
     ),
+    runtimeActivityDirectory: join(home, "runtime-activity"),
   };
 }
 

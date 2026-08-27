@@ -89,6 +89,15 @@ ingestion         ready      끝나지 않은 게시가 없습니다. 점검 대
 `--json` 은 같은 판정을 그대로 냅니다. `serviceable` 은 `not_ready` 가 하나도 없을 때 `true`
 이고, `degraded` 는 서비스 가능으로 셉니다.
 
+같은 `CONTEXTCTL_HOME`에서 `contextctl serve`가 실행 중이면 보고서에 `runtime` 구역도 붙습니다.
+여기에는 lane별 active·queue 수와 임베딩 스케줄러의 event loop 지연·RSS가 들어갑니다. 별도
+`status` 프로세스가 daemon 메모리를 직접 읽을 수 없으므로, daemon은 `runtime-activity/` 아래에
+프로세스별 파일을 권한 `0600`으로 원자적으로 갱신합니다. 디렉터리 권한은 `0700`입니다. 같은
+`CONTEXTCTL_HOME`을 쓰는 daemon이 여러 개면 `status`는 아직 살아 있는 파일들의 수치를 합산합니다.
+파일은 질의·Card·Scope·엔드포인트·비밀 값을 담지 않으며, 다른 상태 식별자의 파일과 4초 넘게
+갱신되지 않은 파일은 무시합니다. 정상 종료 때는 daemon이 자기 파일만 삭제합니다. HTTP와 MCP에는
+이 운영 표면을 노출하지 않습니다.
+
 ```bash
 contextctl status --json > status.json || echo "막힌 영역이 있습니다"
 ```
