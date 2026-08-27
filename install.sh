@@ -127,7 +127,7 @@ require_node() {
     fail ""
     fail "필수 릴리스 검사는 Node ${MINIMUM_NODE_VERSION}에서 수행되며 Node 25 이상은 아직 검증하지 않았습니다."
     fail ""
-    fail "Node 24.18.x로 전환한 뒤 다시 실행하십시오: https://nodejs.org/en/download"
+    fail "Node ${SUPPORTED_NODE_RANGE} 범위로 전환한 뒤 다시 실행하십시오: https://nodejs.org/en/download"
     exit 1
   fi
 

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml/badge.svg)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-24.18.x-brightgreen)
+![Node](https://img.shields.io/badge/node-24.18%2B%20%3C25-brightgreen)
 [![Verified on Ubuntu 24.04](https://img.shields.io/badge/verified%20on-Ubuntu%2024.04-blue)](https://github.com/TEAM-SEAM-contextctl/contextctl/actions/workflows/ci.yml)
 
 [한국어](README.ko.md)
@@ -32,19 +32,18 @@ It also runs as an MCP server, so an agent like Claude Code can use it.
 
 | | |
 |---|---|
-| **Represent** | Turns external knowledge into retrieval units that keep its structure and meaning. Markdown is split along document structure into semantic units and chunks, embedded, and published to an index. PostgreSQL and OpenAPI are never copied — only their **coordinates** are published |
+| **Represent** | The released ingest path turns Markdown into structure-preserving semantic units and chunks, embeds them, and publishes them to an index. Contracts can carry PostgreSQL and OpenAPI coordinates, but their capture adapters are not included in this release |
 | **Lifecycle** | Capture and registration run on **independent cycles**. When a document changes, only the changed chunks are re-embedded; when registration falls behind, the delay is reported rather than hidden. Cards are never overwritten — versions accumulate and only a validated one is promoted |
 | **Select** | Picks the knowledge areas and retrieval scopes that fit a question. The answer is not a ranked list but an **admit / defer / reject verdict**, and it reports what it discarded as well as what it chose |
-| **Deliver** | For managed documents it assembles the supporting text in the same request. For databases and APIs it returns **coordinates you can verify** before acting on them |
+| **Deliver** | For managed Markdown it assembles supporting text in the same request. Database and API guide shapes exist in the contracts for future adapters; this release neither captures nor executes those systems |
 
 ## What it will not do
 
 Keeping the responsibility narrow is the design, not a missing feature.
 
-- **It does not write or run SQL.** Instead of turning a question into a query,
-  it gives you verifiable coordinates — schema, table, columns, permitted
-  operations
-- **It does not call HTTP APIs.** It tells you which operation
+- **It does not write or run SQL, or call an HTTP API.** Database and API guide
+  contracts stop at verifiable coordinates; their capture adapters are not in
+  this release
 - **It does not produce the final answer.** It assembles grounds; the caller
   answers
 - **It never reads retrieved document text as instruction.** Every response
@@ -56,10 +55,10 @@ Keeping the responsibility narrow is the design, not a missing feature.
 
 | | |
 |---|---|
-| **Node.js** | **24.18.0 or newer in the 24.x line** — this is the runtime range exercised by the required release checks |
+| **Node.js** | **24.18.0 or newer, below 25** — accepted by the installer and package engines; required CI runs 24.18.0 |
 | **Qdrant** | Required. `ingest`, `query` and `serve` refuse to start without `CONTEXTCTL_QDRANT_URL` |
 | **Disk** | **396.1 MiB (about 415 MB)** for the embedding model — with the default local execution. Running both embedding layers remotely needs none of it |
-| **Memory** | No host minimum is claimed yet. Required CI holds the daemon process to **1,536 MiB peak RSS** under a 10,000-Card workload; that figure excludes Qdrant and the operating system |
+| **Memory** | No host minimum is claimed yet. Required CI caps the Granite-backed 10,000-Card scale process at **1,536 MiB peak RSS**; Qdrant and the operating system are outside that process |
 
 > ★ **Using `fnm`, `nvm` or `asdf`?** They install into the **active Node
 > version's `bin` only**. Switching versions makes `contextctl` look like it
@@ -71,10 +70,9 @@ Keeping the responsibility narrow is the design, not a missing feature.
 curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
 ```
 
-The script pins one release, verifies its five tarballs against `SHA256SUMS`,
-installs them together, and checks `PATH`. It does not download the model; the
-operations guide covers exact-version installs, and the next step asks before
-downloading 396.1 MiB (about 415 MB).
+The script pins one release, verifies its five tarballs against `SHA256SUMS`, installs
+them together, and checks `PATH`. It does not download the model; the next step asks
+before downloading 396.1 MiB (about 415 MB).
 
 If `PATH` does not reach the install, the script stops and prints the real `bin`
 directory with the `export PATH=…` line to add. `contextctl paths` reports the
@@ -89,7 +87,7 @@ same location later.
 
 ```bash
 # 1. Start the vector index
-docker run -d -p 6333:6333 qdrant/qdrant
+docker run --rm -d --name contextctl-qdrant -p 127.0.0.1:6333:6333 -v contextctl-qdrant-data:/qdrant/storage qdrant/qdrant:v1.15.5
 export CONTEXTCTL_QDRANT_URL=http://localhost:6333
 
 # 2. Install the embedding model (396.1 MiB, about 415 MB, asks for consent)
@@ -111,13 +109,11 @@ contextctl cards approve <cardId>  # choose the Card described as "반차 · 인
 contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
 
-`doctor` does not create, claim, or migrate application state; its only write is
-a short-lived directory-permission probe that it removes. Missing stores are
-warnings on a fresh home. Set namespace and domain before the first state change.
+`doctor` does not create, claim, or migrate application state. It only creates and removes
+a short-lived permission probe; missing stores are warnings on a fresh home.
 
-Step 4 produces nine pending Card versions for the current bundled `leave.md`.
-Step 6 then answers like this — what it chose, and why you can trust it,
-together.
+Step 4 produces nine pending Card versions for the bundled `leave.md`; step 6
+then returns what it chose and why.
 
 ```
 질의: 오전 반차와 오후 반차는 연차를 얼마나 차감하나요?

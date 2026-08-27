@@ -32,8 +32,6 @@
 
 ---
 
----
-
 ## status
 
 daemon 은 프로세스 하나지만 그 안에서 성격이 다른 일이 동시에 벌어집니다. 문서를 읽고
@@ -150,9 +148,10 @@ event)에 남습니다 — 삭제된 지식은 `change.removed`, 옛 색인에 �
 **둘 중 하나만 백업하면 복구되지 않습니다.** SQLite 파일만 복사하면 Qdrant 색인과 시점이
 어긋나고, Qdrant 만 스냅샷으로 남기면 승인 Card 와 Publication 계보를 잃습니다.
 
-`backup create` 는 Ingestion 과 Registry 쓰기를 같은 순서로 잠근 뒤, 두 SQLite 저장소와 현재
-계보가 참조하는 Qdrant 컬렉션을 하나의 복구 묶음으로 저장합니다. 임베딩 모델 자산은 다시
-설치할 수 있으므로 넣지 않습니다.
+`backup create`는 Ingestion과 Registry 쓰기를 같은 순서로 잠근 뒤, 두 SQLite 저장소,
+Source 등록 파일(`sources.json`, 있을 때)과 현재 계보가 참조하는 Qdrant 컬렉션을 하나의 복구
+묶음으로 저장합니다. 등록 대상인 원본 Markdown 파일과 다시 설치할 수 있는 임베딩 모델 자산은
+넣지 않습니다.
 
 ```bash
 CONTEXTCTL_QDRANT_URL=http://127.0.0.1:6333 \
@@ -226,7 +225,10 @@ Qdrant 가 그대로 남아 있으므로 되돌릴 수 있습니다 — 제자�
 
 ```bash
 contextctl paths                    # Ingestion 저장소 위치 확인
-rm ~/.contextctl/ingestion.db       # 기본 경로일 때
+# 이 홈을 쓰는 contextctl serve·daemon을 먼저 종료합니다.
+rm -f ~/.contextctl/ingestion.db \
+      ~/.contextctl/ingestion.db-wal \
+      ~/.contextctl/ingestion.db-shm
 contextctl ingest
 ```
 
@@ -303,9 +305,10 @@ rm -rf ~/.contextctl/embedding-assets
 ### ③ 상태 — ★ 승인한 Card 가 사라집니다
 
 ```bash
-rm ~/.contextctl/registry.db      # Card 와 승인 이력 — 다시 승인해야 합니다
-rm ~/.contextctl/ingestion.db     # 관측·게시 이력 — 같은 문서를 다시 수집합니다
-rm ~/.contextctl/sources.json     # 등록한 문서 목록
+# 이 홈을 쓰는 contextctl serve·daemon을 먼저 종료합니다.
+rm -f ~/.contextctl/registry.db ~/.contextctl/registry.db-wal ~/.contextctl/registry.db-shm
+rm -f ~/.contextctl/ingestion.db ~/.contextctl/ingestion.db-wal ~/.contextctl/ingestion.db-shm
+rm -f ~/.contextctl/sources.json
 ```
 
 되돌릴 수 없습니다. 파일은 물리적으로 따로 지울 수 있지만, **부분 삭제는 지원되는 복원

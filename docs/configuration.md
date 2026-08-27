@@ -103,6 +103,7 @@ daemon 자체는 loopback 에 유지합니다.
 | `CONTEXTCTL_QDRANT_URL` | **필수.** 없으면 `ingest`·`query`·`serve` 가 시작을 거부합니다 |
 | `CONTEXTCTL_QDRANT_API_KEY` | 선택 |
 | `CONTEXTCTL_QDRANT_TIMEOUT_MS` | 선택 (양의 정수 밀리초) |
+| `CONTEXTCTL_CONNECTOR_ID` | 기본 `vector.local`. 게시된 색인 바인딩에 기록되는 논리 식별자이므로, 같은 홈에서는 바꾸지 않습니다 |
 
 주소가 없으면 데이터베이스를 열기도 전에 이렇게 끝납니다.
 

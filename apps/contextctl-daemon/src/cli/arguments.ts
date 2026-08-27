@@ -159,7 +159,7 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
   {
     topic: "source add",
     line: "contextctl source add <path> [--name <ref>] [--display-name <text>]",
-    summary: "문서 파일이나 디렉터리를 소스로 등록한다. --name 을 생략하면 경로에서 참조를 만든다.",
+    summary: "Markdown 문서 파일 하나를 소스로 등록한다. --name 을 생략하면 파일 경로에서 참조를 만든다.",
   },
   {
     topic: "source list",
