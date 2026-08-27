@@ -1,6 +1,6 @@
 {
   "name": "@contextctl/selection-delivery",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Context Card selection and context delivery for Contextctl.",
   "license": "MIT",
