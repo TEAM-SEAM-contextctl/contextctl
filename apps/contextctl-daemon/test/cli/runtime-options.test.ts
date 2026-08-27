@@ -107,6 +107,7 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
         profiles,
         artifactDirectory: "/tmp/contextctl-test-assets/revisions/abc",
         requiredBindings: {
+          currentDocumentProfile: profiles.document,
           documentProfiles: [profiles.document],
           cardProfile: profiles.card,
           requirements: [],

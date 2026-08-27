@@ -47,6 +47,7 @@ function healthy(overrides: Partial<StatusObservation> = {}): StatusObservation 
       documentMode: "local",
       cardMode: "local",
       requiresLocalAssets: true,
+      requiresManagedAssets: true,
       restoredProfiles: [],
     },
     ...overrides,

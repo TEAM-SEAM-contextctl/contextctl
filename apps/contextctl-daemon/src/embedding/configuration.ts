@@ -185,11 +185,14 @@ export function readActiveEmbeddingProfiles(
 /** Ensures every older document vector family has its own exact binding. */
 export function assertRequiredDocumentProfileBindings(
   configuration: EmbeddingCompositionConfiguration,
+  currentProfile: EmbeddingProfile,
   profiles: readonly EmbeddingProfile[],
 ): void {
-  const current = profiles[0];
   for (const profile of profiles) {
-    if (profile.id === current?.id && profile.version === current.version) {
+    if (
+      profile.id === currentProfile.id &&
+      profile.version === currentProfile.version
+    ) {
       continue;
     }
     const retained = (configuration.retainedDocumentBindings ?? []).find(

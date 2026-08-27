@@ -1,14 +1,22 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 
 import {
   DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST,
   DEFAULT_GRANITE_EMBEDDING_ASSET_MANIFEST_SHA256,
   inspectIngestionDatabase,
+  isDocumentRetrievalEmbeddingProfile,
+  SqliteIndexPublicationStore,
   verifyLocalEmbeddingAssets,
 } from "@contextctl/ingestion-indexing";
-import { inspectRegistryDatabase } from "@contextctl/registry-lifecycle";
+import {
+  inspectRegistryDatabase,
+  SqliteCardStore,
+} from "@contextctl/registry-lifecycle";
 
 import {
   readDaemonStateIdentity,
@@ -32,9 +40,18 @@ import { resolveContextctlPaths, readNonEmpty } from "./paths.js";
 import { readSourcesFile, SourcesFileError } from "./sources-file.js";
 import { resolveVectorBackend } from "../vector-backend.js";
 import {
+  assertRequiredDocumentProfileBindings,
   readActiveEmbeddingProfiles,
   readEmbeddingCompositionConfiguration,
 } from "../embedding/configuration.js";
+import {
+  computeRequiredEmbeddingBindings,
+  NO_PUBLISHED_SCOPES,
+  retainedDocumentProfiles,
+} from "../embedding/required-bindings.js";
+import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-catalog.js";
+import type { ContextctlPaths } from "./paths.js";
+import { verifyRequiredRetainedLocalBindings } from "./retained-embedding-assets.js";
 
 /**
  * What `contextctl doctor` reports, and why it is not the composition root.
@@ -121,7 +138,7 @@ export async function runDiagnosis(
     checkIngestionDatabase(paths.ingestionDatabase, stateIdentity),
     await inspectConfiguredEmbeddingAssets(
       input.environment,
-      paths.embeddingAssetDirectory,
+      paths,
       input.deep === true,
       stateIdentity,
     ),
@@ -138,24 +155,59 @@ export async function runDiagnosis(
 
 async function inspectConfiguredEmbeddingAssets(
   environment: Readonly<Partial<Record<string, string>>>,
-  directory: string,
+  paths: ContextctlPaths,
   deep: boolean,
   stateIdentity: DaemonStateIdentity,
 ): Promise<DiagnosisStep> {
+  const databases: DatabaseSync[] = [];
   try {
     const configuration = readEmbeddingCompositionConfiguration(
       environment,
       stateIdentity.securityDomain,
     );
-    readActiveEmbeddingProfiles(environment, configuration);
+    const profiles = readActiveEmbeddingProfiles(environment, configuration);
+    const catalog = existsSync(paths.registryDatabase)
+      ? new RegistryApprovedCardCatalog(
+          new SqliteCardStore(
+            openReadOnly(paths.registryDatabase, databases),
+          ),
+        )
+      : { listApprovedCards: async () => [] };
+    const publications = existsSync(paths.ingestionDatabase)
+      ? new SqliteIndexPublicationStore(
+          openReadOnly(paths.ingestionDatabase, databases),
+        )
+      : NO_PUBLISHED_SCOPES;
+    const required = await computeRequiredEmbeddingBindings({
+      documentProfile: profiles.document,
+      cardProfile: profiles.card,
+      catalog,
+      publications,
+    });
+    assertRequiredDocumentProfileBindings(
+      configuration,
+      required.currentDocumentProfile,
+      required.documentProfiles,
+    );
+    await verifyRequiredRetainedLocalBindings(configuration, required, {
+      verifyContent: deep,
+    });
     if (
       configuration.document.mode === "remote" &&
       configuration.card.mode === "remote"
     ) {
+      const retainedLocalCount = retainedDocumentProfiles(required)
+        .filter(
+          (profile) =>
+            isDocumentRetrievalEmbeddingProfile(profile) &&
+            profile.execution.kind === "local",
+        ).length;
       return diagnosis(
         "embedding-assets",
         "ok",
-        "문서 검색과 Card 선택이 모두 원격 제공자를 사용하므로 활성 로컬 모델 자산이 필요하지 않습니다.",
+        retainedLocalCount > 0
+          ? `활성 임베딩 계층은 모두 원격이며 승인 Scope가 참조하는 이전 로컬 프로필 ${retainedLocalCount}개의 자산도 검증했습니다.`
+          : "문서 검색과 Card 선택이 모두 원격 제공자를 사용하므로 로컬 모델 자산이 필요하지 않습니다.",
       );
     }
   } catch (error) {
@@ -165,8 +217,35 @@ async function inspectConfiguredEmbeddingAssets(
       `임베딩 제공자 설정을 사용할 수 없습니다: ${describeError(error)}`,
       "문서 검색과 Card 선택의 모드·엔드포인트·비밀 값·프로필 설정을 확인하세요.",
     );
+  } finally {
+    for (const database of databases.reverse()) database.close();
   }
-  return inspectEmbeddingAssets(directory, deep);
+  return inspectEmbeddingAssets(paths.embeddingAssetDirectory, deep);
+}
+
+function openReadOnly(
+  location: string,
+  databases: DatabaseSync[],
+): DatabaseSync {
+  // A live WAL must be part of the view. Without sidecars, immutable mode
+  // keeps this diagnostic read from creating SQLite journals of its own.
+  const hasWal = existsSync(`${location}-wal`);
+  const hasSharedMemory = existsSync(`${location}-shm`);
+  if (hasWal && !hasSharedMemory) {
+    throw new Error(
+      `SQLite WAL snapshot cannot be inspected without its shared-memory index: ${location}-wal`,
+    );
+  }
+  const source = hasWal ? location : immutableDatabaseUrl(location);
+  const database = new DatabaseSync(source, { readOnly: true });
+  databases.push(database);
+  return database;
+}
+
+function immutableDatabaseUrl(location: string): URL {
+  const url = pathToFileURL(location);
+  url.searchParams.set("immutable", "1");
+  return url;
 }
 
 /**

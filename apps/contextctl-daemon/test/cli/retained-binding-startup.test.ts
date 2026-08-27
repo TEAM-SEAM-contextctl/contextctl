@@ -1,7 +1,11 @@
 import {
   computeRecordSetDigest,
+  LOCAL_EMBEDDING_ASSET_MANIFEST_FILE,
   openIngestionDatabase,
+  serializeLocalEmbeddingAssetManifest,
   SqliteIndexPublicationStore,
+  type DocumentRetrievalEmbeddingProfile,
+  type LocalEmbeddingAssetManifest,
   type PublishedIndexVersion,
 } from "@contextctl/ingestion-indexing";
 import {
@@ -14,14 +18,28 @@ import {
   type CardVersion,
   type RetrievalScope,
 } from "@contextctl/registry-lifecycle";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runServeCommand } from "../../src/cli/serve-command.js";
 import { resolveContextctlPaths } from "../../src/cli/paths.js";
-import { buildCliRuntime } from "../../src/cli/runtime.js";
+import {
+  buildCliRuntime,
+  openRegistryOnlyRuntime,
+} from "../../src/cli/runtime.js";
+import { runStatus } from "../../src/cli/commands.js";
+import { runDiagnosis } from "../../src/cli/doctor.js";
 import {
   CARD_EMBEDDING_API_KEY_VARIABLE,
   CARD_EMBEDDING_ENDPOINT_VARIABLE,
@@ -31,6 +49,7 @@ import {
   DOCUMENT_EMBEDDING_ENDPOINT_VARIABLE,
   DOCUMENT_EMBEDDING_MODE_VARIABLE,
   DOCUMENT_EMBEDDING_PROFILE_VARIABLE,
+  DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE,
 } from "../../src/embedding/configuration.js";
 import {
   localDocumentProfile,
@@ -81,6 +100,170 @@ describe("retained document binding startup", () => {
       });
     },
   );
+
+  it("reports the same missing retained assets from status and doctor", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contextctl-retained-missing-"));
+    temporaryDirectories.push(home);
+    const profile = localDocumentProfile("document-retained-local-v1");
+    const environment = {
+      ...remoteEnvironment(home),
+      [DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE]: JSON.stringify([
+        {
+          profileId: profile.id,
+          profileVersion: profile.version,
+          mode: "local",
+          artifactDirectory: join(home, "missing-retained-assets"),
+        },
+      ]),
+    };
+    await seedReachableRetainedProfile(environment, profile);
+
+    const registry = openRegistryOnlyRuntime({ environment, workingDirectory: home });
+    const status = await runStatus(
+      registry,
+      { kind: "status", json: true },
+      { environment, workingDirectory: home },
+    );
+    registry.close();
+    const statusReport = JSON.parse(status.stdout) as {
+      readonly lanes: readonly { readonly lane: string; readonly detail: string }[];
+    };
+    const selectionAssets = statusReport.lanes.find(
+      (lane) => lane.lane === "selection_assets",
+    );
+
+    const diagnosis = await runDiagnosis({ environment, workingDirectory: home });
+    const assets = diagnosis.steps.find((step) => step.name === "embedding-assets");
+
+    expect(selectionAssets?.detail).toContain(profile.id);
+    expect(assets).toMatchObject({ status: "fail" });
+    expect(assets?.detail).toContain(profile.id);
+  });
+
+  it("accepts valid retained assets without a managed active pointer", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contextctl-retained-valid-"));
+    temporaryDirectories.push(home);
+    const fixture = createRetainedAssets(home);
+    const environment = {
+      ...remoteEnvironment(home),
+      [DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE]: JSON.stringify([
+        {
+          profileId: fixture.profile.id,
+          profileVersion: fixture.profile.version,
+          mode: "local",
+          artifactDirectory: fixture.directory,
+        },
+      ]),
+    };
+    await seedReachableRetainedProfile(environment, fixture.profile);
+
+    const registry = openRegistryOnlyRuntime({ environment, workingDirectory: home });
+    const status = await runStatus(
+      registry,
+      { kind: "status", json: true },
+      { environment, workingDirectory: home },
+    );
+    registry.close();
+    const statusReport = JSON.parse(status.stdout) as {
+      readonly lanes: readonly { readonly lane: string; readonly status: string }[];
+    };
+    const laneStatus = (lane: string) =>
+      statusReport.lanes.find((candidate) => candidate.lane === lane)?.status;
+
+    const diagnosis = await runDiagnosis({ environment, workingDirectory: home });
+    const assets = diagnosis.steps.find((step) => step.name === "embedding-assets");
+
+    expect(laneStatus("selection_assets")).toBe("ready");
+    expect(assets).toMatchObject({ status: "ok" });
+    expect(assets?.detail).toContain("이전 로컬 프로필 1개");
+  });
+
+  it("keeps routine retained checks shallow and reserves content hashes for doctor --deep", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contextctl-retained-shallow-"));
+    temporaryDirectories.push(home);
+    const fixture = createRetainedAssets(home);
+    const environment = {
+      ...remoteEnvironment(home),
+      [DOCUMENT_RETAINED_EMBEDDING_BINDINGS_VARIABLE]: JSON.stringify([
+        {
+          profileId: fixture.profile.id,
+          profileVersion: fixture.profile.version,
+          mode: "local",
+          artifactDirectory: fixture.directory,
+        },
+      ]),
+    };
+    await seedReachableRetainedProfile(environment, fixture.profile);
+    writeFileSync(
+      join(fixture.directory, "model.onnx"),
+      Buffer.alloc(Buffer.byteLength("retained-model", "utf8"), 0x78),
+    );
+
+    const registry = openRegistryOnlyRuntime({ environment, workingDirectory: home });
+    const status = await runStatus(
+      registry,
+      { kind: "status", json: true },
+      { environment, workingDirectory: home },
+    );
+    registry.close();
+    const shallow = await runDiagnosis({ environment, workingDirectory: home });
+    const deep = await runDiagnosis({
+      environment,
+      workingDirectory: home,
+      deep: true,
+    });
+    const statusReport = JSON.parse(status.stdout) as {
+      readonly lanes: readonly { readonly lane: string; readonly status: string }[];
+    };
+
+    expect(
+      statusReport.lanes.find((lane) => lane.lane === "selection_assets")
+        ?.status,
+    ).toBe("ready");
+    expect(shallow.steps.find((step) => step.name === "embedding-assets"))
+      .toMatchObject({ status: "ok" });
+    expect(deep.steps.find((step) => step.name === "embedding-assets"))
+      .toMatchObject({ status: "fail" });
+  });
+
+  it("fails diagnosis closed for a WAL snapshot missing its shared-memory index", async () => {
+    const sourceHome = mkdtempSync(join(tmpdir(), "contextctl-wal-source-"));
+    const targetHome = mkdtempSync(join(tmpdir(), "contextctl-wal-target-"));
+    temporaryDirectories.push(sourceHome, targetHome);
+    const sourceEnvironment = remoteEnvironment(sourceHome);
+    const sourcePaths = resolveContextctlPaths(sourceEnvironment, sourceHome);
+    openRegistryDatabase({
+      location: sourcePaths.registryDatabase,
+      stateNamespaceId: STATE_NAMESPACE_ID,
+      securityDomain: SECURITY_DOMAIN,
+    }).close();
+    const writer = new DatabaseSync(sourcePaths.registryDatabase);
+    writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0");
+    writer.exec(
+      "UPDATE registry_metadata SET security_domain = 'temporary' WHERE singleton = 1",
+    );
+    writer.exec(
+      "UPDATE registry_metadata SET security_domain = 'local' WHERE singleton = 1",
+    );
+    expect(existsSync(`${sourcePaths.registryDatabase}-wal`)).toBe(true);
+
+    const targetEnvironment = remoteEnvironment(targetHome);
+    const targetPaths = resolveContextctlPaths(targetEnvironment, targetHome);
+    copyFileSync(sourcePaths.registryDatabase, targetPaths.registryDatabase);
+    copyFileSync(
+      `${sourcePaths.registryDatabase}-wal`,
+      `${targetPaths.registryDatabase}-wal`,
+    );
+    writer.close();
+
+    const diagnosis = await runDiagnosis({
+      environment: targetEnvironment,
+      workingDirectory: targetHome,
+    });
+    const assets = diagnosis.steps.find((step) => step.name === "embedding-assets");
+    expect(assets).toMatchObject({ status: "fail" });
+    expect(assets?.detail).toContain("shared-memory index");
+  });
 });
 
 function remoteEnvironment(home: string) {
@@ -104,6 +287,9 @@ function remoteEnvironment(home: string) {
 
 async function seedReachableRetainedProfile(
   environment: Readonly<Partial<Record<string, string>>>,
+  profile: DocumentRetrievalEmbeddingProfile = localDocumentProfile(
+    "document-retained-local-v1",
+  ),
 ): Promise<void> {
   const home = environment.CONTEXTCTL_HOME;
   if (home === undefined) throw new Error("CONTEXTCTL_HOME is required");
@@ -116,7 +302,7 @@ async function seedReachableRetainedProfile(
   });
   try {
     await new SqliteIndexPublicationStore(ingestion).commitCurrent(
-      retainedPublication(),
+      retainedPublication(profile),
     );
   } finally {
     ingestion.close();
@@ -170,10 +356,7 @@ async function seedReachableRetainedProfile(
   }
 }
 
-function retainedScope(): Extract<
-  RetrievalScope,
-  { kind: "managed_document" }
-> {
+function retainedScope(): Extract<RetrievalScope, { kind: "managed_document" }> {
   return {
     kind: "managed_document",
     reference: { scopeId: SCOPE_ID, scopeVersion: SCOPE_VERSION },
@@ -187,8 +370,9 @@ function retainedScope(): Extract<
   };
 }
 
-function retainedPublication(): PublishedIndexVersion {
-  const profile = localDocumentProfile("document-retained-local-v1");
+function retainedPublication(
+  profile: DocumentRetrievalEmbeddingProfile,
+): PublishedIndexVersion {
   const documentIndex = retainedScope().documentIndex;
   return {
     manifest: {
@@ -239,4 +423,65 @@ function retainedPublication(): PublishedIndexVersion {
       securityDomain: SECURITY_DOMAIN,
     },
   };
+}
+
+function createRetainedAssets(home: string): {
+  readonly directory: string;
+  readonly profile: DocumentRetrievalEmbeddingProfile;
+} {
+  const directory = join(home, "retained-assets");
+  mkdirSync(directory, { recursive: true });
+  const model = Buffer.from("retained-model", "utf8");
+  const config = Buffer.from("{}\n", "utf8");
+  const manifest: LocalEmbeddingAssetManifest = {
+    schemaVersion: 1,
+    repository: "fixture/retained-model",
+    revision: "fixture-revision",
+    license: "Apache-2.0",
+    files: [
+      { path: "config.json", bytes: config.length, sha256: sha256(config) },
+      { path: "model.onnx", bytes: model.length, sha256: sha256(model) },
+    ],
+  };
+  const serialized = serializeLocalEmbeddingAssetManifest(manifest);
+  writeFileSync(join(directory, "config.json"), config);
+  writeFileSync(join(directory, "model.onnx"), model);
+  writeFileSync(join(directory, LOCAL_EMBEDDING_ASSET_MANIFEST_FILE), serialized);
+  return {
+    directory,
+    profile: {
+      id: "document-retained-local-v1",
+      version: "1",
+      model: "fixture/source-model",
+      modelRevision: "source-revision",
+      dimensions: 3,
+      distance: "cosine",
+      maxInputTokens: 480,
+      textMeasureProfileVersion: "unicode-estimate-v1",
+      pooling: "cls",
+      normalization: "l2",
+      documentInputTransformVersion: "identity-v1",
+      queryInputTransformVersion: "identity-v1",
+      modelMaxTokens: 512,
+      admissionLimit: {
+        textMeasureProfileVersion: "unicode-estimate-v1",
+        maxUnits: 480,
+      },
+      execution: {
+        kind: "local",
+        adapter: "transformers-js-onnx",
+        adapterVersion: "4.2.0",
+        artifactRepository: manifest.repository,
+        artifactRevision: manifest.revision,
+        artifactPath: "model.onnx",
+        artifactSha256: sha256(model),
+        assetManifestSha256: sha256(Buffer.from(serialized.trim(), "utf8")),
+        precision: "fp32",
+      },
+    },
+  };
+}
+
+function sha256(value: Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
 }

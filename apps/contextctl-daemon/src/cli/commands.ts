@@ -72,8 +72,10 @@ import {
 import {
   computeRequiredEmbeddingBindings,
   NO_PUBLISHED_SCOPES,
+  retainedDocumentProfiles,
 } from "../embedding/required-bindings.js";
 import type { EmbeddingObservation } from "../embedding/readiness.js";
+import { verifyRequiredRetainedLocalBindings } from "./retained-embedding-assets.js";
 import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
 import { readSourcesFile } from "./sources-file.js";
 
@@ -622,15 +624,21 @@ async function observeEmbeddingBindings(
     });
     assertRequiredDocumentProfileBindings(
       configuration,
+      required.currentDocumentProfile,
       required.documentProfiles,
     );
+    await verifyRequiredRetainedLocalBindings(configuration, required, {
+      verifyContent: false,
+    });
     return {
       status: "composed",
       documentMode: configuration.document.mode,
       cardMode: configuration.card.mode,
       requiresLocalAssets: required.needsLocalAssets,
-      restoredProfiles: required.documentProfiles
-        .slice(1)
+      requiresManagedAssets:
+        configuration.document.mode === "local" ||
+        configuration.card.mode === "local",
+      restoredProfiles: retainedDocumentProfiles(required)
         .map((profile) => `${profile.id} ${profile.version}`),
     };
   } catch (error) {

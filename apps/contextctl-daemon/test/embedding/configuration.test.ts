@@ -275,10 +275,11 @@ describe("embedding configuration", () => {
   describe("retained document bindings", () => {
     it("refuses a reachable older profile without an exact binding", () => {
       const configuration = readEmbeddingCompositionConfiguration({}, DOMAIN);
+      const current = localDocumentProfile();
 
       expect(() =>
-        assertRequiredDocumentProfileBindings(configuration, [
-          localDocumentProfile(),
+        assertRequiredDocumentProfileBindings(configuration, current, [
+          current,
           localDocumentProfile("document-older-v1"),
         ]),
       ).toThrowError(

@@ -35,25 +35,29 @@ export async function runServeCommand(
     location: paths.ingestionDatabase,
     ...stateIdentity,
   });
-  const embeddingRuntime = await resolveCliEmbeddingRuntime({
-    environment,
-    paths,
-    ingestionDatabase,
-    stateIdentity,
-  });
-  const options = cliRuntimeOptions({
-    environment,
-    paths,
-    embeddingRuntime,
-    sourceConfigurations: toSourceConfigurations(sources),
-    ingestionDatabase,
-    vectorBackend,
-    stateIdentity,
-    meaningBackend: resolveCardMeaningBackend({
+  try {
+    const embeddingRuntime = await resolveCliEmbeddingRuntime({
       environment,
-      // stdout belongs to JSON-RPC from here on, so every notice goes to stderr.
-      onFallback: (message) => process.stderr.write(`${message}\n`),
-    }),
-  });
-  await runDaemon(environment, options);
+      paths,
+      ingestionDatabase,
+      stateIdentity,
+    });
+    const options = cliRuntimeOptions({
+      environment,
+      paths,
+      embeddingRuntime,
+      sourceConfigurations: toSourceConfigurations(sources),
+      ingestionDatabase,
+      vectorBackend,
+      stateIdentity,
+      meaningBackend: resolveCardMeaningBackend({
+        environment,
+        // stdout belongs to JSON-RPC from here on, so every notice goes to stderr.
+        onFallback: (message) => process.stderr.write(`${message}\n`),
+      }),
+    });
+    await runDaemon(environment, options);
+  } finally {
+    ingestionDatabase.close();
+  }
 }

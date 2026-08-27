@@ -65,6 +65,7 @@ describe("embedding readiness", () => {
           documentMode: "remote",
           cardMode: "remote",
           requiresLocalAssets: false,
+          requiresManagedAssets: false,
           restoredProfiles: [],
         },
         MISSING_ASSETS,
@@ -84,6 +85,7 @@ describe("embedding readiness", () => {
           documentMode: "remote",
           cardMode: "remote",
           requiresLocalAssets: false,
+          requiresManagedAssets: false,
           restoredProfiles: [],
         },
         MISSING_ASSETS,
@@ -104,6 +106,7 @@ describe("embedding readiness", () => {
           documentMode: "local",
           cardMode: "remote",
           requiresLocalAssets: true,
+          requiresManagedAssets: true,
           restoredProfiles: [],
         },
         MISSING_ASSETS,
@@ -114,9 +117,10 @@ describe("embedding readiness", () => {
     expect(statusOf(report, "resolve")).toBe("not_ready");
   });
 
-  it("blocks when both layers are remote but a Card still reaches a local Scope", () => {
-    // The migration tail. Configuration says remote on both sides and the
-    // deployment still cannot delete the model.
+  it("does not require the managed active pointer for a verified retained Scope", () => {
+    // The migration tail has its own exact artifact directory. Configuration
+    // says remote on both active layers, so a missing managed active pointer is
+    // irrelevant after the retained directory has passed verification.
     const report = judgeLanes(
       observation(
         {
@@ -124,13 +128,15 @@ describe("embedding readiness", () => {
           documentMode: "remote",
           cardMode: "remote",
           requiresLocalAssets: true,
+          requiresManagedAssets: false,
           restoredProfiles: ["document-granite-97m-multilingual-r2-fp32-v1 1"],
         },
         MISSING_ASSETS,
       ),
     );
 
-    expect(statusOf(report, "selection_assets")).toBe("not_ready");
+    expect(statusOf(report, "selection_assets")).toBe("ready");
+    expect(statusOf(report, "resolve")).toBe("ready");
   });
 
   it("reports the migration tail when the assets are present", () => {
@@ -141,6 +147,7 @@ describe("embedding readiness", () => {
           documentMode: "remote",
           cardMode: "remote",
           requiresLocalAssets: true,
+          requiresManagedAssets: false,
           restoredProfiles: ["document-older-v1 1"],
         },
         { status: "installed", directory: "/assets/rev_a" },

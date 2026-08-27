@@ -346,6 +346,7 @@ export {
   loadLocalDocumentEmbeddingInferenceResource,
   serializeLocalEmbeddingAssetManifest,
   TransformersJsLocalEmbeddingAdapter,
+  verifyLocalEmbeddingAssetLayout,
   verifyLocalEmbeddingAssets,
   type LocalEmbeddingAssetFile,
   type LocalEmbeddingAssetManifest,

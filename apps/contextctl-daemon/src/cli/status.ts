@@ -22,7 +22,7 @@
 
 import {
   describeEmbeddingModes,
-  localAssetsAreRequired,
+  managedAssetsAreRequired,
   type EmbeddingObservation,
 } from "../embedding/readiness.js";
 import type { LaneDepth } from "../runtime/admission.js";
@@ -231,7 +231,7 @@ function judgeResolve(observation: StatusObservation): LaneVerdict {
   }
   if (
     assets.status === "unavailable" &&
-    localAssetsAreRequired(observation.embedding)
+    managedAssetsAreRequired(observation.embedding)
   ) {
     return lane(
       "resolve",
@@ -333,7 +333,7 @@ function judgeSelectionAssets(
     // absence. Both layers remote, with no approved Card still reaching a
     // locally published Scope, is a supported way to run: there is no file to
     // install, so telling an operator to install one would be wrong advice.
-    if (!localAssetsAreRequired(embedding)) {
+    if (!managedAssetsAreRequired(embedding)) {
       return lane(
         "selection_assets",
         "ready",

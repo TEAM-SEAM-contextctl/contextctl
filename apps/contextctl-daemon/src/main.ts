@@ -850,6 +850,7 @@ function currentProfilesOnly(
   const documentLocal = documentProfileNeedsLocalAssets(documentProfile);
   const cardLocal = cardProfileNeedsLocalAssets(cardProfile);
   return {
+    currentDocumentProfile: documentProfile,
     documentProfiles: [documentProfile],
     cardProfile,
     requirements: [
