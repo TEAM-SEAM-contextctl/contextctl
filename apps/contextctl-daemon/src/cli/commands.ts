@@ -4,12 +4,12 @@ import { join } from "node:path";
 
 import {
   buildReachabilityReport,
+  pendingReviewCardVersionIds,
   runOperatorCommand,
   SqliteConsumerCheckpointStore,
   SqliteScopeReachabilityStore,
   stalePendingRegistryScopes,
   type ContextCard,
-  type LifecycleEvent,
   type OperatorCommandPorts,
 } from "@contextctl/registry-lifecycle";
 import {
@@ -448,51 +448,11 @@ async function cardListingOf(
 ): Promise<CardListing> {
   return {
     card,
-    pendingVersionIds: pendingVersionIdsOf(
-      card,
+    pendingVersionIds: pendingReviewCardVersionIds(
+      card.versions,
       await cli.lifecycleEvents.listForCard(card.id),
     ),
   };
-}
-
-/** Validated versions that have not yet received a human decision. */
-function pendingVersionIdsOf(
-  card: ContextCard,
-  events: readonly LifecycleEvent[],
-): readonly string[] {
-  const versionIndex = new Map(
-    card.versions.versions.map((version, index) => [version.id, index]),
-  );
-  const decided = new Set<string>();
-  let latestPromotedIndex = -1;
-  for (const event of events) {
-    if (
-      event.kind !== "card_version_promoted" &&
-      event.kind !== "card_version_refused"
-    ) {
-      continue;
-    }
-    decided.add(event.versionId);
-    if (event.kind === "card_version_promoted") {
-      latestPromotedIndex = Math.max(
-        latestPromotedIndex,
-        versionIndex.get(event.versionId) ?? -1,
-      );
-    }
-  }
-  const currentIndex = card.versions.versions.findIndex(
-    (version) => version.id === card.versions.currentVersionId,
-  );
-  const reviewedThrough = Math.max(currentIndex, latestPromotedIndex);
-  return card.versions.versions
-    .filter(
-      (version, index) =>
-        version.validationState === "validated" &&
-        !decided.has(version.id) &&
-        version.id !== card.versions.currentVersionId &&
-        index > reviewedThrough,
-    )
-    .map((version) => version.id);
 }
 
 function listingMatchesFilter(
@@ -1038,8 +998,8 @@ async function resolveApprovalTarget(
   }
   // Newest first by append order: the latest version is the one an operator
   // means when they name no version at all.
-  const pending = pendingVersionIdsOf(
-    card,
+  const pending = pendingReviewCardVersionIds(
+    card.versions,
     await cli.lifecycleEvents.listForCard(card.id),
   ).at(-1);
   if (pending !== undefined) {
