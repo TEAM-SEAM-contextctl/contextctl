@@ -103,6 +103,18 @@ describe("the installed contextctl command", () => {
     expect(result.stdout).toContain("등록된 Source가 없습니다");
   });
 
+  it("dispatches Card inspection without requiring embedding assets", async () => {
+    const result = await run(["cards", "show", "card_missing"]);
+
+    // `cards show` arrived after the lazy command split. Exercising the npm bin
+    // keeps its dynamic import in the dispatch table and proves that Registry
+    // inspection still fails for the Card itself, not for an unrelated model.
+    expect(result.code).toBe(8);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Card card_missing 를 찾을 수 없습니다");
+    expect(result.stderr).not.toContain("install-assets");
+  });
+
   it("exports demo documents through the installed command", async () => {
     const parent = await mkdtemp(join(tmpdir(), "contextctl-installed-demo-"));
     directories.push(parent);
