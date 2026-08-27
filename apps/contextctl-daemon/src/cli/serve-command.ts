@@ -13,6 +13,10 @@ import {
 import { resolveContextctlPaths } from "./paths.js";
 import { readSourcesFile, toSourceConfigurations } from "./sources-file.js";
 import { resolveCardMeaningBackend } from "./meaning-generator.js";
+import {
+  openSelectionAuditDatabase,
+} from "../selection-audit/sqlite-selection-audit-store.js";
+import { WorkerThreadSelectionAuditStore } from "../selection-audit/worker-thread-selection-audit-store.js";
 
 /** Starts the daemon under the CLI's durable production composition. */
 export async function runServeCommand(
@@ -35,6 +39,20 @@ export async function runServeCommand(
     location: paths.ingestionDatabase,
     ...stateIdentity,
   });
+  let selectionAuditStore: WorkerThreadSelectionAuditStore;
+  try {
+    openSelectionAuditDatabase({
+      location: paths.selectionAuditDatabase,
+      stateIdentity,
+    }).close();
+    selectionAuditStore = new WorkerThreadSelectionAuditStore({
+      location: paths.selectionAuditDatabase,
+      stateIdentity,
+    });
+  } catch (error) {
+    ingestionDatabase.close();
+    throw error;
+  }
   try {
     const embeddingRuntime = await resolveCliEmbeddingRuntime({
       environment,
@@ -50,6 +68,7 @@ export async function runServeCommand(
       ingestionDatabase,
       vectorBackend,
       stateIdentity,
+      selectionAuditStore,
       meaningBackend: resolveCardMeaningBackend({
         environment,
         // stdout belongs to JSON-RPC from here on, so every notice goes to stderr.
@@ -58,6 +77,7 @@ export async function runServeCommand(
     });
     await runDaemon(environment, options);
   } finally {
+    await selectionAuditStore.close();
     ingestionDatabase.close();
   }
 }

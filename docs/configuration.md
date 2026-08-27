@@ -32,11 +32,14 @@ contextctl doctor    # 설정이 유효한지, 무엇이 비었는지
 | `CONTEXTCTL_SOURCES_FILE` | `$CONTEXTCTL_HOME/sources.json` |
 | `CONTEXTCTL_REGISTRY_DATABASE` | `$CONTEXTCTL_HOME/registry.db` |
 | `CONTEXTCTL_INGESTION_DATABASE` | `$CONTEXTCTL_HOME/ingestion.db` |
+| `CONTEXTCTL_SELECTION_AUDIT_DATABASE` | `$CONTEXTCTL_HOME/selection-audit.db` |
 | `CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY` | `$CONTEXTCTL_HOME/embedding-assets` |
 
-저장소가 둘로 나뉘어 있는 것은 도메인이 둘이기 때문입니다. `registry.db` 에 Card·승인·이력이
-있고, `ingestion.db` 에 관측·게시 이력이 있습니다. 두 영역은 실행 중 독립적으로 실패하고
-재시도하지만, **복원할 때는 Qdrant까지 한 시점의 운영 상태로 함께 다룹니다.** 파일 하나만
+도메인 상태 저장소가 둘로 나뉘어 있는 것은 책임 영역이 둘이기 때문입니다. `registry.db` 에
+Card·승인·이력이 있고, `ingestion.db` 에 관측·게시 이력이 있습니다. `selection-audit.db`는
+질의 원문을 제외한 단기 운영 추적 자료이며 제품 상태 백업에는 포함하지 않습니다. 두 도메인
+상태는 실행 중 독립적으로 실패하고 재시도하지만, **복원할 때는 Qdrant까지 한 시점의 운영
+상태로 함께 다룹니다.** 파일 하나만
 지우는 것은 정상 복원이 아니라 식별자와 승인 연결을 잃는 파괴적 재구축입니다
 → [운영](operations.md#색인이-비었을-때-파괴적-최후-수단)
 
@@ -66,6 +69,10 @@ Ingestion database schema is incompatible: identity_mismatch
 
 여러 상태나 보안 영역을 운영하려면 각각 **별도 홈과 별도 daemon** 을 씁니다. 한 홈을 두 배포가
 나눠 쓰는 구성은 지원하지 않습니다.
+
+Selection 감사 DB도 같은 상태 식별자를 사용합니다. 비어 있지 않은 미식별 DB나 다른 상태
+식별자로 만든 DB는 자동 이관하지 않고 질의·`serve` 시작을 거부합니다. 파일은 생성 시 소유자만
+읽고 쓸 수 있는 모드로 제한됩니다.
 
 백업을 복원할 때도 두 값이 백업을 만든 배포와 같아야 합니다
 → [운영](operations.md#백업과-복원)

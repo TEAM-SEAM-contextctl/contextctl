@@ -19,7 +19,7 @@ contextctl help cards approve   # 한 명령
 - [설치와 점검](#설치와-점검) — `install-assets`, `demo init`, `paths`, `doctor`
 - [지식 등록과 수집](#지식-등록과-수집) — `source`, `ingest`
 - [승인과 되돌리기](#승인과-되돌리기) — `cards`
-- [질의](#질의) — `query`, `serve`
+- [질의와 선택 감사](#질의와-선택-감사) — `query`, `serve`, `audit`
 - [백업](#백업) — `backup create`, `backup restore`
 - [종료 코드](#종료-코드)
 
@@ -44,6 +44,8 @@ contextctl cards disable <cardId> [--by <who>] [--note <text>]
 contextctl cards rollback <cardId> <versionId> [--by <who>] [--note <text>]
 contextctl reachability [--state <state>]
 contextctl status [--json]
+contextctl audit list [--limit <n>] [--json]
+contextctl audit show <auditId> [--json]
 contextctl backup create <directory>
 contextctl backup restore <directory> --target-home <new-directory>
 contextctl query "<질문>" [--json] [--max-context <n>]
@@ -90,7 +92,7 @@ SHA-256 검증을 통과해야 하므로** 다른 모델을 넣는 우회로는 
 `--deep` 은 모델 파일 전체를 다시 해싱합니다(느립니다). 기본 실행은 포인터와 파일 크기만 봅니다.
 
 `doctor` 는 상태를 만들거나 이관하지 않습니다. 새 설치에서는 `registry-database`와
-`ingestion-database`가 `WARN`으로 나오지만 다른 실패가 없다면 전체 판정은 정상입니다. 기존
+`ingestion-database`와 `selection-audit-database`가 `WARN`으로 나오지만 다른 실패가 없다면 전체 판정은 정상입니다. 기존
 저장소도 읽기 전용으로 검사하므로, 운영 상태 식별자는 첫 `source`·`ingest`·Registry 작업 전에
 확정하십시오.
 
@@ -171,7 +173,7 @@ Markdown 문서 파일 하나를 소스로 등록합니다. 디렉터리 단위 
 
 ---
 
-## 질의
+## 질의와 선택 감사
 
 ### `query`
 
@@ -190,12 +192,32 @@ Markdown 문서 파일 하나를 소스로 등록합니다. 디렉터리 단위 
 
 MCP 서버로 뜹니다. `stdout` 은 JSON-RPC 전용이고 진단은 전부 `stderr` 로 나갑니다.
 
-실행 중에는 `contextctl status` 가 같은 `CONTEXTCTL_HOME`의 보호된 임시 파일을 통해 lane별
-active·queue 수와 임베딩 스케줄러의 event loop 지연·RSS를 함께 보여줍니다. 이 파일에는 질의,
-Card, Scope, 엔드포인트나 비밀 값이 없고 프로세스가 정상 종료하면 삭제됩니다.
+실행 중에는 `contextctl status` 가 같은 `CONTEXTCTL_HOME`의 보호된 프로세스별 임시 파일을 모아
+lane별 active·queue 수와 임베딩 스케줄러의 event loop 지연·RSS를 함께 보여줍니다. 이 파일에는
+질의, Card, Scope, 엔드포인트나 비밀 값이 없고 각 프로세스가 정상 종료하면 자기 파일만 삭제합니다.
 
 에이전트에 노출되는 도구는 `resolve_context` **하나**입니다. 승인·거부 같은 제어 명령은
 의도적으로 없습니다 → [README](../README.ko.md#mcp-로-붙이기)
+
+### `audit list`, `audit show`
+
+```bash
+contextctl audit list --limit 20
+contextctl audit show sa_00000000000000000000000000000001
+contextctl audit show sa_00000000000000000000000000000001 --json
+```
+
+Selection이 Card 판정과 최소 검색 범위를 정하면 daemon은 문서 검색을 시작하기 전에 그 결정을
+로컬 감사 저장소에 기록합니다. 저장할 수 없으면 검색도 실행하지 않습니다. 실행 로그에 남는
+`선택 감사 식별자`를 `audit show`에 넘기면 해당 요청을 찾을 수 있습니다. 기록에는 전체 후보의
+개수·판정 집계·집합 다이제스트와 최대 128개 후보의 Card·버전 식별자, 점수, 신호 종류별 기여도,
+판정, 정책 제외와 최소 집합 계획만 들어갑니다. 질의 원문,
+정규화 토큰·관점, 일치한 Card 문자열과 판정 설명문은 저장하지 않습니다.
+
+`audit list`는 고정 크기 요약만 반환하고 전체 상세는 식별자를 지정한 `audit show`만 읽습니다.
+`audit`는 로컬 CLI 전용입니다. MCP와 HTTP에는 목록·상세 조회를 제공하지 않습니다. 기록은
+30일, 10,000건, 전체 256 MiB 중 먼저 닿는 한도까지만 보존하며 한 기록은 2 MiB를 넘을 수
+없습니다.
 
 ---
 
@@ -204,6 +226,8 @@ Card, Scope, 엔드포인트나 비밀 값이 없고 프로세스가 정상 종�
 `backup create`는 두 SQLite 저장소, Source 등록 파일(`sources.json`)과 현재 Publication 계보가
 참조하는 Qdrant 컬렉션을 **하나의 묶음**으로 저장합니다. 원본 Markdown 파일은 포함하지
 않습니다. 절차와 복원 방법은 → [운영](operations.md#백업과-복원)
+
+Selection 감사 저장소는 운영 추적용 단기 자료이므로 백업 묶음에 포함하지 않습니다.
 
 | 명령 | |
 | -- | -- |

@@ -7,6 +7,7 @@
 
 - [문제 해결](#문제-해결) — 증상에서 조치로 바로
 - [status](#status) — 실행 영역별로 지금 일을 할 수 있는가
+- [선택 감사](#선택-감사) — 어떤 Card와 검색 범위를 선택했는가
 - [reachability](#reachability) — 인덱싱됐는데 도달할 수 없는 범위
 - [문서에서 내용을 지웠을 때](#문서에서-내용을-지웠을-때) — Card 가 자동으로 내려가는 이유
 - [백업과 복원](#백업과-복원) — 무엇을 함께 묶어야 하는가
@@ -29,6 +30,7 @@
 | `status` 가 종료 코드 `6` | `not_ready` 인 실행 영역이 있음 | 각 영역 `detail` 에 적힌 명령(`install-assets`, `CONTEXTCTL_QDRANT_URL` 설정 등)을 따르십시오 |
 | `status` 가 `degraded` 인데 종료 코드 `0` | 정상입니다. 승인된 Card 는 계속 서비스되고 Registry/Ingestion 이 밀려 있을 뿐 | 재시작하지 말고 `contextctl ingest` 를 다시 실행하거나 기다리십시오. 승인 Card 가 없으면 `cards approve <id>` |
 | `query` 가 종료 코드 `7` | 과부하 또는 시간 초과로 요청이 거절됨 | 같은 요청을 다시 보내십시오 |
+| `query`·`serve`가 Selection 감사 DB 오류로 실패 | 판정 이력을 안전하게 남길 수 없어 검색 전에 닫힌 실패함 | `contextctl doctor`와 `contextctl paths`로 `selection-audit.db`의 식별·권한·경로를 확인하십시오 |
 
 ---
 
@@ -107,6 +109,32 @@ contextctl status --json > status.json || echo "막힌 영역이 있습니다"
 
 ---
 
+## 선택 감사
+
+```bash
+contextctl audit list --limit 20
+contextctl audit show <audit-id>
+```
+
+감사 기록은 질의가 선택한 Card와 최소 검색 범위의 근거를 사후 확인하기 위한 로컬 운영 자료입니다.
+원문 질의나 일치 문자열을 보관하는 검색 로그가 아닙니다. `selection-audit.db`는 소유자 전용 파일로
+두고, MCP·HTTP로 노출하거나 공용 로그 수집기에 그대로 복사하지 마십시오.
+
+질의 실행 시 stderr에 출력되는 `선택 감사 식별자`가 요청과 기록을 잇습니다. 목록은 기록당 고정
+크기의 요약만 읽고, 상세 조회는 식별자 한 건만 읽습니다. 후보가 많아도 전체 개수·판정 집계와
+집합 다이제스트는 유지하되 상세 후보는 128개까지만 보존하므로, 10,000 Card 규모에서도 감사
+기록 때문에 질의가 2 MiB 한도를 넘지 않습니다.
+
+보존 정책은 `30일 / 10,000건 / 256 MiB / 기록당 2 MiB`이며 새 기록을 원자적으로 쓴 뒤 오래된
+기록부터 정리합니다. 30일은 마지막 기록 시각이 아니라 현재 시각을 기준으로 계산합니다. 저장소
+스키마·상태 식별자가 다르면 `status`의 resolve 영역과 `doctor`가
+이를 막힌 상태로 보고하며, query/serve는 원문 검색 전에 실패합니다. 기록 바이트나 다이제스트가
+손상되면 `audit list/show`가 그 기록을 반환하지 않고 실패합니다. 감사 DB는
+단기 운영 자료라 `backup create` 대상이 아닙니다. 장기 보존이 필요한 조직은 접근 통제가 된 별도
+절차로 파일을 보관하되, 복구한 제품 상태에 다시 주입하지 마십시오.
+
+---
+
 ## reachability
 
 인덱싱은 됐는데 **어떤 승인 Card 로도 도달할 수 없는 검색 범위**를 찾습니다.
@@ -161,6 +189,8 @@ event)에 남습니다 — 삭제된 지식은 `change.removed`, 옛 색인에 �
 Source 등록 파일(`sources.json`, 있을 때)과 현재 계보가 참조하는 Qdrant 컬렉션을 하나의 복구
 묶음으로 저장합니다. 등록 대상인 원본 Markdown 파일과 다시 설치할 수 있는 임베딩 모델 자산은
 넣지 않습니다.
+
+Selection 감사 DB는 단기 운영 추적 자료이므로 이 복구 묶음에 포함하지 않습니다.
 
 ```bash
 CONTEXTCTL_QDRANT_URL=http://127.0.0.1:6333 \
@@ -317,6 +347,7 @@ rm -rf ~/.contextctl/embedding-assets
 # 이 홈을 쓰는 contextctl serve·daemon을 먼저 종료합니다.
 rm -f ~/.contextctl/registry.db ~/.contextctl/registry.db-wal ~/.contextctl/registry.db-shm
 rm -f ~/.contextctl/ingestion.db ~/.contextctl/ingestion.db-wal ~/.contextctl/ingestion.db-shm
+rm -f ~/.contextctl/selection-audit.db ~/.contextctl/selection-audit.db-wal ~/.contextctl/selection-audit.db-shm
 rm -f ~/.contextctl/sources.json
 ```
 

@@ -140,6 +140,19 @@ export async function runCli(input: {
         }),
       );
     }
+    if (command.kind === "audit_list" || command.kind === "audit_show") {
+      const { runSelectionAuditCommand } = await import(
+        "./selection-audit-command.js"
+      );
+      return emit(
+        input,
+        await runSelectionAuditCommand({
+          command,
+          environment: input.environment,
+          workingDirectory,
+        }),
+      );
+    }
 
     if (
       command.kind === "backup_create" ||

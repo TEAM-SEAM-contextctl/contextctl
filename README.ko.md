@@ -199,6 +199,7 @@ Claude Code 라면 프로젝트 루트 `.mcp.json` 에 이렇게 씁니다.
 contextctl help                 # 전체
 contextctl help cards approve   # 한 명령
 contextctl status               # 지금 어느 실행 영역이 일을 못 하는가
+contextctl audit list           # 최근 Card 선택·최소 검색 범위 판정
 ```
 
 ## 기여

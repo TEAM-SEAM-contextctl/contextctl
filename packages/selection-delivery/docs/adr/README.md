@@ -36,6 +36,7 @@ Records are written in Korean. See [`0000-template.md`](./0000-template.md).
 | [0013](./0013-gate-generated-cards-and-require-corroborated-selection-evidence.md) | 실제 생성 Card를 품질 Gate로 검증하고 선택 근거를 보강한다 | Accepted | 2026-08-25 | 0009·0011 부분 대체 |
 | [0014](./0014-make-selection-evidence-invariant-under-unrelated-catalog-growth.md) | 무관한 Card 증가가 선택 근거를 바꾸지 못하게 한다 | Accepted | 2026-08-26 | 0011·0013 점수 정책 부분 대체 |
 | [0015](./0015-plan-a-minimum-sufficient-card-set.md) | 독립 수용 Card 전체가 아니라 최소 충분 Card 집합을 실행한다 | Accepted | 2026-08-26 | 0014의 근거 불변성 위에서 최소 실행 집합을 계획 |
+| [0016](./0016-persist-bounded-text-free-selection-audits.md) | 선택 판정은 원문을 제외한 제한된 감사 기록으로 먼저 영속화한다 | Accepted | 2026-08-27 | 로컬 운영자 조회만 허용 |
 
 0001은 **부분 대체**다. 소비자의 원본을 실행하지 않는다는 결정 자체는 그대로 유효하고,
 0006이 바꾼 것은 그 좌표의 이름(`Retrieval Contract` → `Retrieval Guide`)과 그것을 담아

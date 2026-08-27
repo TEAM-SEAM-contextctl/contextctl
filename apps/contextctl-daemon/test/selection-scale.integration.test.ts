@@ -5,9 +5,11 @@ import { DEFAULT_DOCUMENT_RETRIEVAL_EMBEDDING_PROFILE } from "@contextctl/ingest
 import {
   CARD_SELECTION_EMBEDDING_PROFILE,
   canonicalDigest,
+  createSelectionAuditRecord,
   HYBRID_SCORING_POLICY_VERSION,
   InMemoryCardCandidateIndexStore,
   QUERY_SCORING_POLICY_VERSION,
+  SELECTION_AUDIT_RETENTION_POLICY,
   selectContext,
   TransformersJsLocalCardEmbeddingAdapter,
   type ApprovedCard,
@@ -91,8 +93,18 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
       } as const;
 
       const indexStarted = performance.now();
-      await selectContext(ports, QUERY);
+      const indexedPlan = await selectContext(ports, QUERY);
       const indexBuildMs = performance.now() - indexStarted;
+      const auditRecordBytes = Buffer.byteLength(
+        JSON.stringify(
+          createSelectionAuditRecord({
+            plan: indexedPlan,
+            auditId: "sa_00000000000000000000000000000001",
+            recordedAt: "2026-08-27T00:00:00.000Z",
+          }),
+        ),
+        "utf8",
+      );
       memorySamples.indexBuilt = sampleMemory();
       const indexBuildEmbeddingCalls = embeddingCalls;
       const catalogSnapshotVersion = index.current?.catalogSnapshotVersion;
@@ -134,11 +146,14 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
         queryEmbeddingCalls: embeddingCalls,
         maxEmbeddingCallsPerQuery: embeddingCalls / MEASURED_QUERIES,
         peakRssMiB,
+        auditRecordBytes,
         memorySamples,
         gates: {
           latencyMs: LATENCY_GATE_MS,
           maxEmbeddingCallsPerQuery: 1,
           peakRssMiB: RSS_GATE_MIB,
+          auditRecordBytes:
+            SELECTION_AUDIT_RETENTION_POLICY.maximumRecordBytes,
         },
         runtime: {
           node: process.version,
@@ -157,6 +172,9 @@ describe.skipIf(artifactDirectory === undefined || resultPath === undefined)(
       expect(report.p95LatencyMs).toBeLessThanOrEqual(LATENCY_GATE_MS);
       expect(report.maxEmbeddingCallsPerQuery).toBeLessThanOrEqual(1);
       expect(report.peakRssMiB).toBeLessThanOrEqual(RSS_GATE_MIB);
+      expect(report.auditRecordBytes).toBeLessThanOrEqual(
+        report.gates.auditRecordBytes,
+      );
     });
   },
 );
@@ -181,11 +199,13 @@ interface SelectionScaleReport {
   readonly queryEmbeddingCalls: number;
   readonly maxEmbeddingCallsPerQuery: number;
   readonly peakRssMiB: number;
+  readonly auditRecordBytes: number;
   readonly memorySamples: Readonly<Record<string, MemorySample>>;
   readonly gates: {
     readonly latencyMs: number;
     readonly maxEmbeddingCallsPerQuery: number;
     readonly peakRssMiB: number;
+    readonly auditRecordBytes: number;
   };
   readonly runtime: {
     readonly node: string;

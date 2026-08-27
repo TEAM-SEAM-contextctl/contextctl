@@ -150,6 +150,16 @@ describe("RequestBudget", () => {
   });
 
   describe("assembly", () => {
+    it("refuses synchronous stages once only the assembly reserve remains", () => {
+      const clock = new ManualRuntimeClock();
+      const budget = RequestBudget.open(clock, DEADLINES);
+      clock.advance(2_500);
+
+      expect(() => budget.assertWorkable("selection_audit")).toThrowError(
+        StageDeadlineExceededError,
+      );
+    });
+
     it("permits assembly while any time remains", () => {
       const clock = new ManualRuntimeClock();
       const budget = RequestBudget.open(clock, DEADLINES);

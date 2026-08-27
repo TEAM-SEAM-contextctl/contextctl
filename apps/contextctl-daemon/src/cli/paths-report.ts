@@ -51,7 +51,7 @@ export async function buildPathsReport(input: {
           await fileEntry(
             "상태 디렉터리",
             paths.home,
-            "영속 상태 세 파일과 실행 중 임시 상태를 담습니다.",
+            "영속 상태 네 파일과 실행 중 임시 상태를 담습니다.",
           ),
           await fileEntry("Source 설정", paths.sourcesFile, "등록한 문서 목록입니다."),
           await fileEntry(
@@ -63,6 +63,11 @@ export async function buildPathsReport(input: {
             "Ingestion 저장소",
             paths.ingestionDatabase,
             "관측·게시 이력. 지우면 같은 문서를 다시 수집합니다.",
+          ),
+          await fileEntry(
+            "Selection 감사 저장소",
+            paths.selectionAuditDatabase,
+            "원문을 제외한 선택 판정 기록. 30일·1만 건·256 MiB 한도로 정리됩니다.",
           ),
         ],
       },

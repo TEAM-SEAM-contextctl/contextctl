@@ -188,6 +188,12 @@ export class RequestBudget {
     }
   }
 
+  /** Refuses synchronous work that would consume the assembly reserve. */
+  assertWorkable(stage: string): void {
+    if (this.cancelled) throw new RequestDeadlineExceededError();
+    if (this.workableMs <= 0) throw new StageDeadlineExceededError(stage);
+  }
+
   /**
    * Runs a stage that cannot be cancelled, and abandons it if it overruns.
    *

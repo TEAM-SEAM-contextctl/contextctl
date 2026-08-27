@@ -26,6 +26,8 @@ export interface ContextctlPaths {
   readonly sourcesFile: string;
   readonly registryDatabase: string;
   readonly ingestionDatabase: string;
+  /** Selection's bounded operator audit history. */
+  readonly selectionAuditDatabase: string;
   /** Where the pinned embedding assets were installed. */
   readonly embeddingAssetDirectory: string;
   /** Protected, ephemeral per-process activity snapshots written by `serve`. */
@@ -69,6 +71,10 @@ export function resolveContextctlPaths(
     sourcesFile: inHome("CONTEXTCTL_SOURCES_FILE", "sources.json"),
     registryDatabase: inHome("CONTEXTCTL_REGISTRY_DATABASE", "registry.db"),
     ingestionDatabase: inHome("CONTEXTCTL_INGESTION_DATABASE", "ingestion.db"),
+    selectionAuditDatabase: inHome(
+      "CONTEXTCTL_SELECTION_AUDIT_DATABASE",
+      "selection-audit.db",
+    ),
     embeddingAssetDirectory: inHome(
       "CONTEXTCTL_EMBEDDING_ASSET_DIRECTORY",
       "embedding-assets",

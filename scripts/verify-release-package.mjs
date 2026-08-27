@@ -135,9 +135,20 @@ try {
   if (!help.stdout.includes("contextctl source add")) {
     throw new Error("installed command did not render its public help");
   }
+  if (!help.stdout.includes("contextctl audit list")) {
+    throw new Error("installed command did not expose the protected audit surface");
+  }
   const sourceList = await run(executable, ["source", "list"], commandEnvironment);
   if (!sourceList.stdout.includes("등록된 Source가 없습니다")) {
     throw new Error("installed command did not execute a state-free operator command");
+  }
+  const emptyAudit = await run(
+    executable,
+    ["audit", "list", "--json"],
+    commandEnvironment,
+  );
+  if (emptyAudit.stdout.trim() !== "[]") {
+    throw new Error("installed command did not read an empty protected audit store");
   }
   await assertInstalledDemo(executable, commandEnvironment, temporaryRoot);
   await assertClosedFailureWithoutQdrant(executable, commandEnvironment, contextctlHome);
@@ -528,6 +539,7 @@ async function verifyProduct(input) {
     const query = "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?";
     const initial = await queryContext(input.executable, environment, query);
     assertRetrieved(initial, originalSentence);
+    await assertPersistedSelectionAudit(input.executable, environment, query);
     const restarted = await queryContext(input.executable, environment, query);
     assertEquivalentResolution(initial, restarted, "CLI restart");
 
@@ -649,6 +661,32 @@ async function approveValidatedVersions(executable, environment) {
 async function queryContext(executable, environment, query) {
   const result = await run(executable, ["query", query, "--json"], environment);
   return JSON.parse(result.stdout);
+}
+
+async function assertPersistedSelectionAudit(executable, environment, query) {
+  const listed = JSON.parse(
+    (await run(executable, ["audit", "list", "--limit", "1", "--json"], environment))
+      .stdout,
+  );
+  const summary = listed[0];
+  if (summary === undefined || !/^sa_[a-f0-9]{32}$/u.test(summary.auditId)) {
+    throw new Error("installed query did not create a correlatable Selection audit");
+  }
+  const shown = await run(
+    executable,
+    ["audit", "show", summary.auditId, "--json"],
+    environment,
+  );
+  const record = JSON.parse(shown.stdout);
+  if (
+    shown.stdout.includes(query) ||
+    record.auditId !== summary.auditId ||
+    record.catalog?.detailedCount > 128 ||
+    record.catalog?.omittedCount + record.catalog?.detailedCount !==
+      record.catalog?.evaluatedCount
+  ) {
+    throw new Error("installed Selection audit is unbounded, uncorrelated, or retains query text");
+  }
 }
 
 function assertRetrieved(resolution, sentence) {

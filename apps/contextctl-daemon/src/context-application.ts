@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   ManagedDocumentSearchError,
   type BatchManagedDocumentSearchCommand,
@@ -8,6 +10,8 @@ import {
 import {
   assertContextResolutionCanFit,
   assembleContext,
+  createSelectionAuditRecord,
+  InMemorySelectionAuditStore,
   narrowContextBudget,
   selectContext,
   type ApprovedCardCatalog,
@@ -20,6 +24,7 @@ import {
   type ResolvedDocumentChunk,
   type SelectContextOptions,
   type SemanticSelectionPorts,
+  type SelectionAuditStore,
 } from "@contextctl/selection-delivery";
 
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime/clock.js";
@@ -107,6 +112,14 @@ export interface DaemonContextApplicationDependencies {
    */
   readonly deadlines?: DaemonDeadlineProfile;
   readonly clock?: RuntimeClock;
+  /** Durable in production; bounded in-memory only for embedded/test graphs. */
+  readonly selectionAudit?: {
+    readonly store: SelectionAuditStore;
+    readonly nextId: () => string;
+    readonly now: () => string;
+    /** Protected local request log hook; never added to the public response. */
+    readonly onRecorded?: (auditId: string) => void;
+  };
 }
 
 /**
@@ -136,6 +149,9 @@ export class DaemonContextApplication
   readonly #budget: ContextBudget | undefined;
   readonly #deadlines: DaemonDeadlineProfile;
   readonly #clock: RuntimeClock;
+  readonly #selectionAudit: NonNullable<
+    DaemonContextApplicationDependencies["selectionAudit"]
+  >;
 
   constructor(dependencies: DaemonContextApplicationDependencies) {
     this.#catalog = dependencies.catalog;
@@ -146,6 +162,12 @@ export class DaemonContextApplication
     this.#budget = dependencies.budget;
     this.#deadlines = dependencies.deadlines ?? DAEMON_RUNTIME_PROFILE_V1.deadlines;
     this.#clock = dependencies.clock ?? new SystemRuntimeClock();
+    this.#selectionAudit =
+      dependencies.selectionAudit ?? {
+        store: new InMemorySelectionAuditStore(),
+        nextId: () => `sa_${randomUUID().replaceAll("-", "")}`,
+        now: () => new Date().toISOString(),
+      };
   }
 
   async resolveContext(
@@ -196,6 +218,25 @@ export class DaemonContextApplication
         this.#selection,
       ),
     );
+
+    // A plan authorises every managed read below. Persist its text-free audit
+    // before executing any target; proceeding after an audit failure would
+    // create an access decision the protected operator trail cannot explain.
+    deadline.assertWorkable("selection_audit");
+    const auditId = this.#selectionAudit.nextId();
+    const audit = createSelectionAuditRecord({
+      plan,
+      auditId,
+      recordedAt: this.#selectionAudit.now(),
+    });
+    deadline.assertWorkable("selection_audit");
+    await deadline.raceStage(
+      "selection_audit",
+      deadline.workableMs,
+      this.#selectionAudit.store.append(audit),
+    );
+    deadline.assertWorkable("selection_audit");
+    this.#selectionAudit.onRecorded?.(auditId);
 
     // Selection owns the conservative wire bound; daemon invokes it here
     // because this is the last point before any managed target is executed and

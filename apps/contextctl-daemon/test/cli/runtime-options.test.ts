@@ -1,4 +1,5 @@
 import { openIngestionDatabase } from "@contextctl/ingestion-indexing";
+import { InMemorySelectionAuditStore } from "@contextctl/selection-delivery";
 import type { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -119,6 +120,7 @@ function build(environment: Readonly<Partial<Record<string, string>>>) {
         environment: configuredEnvironment,
         onFallback: () => {},
       }),
+      selectionAuditStore: new InMemorySelectionAuditStore(),
     }),
   };
 }
