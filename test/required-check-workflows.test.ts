@@ -67,6 +67,34 @@ describe("required external check workflows", () => {
       'if [[ "${EVALUATION_REQUIRED}" == "true" && "${EVALUATION_RESULT}" != "success" ]]',
     );
   });
+
+  it("publishes npm candidates only after the complete installed-product gate", () => {
+    const workflow = readWorkflow("publish-npm-candidate.yml");
+
+    expect(workflow).toContain("  id-token: write\n");
+    expect(workflow).toContain("    environment: npm\n");
+    expect(workflow).toContain("    if: ${{ github.ref == 'refs/heads/main' }}\n");
+    expect(workflow).toContain(
+      "qdrant/qdrant@sha256:0fb8897412abc81d1c0430a899b9a81eb8328aa634e7242d1bc804c1fe8fe863",
+    );
+    for (const command of [
+      "npm run test:consumer-install",
+      "npm run test:operational",
+      "npm run test:integration:qdrant",
+      "npm run test:integration:granite",
+      "npm run test:eval:document-retrieval",
+      "npm run test:benchmark:ingestion-indexing",
+      "npm run test:release-product-local",
+      "npm run release:publish:dry-run",
+      "npm run release:publish:candidate -- --target public --registry https://registry.npmjs.org/ --yes --provenance",
+      "npm run release:verify:published -- --target public --registry https://registry.npmjs.org/ --require-provenance",
+    ]) {
+      expect(workflow).toContain(command);
+    }
+    expect(workflow.indexOf("release:publish:candidate")).toBeLessThan(
+      workflow.indexOf("release:verify:published"),
+    );
+  });
 });
 
 function readWorkflow(name: string): string {

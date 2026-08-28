@@ -1,0 +1,126 @@
+name: Publish npm candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact integrated version to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-candidate-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
+jobs:
+  publish-candidate:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: npm
+    services:
+      qdrant:
+        image: qdrant/qdrant@sha256:0fb8897412abc81d1c0430a899b9a81eb8328aa634e7242d1bc804c1fe8fe863 # v1.15.5
+        ports:
+          - 6333:6333
+    env:
+      CONTEXTCTL_QDRANT_URL: http://127.0.0.1:6333
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Verify toolchain and immutable release ref
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          test "$(node -p 'require("./package.json").version')" = "${REQUESTED_VERSION}"
+          test "$(git branch --show-current)" = "main"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          test "$(git tag --points-at HEAD | grep -Fx "v${REQUESTED_VERSION}")" = "v${REQUESTED_VERSION}"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:release-package
+      - run: npm run test:consumer-install
+      - run: npm test
+      - run: npm run test:operational
+      - name: Wait for Qdrant readiness
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "${CONTEXTCTL_QDRANT_URL}/readyz"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Qdrant did not become ready within 30 seconds" >&2
+          exit 1
+      - run: npm run test:integration:qdrant
+      - name: Verify installed remote product lifecycle
+        env:
+          CONTEXTCTL_RELEASE_E2E_QDRANT_URL: http://127.0.0.1:6333
+        run: npm run test:release-product
+      - name: Restore pinned Granite assets
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/contextctl-embedding-assets
+          key: granite-fp32-${{ runner.os }}-${{ hashFiles('packages/ingestion-indexing/src/infrastructure/transformers-js-local-embedding-adapter.ts') }}
+      - name: Install and verify pinned Granite assets
+        run: node apps/contextctl-daemon/bin/contextctl.mjs install-assets --yes --target "${RUNNER_TEMP}/contextctl-embedding-assets"
+      - name: Resolve installed Granite revision
+        id: granite-assets
+        env:
+          GRANITE_ASSET_ROOT: ${{ runner.temp }}/contextctl-embedding-assets
+        run: |
+          directory="$(node --input-type=module -e '
+            import { readFile } from "node:fs/promises";
+            import { resolve } from "node:path";
+            const root = process.env.GRANITE_ASSET_ROOT;
+            const pointer = JSON.parse(await readFile(resolve(root, "active.json"), "utf8"));
+            process.stdout.write(resolve(root, pointer.revisionDirectory));
+          ')"
+          test -n "${directory}"
+          echo "directory=${directory}" >> "${GITHUB_OUTPUT}"
+      - name: Run Granite and Selection release gates
+        env:
+          CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
+          CONTEXTCTL_EMBEDDING_RUNTIME_RESULT_PATH: ${{ runner.temp }}/embedding-runtime-load.json
+          CONTEXTCTL_SELECTION_EVAL_RESULT_PATH: ${{ runner.temp }}/selection-eval.json
+          CONTEXTCTL_GENERATED_CARD_SELECTION_RESULT_PATH: ${{ runner.temp }}/generated-card-selection.json
+          CONTEXTCTL_SELECTION_SCALE_RESULT_PATH: ${{ runner.temp }}/selection-scale.json
+        run: npm run test:integration:granite
+      - name: Run document retrieval release evaluation
+        env:
+          CONTEXTCTL_GRANITE_ASSET_DIRECTORY: ${{ steps.granite-assets.outputs.directory }}
+          CONTEXTCTL_EVAL_RESOURCE_GATE_MODE: release
+          CONTEXTCTL_EVAL_RESULT_PATH: ${{ runner.temp }}/document-retrieval-eval.json
+        run: npm run test:eval:document-retrieval
+      - name: Run ingestion and indexing benchmark
+        env:
+          CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH: ${{ runner.temp }}/document-retrieval-eval.json
+          CONTEXTCTL_INGESTION_BENCHMARK_RESULT_PATH: ${{ runner.temp }}/ingestion-indexing-benchmark.json
+        run: npm run test:benchmark:ingestion-indexing
+      - name: Verify installed local product combinations
+        env:
+          CONTEXTCTL_RELEASE_E2E_ASSET_ROOT: ${{ runner.temp }}/contextctl-embedding-assets
+          CONTEXTCTL_RELEASE_E2E_QDRANT_URL: http://127.0.0.1:6333
+        run: npm run test:release-product-local
+      - run: npm run release:publish:dry-run
+      - name: Publish immutable candidate packages
+        run: npm run release:publish:candidate -- --target public --registry https://registry.npmjs.org/ --yes --provenance
+      - name: Verify exact public candidate installs
+        run: npm run release:verify:published -- --target public --registry https://registry.npmjs.org/ --require-provenance
