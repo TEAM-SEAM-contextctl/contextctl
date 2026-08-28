@@ -25,7 +25,11 @@ function observation(
 ): StatusObservation {
   return {
     assets,
-    vectorIndex: { status: "configured", endpoint: "http://localhost:6333/" },
+    vectorIndex: {
+      status: "reachable",
+      endpoint: "http://localhost:6333/",
+      elapsedMs: 4,
+    },
     stateReadiness: { status: "ready" },
     registry: {
       status: "read",

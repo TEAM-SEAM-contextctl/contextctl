@@ -33,9 +33,10 @@
   ],
   "dependencies": {
     "@contextctl/contracts": "1.1.0",
-    "@huggingface/transformers": "4.2.0",
+    "@huggingface/tokenizers": "0.1.3",
     "@qdrant/js-client-rest": "1.19.0",
     "mdast-util-to-string": "4.0.0",
+    "onnxruntime-node": "1.29.0",
     "remark-gfm": "4.0.1",
     "remark-parse": "11.0.0",
     "unified": "11.0.5"

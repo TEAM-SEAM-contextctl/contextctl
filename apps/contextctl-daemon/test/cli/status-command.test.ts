@@ -58,10 +58,11 @@ async function freshHome(): Promise<string> {
 async function runStatusIn(
   home: string,
   args: readonly string[] = ["status"],
+  environment: Readonly<Record<string, string>> = {},
 ): Promise<{ readonly stdout: string; readonly stderr: string; readonly code: number }> {
   try {
     const result = await execFileAsync(INSTALLED_COMMAND, [...args], {
-      env: { ...process.env, CONTEXTCTL_HOME: home },
+      env: { ...process.env, ...environment, CONTEXTCTL_HOME: home },
       cwd: home,
     });
     return { stdout: result.stdout, stderr: result.stderr, code: 0 };
@@ -113,6 +114,24 @@ describe("contextctl status on a fresh machine", () => {
     expect(ingestionLine).toContain("CONTEXTCTL_QDRANT_URL");
   });
 
+  it("does not report a configured but unreachable Qdrant service as ready", async () => {
+    const result = await runStatusIn(await freshHome(), ["status"], {
+      // Port 1 is never a product endpoint. The transport-specific classifier
+      // is covered with an injected fetch in vector-backend.test.ts; this
+      // process test only proves the CLI no longer equates a valid URL with a
+      // reachable service.
+      CONTEXTCTL_QDRANT_URL: "http://127.0.0.1:1",
+    });
+    const lines = result.stdout.split("\n");
+
+    for (const lane of ["resolve", "ingestion"]) {
+      const line = lines.find((candidate) => candidate.startsWith(lane));
+      expect(line).toContain("not_ready");
+      expect(line).toContain("Qdrant에 연결할 수 없습니다");
+    }
+    expect(result.code).toBe(EXIT_CODES.laneNotReady);
+  });
+
   it("reports Registry as ready on an empty database", async () => {
     const result = await runStatusIn(await freshHome());
     const registryLine = result.stdout
@@ -148,6 +167,26 @@ describe("contextctl status on a fresh machine", () => {
       lanes: expect.arrayContaining([
         expect.objectContaining({ lane: "selection_assets", status: "not_ready" }),
       ]),
+    });
+  });
+
+  it("exposes a stable Qdrant reason in JSON without requiring prose parsing", async () => {
+    const result = await runStatusIn(await freshHome(), ["status", "--json"], {
+      CONTEXTCTL_QDRANT_URL: "http://127.0.0.1:1",
+    });
+    const parsed = JSON.parse(result.stdout) as {
+      readonly lanes: readonly {
+        readonly lane: string;
+        readonly reason?: unknown;
+      }[];
+    };
+
+    expect(parsed.lanes.find((lane) => lane.lane === "ingestion")?.reason).toEqual({
+      kind: "qdrant",
+      code: expect.stringMatching(
+        /^(connection_refused|timeout|unauthorized|invalid_response|unknown)$/u,
+      ),
+      endpoint: "http://127.0.0.1:1/",
     });
   });
 });
