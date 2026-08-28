@@ -25,6 +25,7 @@ import { openRegistryDatabase } from "@contextctl/registry-lifecycle";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  checkNodeVersion,
   runDiagnosis,
   type DiagnosisReport,
   type DiagnosisStep,
@@ -45,6 +46,7 @@ import {
   remoteDocumentProfile,
 } from "../embedding/fakes.js";
 import { openSelectionAuditDatabase } from "../../src/selection-audit/sqlite-selection-audit-store.js";
+import { isSupportedNodeVersion } from "../../src/cli/node-runtime-support.js";
 
 /**
  * `contextctl doctor`, exercised against a real filesystem and nothing else.
@@ -480,6 +482,7 @@ describe("runDiagnosis / report", () => {
 
     expect(report.steps.map((step) => step.name)).toEqual([
       "node-version",
+      "node-sqlite",
       "home-directory",
       "sources-file",
       "registry-database",
@@ -633,6 +636,23 @@ describe("runDiagnosis / report", () => {
     // runtime rather than a constant.
     expect(step.status).toBe("ok");
     expect(step.detail).toContain(process.versions.node);
+  });
+
+  it.each([
+    ["24.17.99", false],
+    ["24.18.0", true],
+    ["24.18.1", true],
+    ["24.99.0", true],
+    ["25.0.0", false],
+    ["26.3.1", false],
+    ["24.18.0-rc.1", false],
+    ["not-a-version", false],
+  ] as const)("judges Node %s support as %s", (version, expected) => {
+    expect(isSupportedNodeVersion(version)).toBe(expected);
+    const diagnosis = checkNodeVersion(version);
+    expect(diagnosis.status).toBe(expected ? "ok" : "fail");
+    expect(diagnosis.detail).toContain(version);
+    expect(diagnosis.detail).toContain(">=24.18.0 <25");
   });
 
   it("never reaches for the embedding runtime or the composition root", async () => {

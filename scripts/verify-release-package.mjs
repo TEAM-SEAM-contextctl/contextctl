@@ -86,6 +86,7 @@ const bundledDemoDocuments = Object.freeze([
 let temporaryRoot;
 let embeddingProvider;
 try {
+  await assertNodeRuntimePolicy();
   await assertPublicQuickstartDocumentation();
   temporaryRoot = await mkdtemp(join(tmpdir(), "contextctl-release-package-"));
   const packDirectory = join(temporaryRoot, "packages");
@@ -195,6 +196,50 @@ async function readReleaseVersion() {
     throw new Error("root package.json does not declare the integrated release version");
   }
   return manifest.version;
+}
+
+async function assertNodeRuntimePolicy() {
+  const expectedMinimum = "24.18.0";
+  const expectedRange = ">=24.18.0 <25";
+  const nvmVersion = (await readFile(join(repositoryRoot, ".nvmrc"), "utf8")).trim();
+  const rootManifest = JSON.parse(
+    await readFile(join(repositoryRoot, "package.json"), "utf8"),
+  );
+  const installer = await readFile(join(repositoryRoot, "install.sh"), "utf8");
+  const policyModule = await import(
+    pathToFileURL(
+      join(
+        repositoryRoot,
+        "apps/contextctl-daemon/dist/cli/node-runtime-support.js",
+      ),
+    ).href
+  );
+  const policy = policyModule.SUPPORTED_NODE_VERSION;
+
+  if (nvmVersion !== expectedMinimum || rootManifest.engines?.node !== expectedMinimum) {
+    throw new Error("root Node runtime pins do not match the supported minimum");
+  }
+  for (const marker of [
+    `MINIMUM_NODE_VERSION="${expectedMinimum}"`,
+    "SUPPORTED_NODE_MAJOR=24",
+    "MINIMUM_NODE_MINOR=18",
+    "MAXIMUM_NODE_MAJOR=25",
+  ]) {
+    if (!installer.includes(marker)) {
+      throw new Error(`install.sh is missing Node policy marker: ${marker}`);
+    }
+  }
+  if (
+    policy?.minimum?.major !== 24 ||
+    policy.minimum.minor !== 18 ||
+    policy.minimum.patch !== 0 ||
+    policy.maximumExclusive?.major !== 25 ||
+    policy.maximumExclusive.minor !== 0 ||
+    policy.maximumExclusive.patch !== 0 ||
+    policy.display !== expectedRange
+  ) {
+    throw new Error("daemon doctor Node policy differs from package engines");
+  }
 }
 
 async function assertPublicQuickstartDocumentation() {

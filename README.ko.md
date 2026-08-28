@@ -75,7 +75,8 @@ npm install -g @contextctl/daemon@1.1.0
 `PATH` 에서 찾지 못하면 스크립트가 실제 `bin` 경로와 `export PATH=…` 한 줄을 알려주고 멈춥니다.
 설치된 위치는 나중에 `contextctl paths` 로도 확인할 수 있습니다.
 
----
+GitHub 설치기는 영어와 한국어를 지원합니다. `CONTEXTCTL_LOCALE=en|ko`로 명시할 수 있으며,
+없으면 `LC_ALL`, `LC_MESSAGES`, `LANG` 순서로 판단하고 알 수 없는 locale은 영어를 씁니다.
 
 ## 5분 만에 해보기
 

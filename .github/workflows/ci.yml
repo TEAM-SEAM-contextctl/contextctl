@@ -30,6 +30,18 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:release-package
+      - name: Verify clean consumer dependency security
+        env:
+          CONTEXTCTL_CONSUMER_AUDIT_RESULT_PATH: ${{ runner.temp }}/consumer-audit.json
+        run: npm run test:consumer-install
+      - name: Upload consumer dependency audit
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: consumer-dependency-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/consumer-audit.json
+          if-no-files-found: error
+          retention-days: 30
       - run: npm test
 
   qdrant-integration:

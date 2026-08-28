@@ -44,7 +44,11 @@ async function runWithNode(version: string): Promise<{
     // decision from the separate latest-release resolution contract.
     const child = spawn("/bin/bash", [installer, "--version", "v1.2.3"], {
       cwd: repositoryRoot,
-      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin`,
+        CONTEXTCTL_LOCALE: "ko",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -67,7 +71,7 @@ describe("release installer Node range", () => {
       const result = await runWithNode(version);
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("지원 범위는 24.18.0 이상 25 미만");
+      expect(result.stderr).toContain("지원 범위는 >=24.18.0 <25");
       expect(result.stdout).not.toContain("패키지를 내려받습니다");
     },
   );
