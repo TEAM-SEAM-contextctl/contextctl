@@ -12,6 +12,7 @@ import type { CliStdoutPresentation } from "./presentation.js";
 import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
 import { resolveContextctlPaths } from "./paths.js";
 import { createCliTerminal } from "./terminal.js";
+import { decideAssetInstallationConsent } from "./asset-installation-consent.js";
 import { EXIT_CODES } from "./exit-codes.js";
 
 /**
@@ -117,9 +118,11 @@ export async function runCli(input: {
           environment: input.environment,
           workingDirectory,
           progress: input.progress ?? input.stderr,
-          ...(shouldPromptForConsent(command.yes)
-            ? { confirm: () => promptForConsent(input.stderr) }
-            : {}),
+          consent: decideAssetInstallationConsent({
+            yes: command.yes,
+            stdinIsTTY: process.stdin.isTTY === true,
+            confirm: () => promptForConsent(input.stderr),
+          }),
         }),
       );
     }
@@ -377,19 +380,6 @@ async function readPackageVersion(): Promise<string> {
     // is a truthful answer where a stale literal was not.
     return "unknown";
   }
-}
-
-/**
- * Whether there is anyone at the other end to answer.
- *
- * `--yes` is an answer already given. Absent that, a prompt is only meaningful
- * on a terminal: in a pipeline or a CI job there is no one to type, and blocking
- * on stdin there would hang the job rather than ask it anything. Non-interactive
- * therefore proceeds, which is the same reading the flag has — the operator
- * arranged for this command to run unattended.
- */
-function shouldPromptForConsent(yes: boolean): boolean {
-  return !yes && process.stdin.isTTY === true;
 }
 
 /**

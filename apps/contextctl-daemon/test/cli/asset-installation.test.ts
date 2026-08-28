@@ -149,11 +149,16 @@ describe("runAssetInstallation", () => {
   it("fetches nothing when consent is refused", async () => {
     const directory = await makeDirectory();
     const calls: string[] = [];
+    const order: string[] = [];
 
     const outcome = await runAssetInstallation({
       targetDirectory: directory,
       progress: () => {},
-      confirm: async () => false,
+      beforeConsent: () => order.push("plan"),
+      confirm: async () => {
+        order.push("confirm");
+        return false;
+      },
       fetch: manifestSizedFetch(calls),
       delay: async () => {},
     });
@@ -161,6 +166,7 @@ describe("runAssetInstallation", () => {
     expect(outcome.status).toBe("declined");
     expect(outcome.directory).toBeUndefined();
     expect(calls).toHaveLength(0);
+    expect(order).toEqual(["plan", "confirm"]);
   });
 
   it("proceeds when no confirmation is supplied", async () => {
@@ -191,10 +197,14 @@ describe("runAssetInstallation", () => {
     await writeActivePointer(directory, validPointer());
     const calls: string[] = [];
     let confirmed = 0;
+    let planned = 0;
 
     const outcome = await runAssetInstallation({
       targetDirectory: directory,
       progress: () => {},
+      beforeConsent: () => {
+        planned += 1;
+      },
       confirm: async () => {
         confirmed += 1;
         return true;
@@ -214,6 +224,7 @@ describe("runAssetInstallation", () => {
     );
     expect(outcome.installedBytes).toBe(TOTAL_BYTES);
     expect(confirmed).toBe(0);
+    expect(planned).toBe(0);
     expect(calls).toHaveLength(0);
   });
 

@@ -96,7 +96,7 @@ export type CliCommand =
     }
   | {
       readonly kind: "install_assets";
-      /** Skip the consent prompt. Also implied when stdin is not a terminal. */
+      /** Explicitly consent without an interactive prompt. */
       readonly yes: boolean;
       /** Read the bytes from a directory staged ahead of time. */
       readonly sourceDirectory?: string;
@@ -146,7 +146,7 @@ const COMMAND_USAGES: readonly CommandUsage[] = [
     topic: "install-assets",
     line: "contextctl install-assets [--yes] [--target <dir>] [--source-directory <dir>]",
     summary:
-      `질의에 필요한 임베딩 모델을 내려받아 설치한다. ${DEFAULT_GRANITE_ASSET_SIZE_COMPACT}를 받으므로 먼저 동의를 묻는다.`,
+      `질의에 필요한 임베딩 모델을 내려받아 설치한다. ${DEFAULT_GRANITE_ASSET_SIZE_COMPACT}를 받으므로 먼저 동의를 묻고, 비대화형 환경은 --yes 가 필요하다.`,
   },
   {
     topic: "paths",

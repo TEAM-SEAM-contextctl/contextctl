@@ -47,7 +47,7 @@ Keeping the responsibility narrow is the design, not a missing feature.
 |---|---|
 | **Node.js** | **24.18.0 or newer, below 25** — accepted by the installer and package engines; required CI runs 24.18.0 |
 | **Qdrant** | Required. `ingest`, `query` and `serve` refuse to start without `CONTEXTCTL_QDRANT_URL` |
-| **Disk** | **396.1 MiB (about 415 MB)** for the embedding model — with the default local execution. A new or fully migrated deployment with both layers remote needs none; an approved Scope still published under an older local profile keeps the assets required until that reference is retired |
+| **Disk** | A clean macOS arm64 audit used **336.2 MiB** for npm dependencies; platform and filesystem change this value. The default local model adds **396.1 MiB (about 415 MB)**. Allow at least **1 GiB** for the first install; Qdrant image, vectors, backups and retained model revisions are extra. A fully remote deployment with no retained local Scope needs no model assets |
 | **Memory** | No host minimum is claimed yet. Required CI caps the Granite-backed 10,000-Card scale process at **1,536 MiB peak RSS**; Qdrant and the operating system are outside that process |
 
 > ★ **Using `fnm`, `nvm` or `asdf`?** They install into the active Node version's

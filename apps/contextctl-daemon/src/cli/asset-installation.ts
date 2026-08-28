@@ -161,6 +161,8 @@ export async function runAssetInstallation(input: {
   readonly sourceDirectory?: string;
   /** Where progress goes. The caller decides it is stderr. */
   readonly progress: (message: string) => void;
+  /** Runs after the already-installed check and before consent is requested. */
+  readonly beforeConsent?: () => void;
   /**
    * Asks for consent. The caller decides what `--yes` and a non-TTY mean.
    * Absent means consent was already given.
@@ -189,6 +191,7 @@ export async function runAssetInstallation(input: {
     };
   }
 
+  input.beforeConsent?.();
   if (input.confirm !== undefined && !(await input.confirm())) {
     return { status: "declined" };
   }

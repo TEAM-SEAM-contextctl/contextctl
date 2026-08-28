@@ -348,6 +348,20 @@ curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/mai
 판단하고, 지원하지 않는 locale은 영어를 사용합니다. 명령어·버전·checksum·경로는 언어에 따라
 바뀌지 않습니다.
 
+깨끗한 macOS arm64·Node 24·npm 11 소비자 설치에서 다섯 패키지의 npm 의존성은
+336.2 MiB였다. 플랫폼과 파일시스템에 따라 달라지는 참고값이다. 기본 로컬 모델 396.1 MiB를
+더해 첫 설치에는 최소 1 GiB 이상의 여유 공간을 권장한다. 이 값에는 Qdrant 이미지·벡터 데이터·
+백업과 업데이트 중 함께 보존하는 이전 모델 revision이 포함되지 않는다.
+
+CI나 파이프에서 모델을 새로 설치할 때는 동의를 추정하지 않는다. 다음처럼 `--yes`를 명시한다.
+
+```bash
+contextctl install-assets --yes
+contextctl install-assets --source-directory /srv/contextctl-assets --yes
+```
+
+정확한 revision이 이미 설치돼 있으면 비대화형 환경에서도 `--yes` 없이 성공한다.
+
 릴리스 담당자는 빌드가 끝난 깨끗한 작업 트리에서 다음 명령으로 업로드 자산을 만듭니다. 출력
 디렉터리가 비어 있지 않으면 서로 다른 릴리스가 섞이지 않도록 실패합니다.
 
