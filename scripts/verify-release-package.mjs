@@ -321,6 +321,9 @@ async function assertInstalledPackageMetadata(installDirectory) {
     if (manifest.name !== expected.name || manifest.version !== releaseVersion) {
       throw new Error(`${expected.name} installed with unexpected identity`);
     }
+    if (manifest.private === true || manifest.publishConfig?.access !== "public") {
+      throw new Error(`${expected.name} is not configured for public npm publication`);
+    }
     if (manifest.license !== "MIT") {
       throw new Error(`${expected.name} does not declare the MIT license`);
     }

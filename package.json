@@ -1,6 +1,6 @@
 {
   "name": "contextctl",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -23,13 +23,14 @@
     "test:release-product": "node scripts/verify-release-package.mjs --product-e2e",
     "test:release-product-local": "node scripts/verify-release-package.mjs --product-e2e-local-matrix",
     "release:prepare": "npm run build && node scripts/prepare-release-assets.mjs",
+    "release:publish:dry-run": "npm publish --workspaces --access public --dry-run",
     "test:integration:qdrant": "node scripts/run-external-test.mjs qdrant",
     "test:integration:granite": "node scripts/run-external-test.mjs granite",
     "test:eval:document-retrieval": "node scripts/run-external-test.mjs document-retrieval",
     "test:benchmark:ingestion-indexing": "node scripts/run-external-test.mjs ingestion-indexing-benchmark"
   },
   "dependencies": {
-    "@contextctl/daemon": "1.0.1",
+    "@contextctl/daemon": "1.1.0",
     "@huggingface/transformers": "4.2.0",
     "onnxruntime-node": "1.24.3"
   },

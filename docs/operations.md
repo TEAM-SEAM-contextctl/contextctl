@@ -321,6 +321,15 @@ npm rm -g @contextctl/daemon @contextctl/selection-delivery \
 
 ### 릴리스 설치 무결성
 
+npm 공개 레지스트리 경로는 정확한 통합 버전을 설치합니다.
+
+```bash
+npm install -g @contextctl/daemon@1.1.0
+```
+
+`@contextctl/daemon`의 내부 의존성도 같은 `1.1.0`으로 고정돼 있어 npm이 다른 릴리스의
+Workspace를 섞지 않습니다.
+
 `install.sh`는 `latest` 주소에서 패키지를 곧바로 섞어 받지 않습니다. 먼저 정확한 릴리스 태그를
 구한 뒤 그 태그 아래의 `SHA256SUMS`와 패키지 5개를 받습니다. 파일별 SHA-256이 모두 일치해야
 한 번의 `npm install -g`를 실행합니다. 특정 버전의 장애를 재현할 때는 다음처럼 태그를 고정합니다.

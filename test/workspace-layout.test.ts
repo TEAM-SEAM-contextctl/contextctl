@@ -3,10 +3,14 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 interface PackageManifest {
+  readonly bin?: Readonly<Record<string, string>>;
   readonly name?: string;
   readonly private?: boolean;
   readonly type?: string;
   readonly packageManager?: string;
+  readonly publishConfig?: {
+    readonly access?: string;
+  };
   readonly engines?: {
     readonly node?: string;
     readonly npm?: string;
@@ -80,7 +84,7 @@ describe("workspace scaffold", () => {
   });
 
   it.each(workspaces)(
-    "%s exposes one private ESM package boundary",
+    "%s exposes one public ESM package boundary",
     async (path, name, entrypoint) => {
       const manifest = JSON.parse(
         await readFile(new URL(path, import.meta.url), "utf8"),
@@ -88,9 +92,10 @@ describe("workspace scaffold", () => {
 
       expect(manifest).toMatchObject({
         name,
-        private: true,
+        publishConfig: { access: "public" },
         type: "module",
       });
+      expect(manifest.private).not.toBe(true);
       expect(manifest.exports?.["."]?.import).toBe(entrypoint);
       expect(manifest.exports?.["."]?.types).toMatch(/\.\/dist\/.+\.d\.ts$/);
     },
@@ -108,6 +113,17 @@ describe("workspace scaffold", () => {
       manifest.exports?.["."]?.["contextctl-local-embedding-worker"],
     ).toBe("./dist/infrastructure/local-embedding-worker-entry.js");
     expect(Object.keys(manifest.exports ?? {})).toEqual(["."]);
+  });
+
+  it("keeps the published CLI bin path in npm-normalized form", async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        new URL("../apps/contextctl-daemon/package.json", import.meta.url),
+        "utf8",
+      ),
+    ) as PackageManifest;
+
+    expect(manifest.bin).toEqual({ contextctl: "bin/contextctl.mjs" });
   });
 
   it("assigns shared and domain paths to their owner teams", async () => {

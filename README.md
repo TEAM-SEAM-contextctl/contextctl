@@ -66,16 +66,16 @@ Keeping the responsibility narrow is the design, not a missing feature.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
+npm install -g @contextctl/daemon@1.1.0
 ```
 
-The script pins one release, verifies its five tarballs against `SHA256SUMS`, installs
-them together, and checks `PATH`. It does not download the model; the next step asks
-before downloading 396.1 MiB (about 415 MB).
-
-If `PATH` does not reach the install, the script stops and prints the real `bin`
-directory with the `export PATH=…` line to add. `contextctl paths` reports the
-same location later.
+The package pins the other four workspaces to the same integrated release. For a
+SHA-256-checked installation from GitHub assets, use the
+[release installer](docs/operations.md#릴리스-설치-무결성). Neither path downloads the
+model; the next step asks before downloading 396.1 MiB (about 415 MB).
+If `PATH` does not reach the install, `contextctl paths` reports the active Node
+installation and its executable directory. The GitHub installer also prints the
+exact `export PATH=…` line to add.
 
 ---
 
