@@ -12,7 +12,7 @@
   "snapshots": {
     "llm": {
       "cardsDigest": "sha256:9fb0492a00dbdb109c76662da6195a0f2acf7cce9bf9ddbcbf1fec555ed2d888",
-      "queriesDigest": "sha256:12310ab32f7b148f09e248777215f7bfc86bfc9d573f71861c5a159f882e3018",
+      "queriesDigest": "sha256:e8e74e6e0fc23af0db70a49f13aaef6686fe03ba5f1cc04b58214e510e841dfe",
       "metrics": {
         "queryCount": 25,
         "top1Accuracy": 0.88,
@@ -126,7 +126,7 @@
     },
     "deterministic": {
       "cardsDigest": "sha256:1306ff434b36ea7b5966da0cc2f1a15284d2483fb50290ffe6975b8b71b2cb05",
-      "queriesDigest": "sha256:12310ab32f7b148f09e248777215f7bfc86bfc9d573f71861c5a159f882e3018",
+      "queriesDigest": "sha256:e8e74e6e0fc23af0db70a49f13aaef6686fe03ba5f1cc04b58214e510e841dfe",
       "metrics": {
         "queryCount": 25,
         "top1Accuracy": 0.92,

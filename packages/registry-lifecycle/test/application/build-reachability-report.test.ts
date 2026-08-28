@@ -522,7 +522,7 @@ describe("scope provenance and source checkpoints", () => {
     });
 
     it("reports how long the longest wait has been", async () => {
-      // 설계안 1241행: the report carries the oldest state's elapsed time, so an
+      // The reachability contract carries the oldest state's elapsed time, so an
       // operator does not have to find the largest of six numbers themselves.
       const report = await buildReachabilityReport({
         scopes: new FakeScopeReachabilityStore([sighting()]),

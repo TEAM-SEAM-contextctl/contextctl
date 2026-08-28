@@ -87,8 +87,8 @@ function selectionScoringFor(mode: SelectionMode): SelectionScoringPolicyVersion
  * instead of a payload.
  *
  * Before anything is fused, every outcome is held against the plan that asked
- * for it (SOT L1534, L1637, L1639). Two kinds of defect are told apart by where
- * they are reported. An outcome that cannot be matched to the plan at all — a
+ * for it (the Context assembly invariant). Two kinds of defect are told apart
+ * by where they are reported. An outcome that cannot be matched to the plan at all — a
  * target nobody planned, a target answered twice — is a fault in the
  * bookkeeping between Selection, the executor and this step, and it refuses the
  * whole assembly, because there is no item it could honestly be charged to. An
@@ -107,7 +107,8 @@ export function assembleContext(
   // The plan is re-verified here as well as where it was built. Assembly files
   // results by the plan's keys, so a key that no longer matches its fields
   // would file evidence under the wrong Scope; the check is cheap and the
-  // plan crossed an executor boundary in between (SOT L2358).
+  // plan crossed an executor boundary in between (the managed-document
+  // retrieval invariant).
   verifySelectionPlan(plan);
   const byTargetKey = indexOutcomes(plan, outcomes);
 
@@ -144,7 +145,7 @@ export function assembleContext(
   const assembled = assembleDocumentContext(candidates, budget);
   // A read that contradicted another read was set aside whole. The items that
   // planned it have no chunks to file and report the contradiction instead;
-  // nothing else about the response changes (SOT L1534, L1639).
+  // nothing else about the response changes (the Context assembly invariant).
   for (const [itemKey, verdict] of verdicts) {
     if (verdict.kind === "fulfilled" && assembled.failedTargetKeys.includes(verdict.targetKey)) {
       verdicts.set(itemKey, { kind: "failed", failure: ASSEMBLY_FAILURE });
@@ -283,18 +284,17 @@ function summarizeSelection(plan: SelectionPlan): SelectionSummary {
  * a malformed outcome for a target nobody ended up reading cannot slip through
  * on the strength of nobody having looked at it.
  *
- * An outcome for a target the plan never named is refused, not dropped (SOT
- * L1637: "알 수 없는 결과 … 조립 실패로 처리하며 다른 Guide에 귀속시키지
- * 않는다"). It used to be ignored on the theory that an executor might answer
+ * An outcome for a target the plan never named is refused, not dropped (the
+ * unknown-target assembly invariant). It used to be ignored on the theory that an executor might answer
  * for several plans in one batch; but an answer nobody asked for is evidence
  * that the executor and this step disagree about which reads happened, and an
  * assembly that quietly discards that evidence is an assembly that cannot tell
  * a stray answer from a misrouted one. There is no item it could be charged to,
  * so it is refused at request level.
  *
- * A target answered twice is refused for the same reason (SOT L1637: "중복
- * 대상 … 조립 실패"). `Map.set` used to let the later answer overwrite the
- * earlier one, which made "which of two answers did the consumer get" depend on
+ * A target answered twice is refused for the same reason: duplicate target
+ * outcomes are an assembly failure. `Map.set` used to let the later answer
+ * overwrite the earlier one, which made "which of two answers did the consumer get" depend on
  * the executor's array order — and an executor that answers one read twice has
  * lost track of which read it performed, so neither copy is the one to keep.
  */
@@ -347,11 +347,11 @@ type ItemVerdict =
  *
  * Three outcomes are failures and each says why. A read the executor never
  * answered for is not "a document with nothing in it" — nobody looked — so it
- * fails in assembly rather than reporting an empty context (SOT L1534: "Plan↔
- * 결과 1:1 대응"). A read the executor failed is reported in the executor's own
- * words. A read the executor fulfilled is checked against the plan's bound and
+ * fails in assembly rather than reporting an empty context (the Plan-to-result
+ * one-to-one invariant). A read the executor failed is reported in the
+ * executor's own words. A read the executor fulfilled is checked against the plan's bound and
  * against its own internal consistency before a single chunk of it is trusted
- * (SOT L1639), and fails as `resolution_outcome_invalid` if it does not hold.
+ * and fails as `resolution_outcome_invalid` if it does not hold.
  */
 function judgeOutcome(
   item: PlannedManagedItem,
@@ -374,7 +374,7 @@ function judgeOutcome(
 }
 
 /**
- * The checks SOT L1639 names for a fulfilled outcome, and nothing beyond them.
+ * The checks required for a fulfilled Context outcome, and nothing beyond them.
  *
  * - at most `limit` hits: the bound travelled on the guide and the target
  *   alike, and an executor that returned more has read past what was planned;
@@ -387,7 +387,7 @@ function judgeOutcome(
  *   cannot be checked against anything, and an empty text cannot be evidence.
  *
  * A boolean rather than a reason, on purpose. The reason is operator-facing
- * diagnosis and the SOT keeps that off the consumer response; what the item
+ * diagnosis and the public response contract keeps that private; what the item
  * reports is the one code that says "do not trust this", and that is enough.
  */
 function outcomeHoldsTogether(
@@ -482,7 +482,7 @@ function buildItem(
  * the deadline's and assembly's own — leaves through the same door and carries
  * the same shape. An item fails on its own: nothing here touches any other
  * item, which is what lets one broken read leave the rest of the answer
- * standing (SOT L1639).
+ * standing (the per-item isolation invariant).
  */
 function failedItem(
   item: PlannedManagedItem,
@@ -502,7 +502,7 @@ function failedItem(
  * One code and one flag, fixed. `resolution_outcome_invalid` is not retriable
  * because nothing about retrying changes what was already answered: the
  * executor would have to answer differently, and a consumer cannot make it.
- * The SOT names this exact pair (L1639, L2457-2461).
+ * The Delivery contract fixes this exact pair.
  */
 const ASSEMBLY_FAILURE: ManagedFulfillmentFailure = {
   stage: "assembly",
@@ -515,7 +515,7 @@ const ASSEMBLY_FAILURE: ManagedFulfillmentFailure = {
  *
  * `managed_search` crosses as stated — code and flag untouched, for the reason
  * `assertOpaqueFailure` gives. `deadline` is checked rather than copied: the
- * SOT fixes a deadline to `deadline_exceeded` and `retriable: true` (L2370),
+ * Delivery fixes a deadline to `deadline_exceeded` and `retriable: true`,
  * so an executor reporting a deadline under any other code has confused two
  * different facts, and projecting its wording would put that confusion in
  * front of a consumer. That is our translation step's bug, not a failure mode

@@ -23,8 +23,8 @@ import {
  * The same policy, the same answer, on every surface.
  *
  * The three surfaces share one `DaemonContextApplication`, and that object is
- * the only place the policy is held. This test pins the consequence SOT §6.6
- * asks for — MCP, HTTP and the CLI return the same policy result — by asking
+ * the only place the policy is held. This test pins the access-surface
+ * invariant — MCP, HTTP and the CLI return the same policy result — by asking
  * the same question through all three and comparing the selections, under the
  * default policy and under `allow`. The CLI's `query` command calls
  * `resolveContext` on the same application, so the direct call stands for it.

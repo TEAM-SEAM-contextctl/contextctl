@@ -170,11 +170,11 @@ export type ContextResolutionItem =
  * executor's report — two stages and an opaque code — and it is an *input* to
  * assembly. This type is assembly's *output*, and assembly can fail in a way no
  * executor reports: the read answered, and what it answered with does not hold
- * together (SOT §10 L1639, §11 L2453-2466). Letting the input DTO carry an
+ * together (the assembly invariant). Letting the input DTO carry an
  * `assembly` stage would let an executor claim a failure it is in no position
  * to diagnose; declaring the third stage only on the output keeps it ours.
  *
- * `deadline` is pinned to one code and one flag by the SOT (L2370, L2463-2466):
+ * `deadline` is pinned to one code and one flag by the Delivery contract:
  * a target the search-stage budget ran out on is always `deadline_exceeded` and
  * always worth retrying, so the type says so instead of every projection having
  * to. `managed_search` keeps an opaque code — the executor's vocabulary is the

@@ -18,8 +18,8 @@ export interface CardMeaningFallbackReport {
 /**
  * Falls back to a second generator when the first cannot answer.
  *
- * ARCHITECTURE.md §7.4 wants a model outage to degrade the Card text rather
- * than stop Registry. Without this, an unreachable model would fail
+ * Registry availability requires a model outage to degrade the Card text
+ * rather than stop Registry. Without this, an unreachable model would fail
  * `claimPublication` and Registry would consume no Publication at all — the
  * exact single point of failure the deterministic generator was written to
  * remove.

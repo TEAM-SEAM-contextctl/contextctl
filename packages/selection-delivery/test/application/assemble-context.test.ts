@@ -46,7 +46,7 @@ function planFor(
   return selectContext(portsFor(cards), DEMO_QUERY, options);
 }
 
-/** The failure assembly itself reports, restated from the SOT rather than imported. */
+/** The failure assembly itself reports, restated rather than imported. */
 const ASSEMBLY_FAILURE = {
   stage: "assembly",
   code: "resolution_outcome_invalid",
@@ -826,7 +826,7 @@ describe("assembleContext", () => {
   });
 
   describe("projects the executor's failure into the consumer's", () => {
-    it("reports a deadline under the one code and flag the SOT fixes", async () => {
+    it("reports a deadline under the one fixed code and flag", async () => {
       const plan = await planFor([createRefundPolicyCard()]);
       const item = managedItem(
         assembleContext(plan, [

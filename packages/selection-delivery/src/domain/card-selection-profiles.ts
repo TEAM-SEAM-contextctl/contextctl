@@ -10,8 +10,8 @@ import {
  * Declared here and not in the Composition Root because the profile is the
  * selection policy's own: which model a Card is embedded under, at what
  * precision and width, is a quality decision Selection owns and the daemon
- * assembles (개발 파트 분담 §3 "Card 선택용 Card·query embedding profile";
- * SOT L1374-L1378). What stays in the daemon is the binding — which provider
+ * assembles (the Card-selection embedding ownership boundary). What stays in
+ * the daemon is the binding — which provider
  * instance serves a profile, and whether it shares a session with the document
  * path — which is composition and not policy.
  *

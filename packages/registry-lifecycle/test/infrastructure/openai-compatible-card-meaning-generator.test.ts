@@ -347,8 +347,8 @@ describe("OpenAiCompatibleCardMeaningGenerator", () => {
   /**
    * What the model is not allowed to decide, asserted rather than assumed.
    *
-   * The root CLAUDE.md states it as a hard constraint: LLM 출력은 Scope·정책·승인·
-   * 생명주기 상태·출처를 만들거나 바꿀 수 없다. The code that keeps it is
+   * The Registry grounding boundary is a hard constraint: an LLM cannot create
+   * or change Scope, policy, approval, lifecycle state, or provenance. The code that keeps it is
    * `readMeaning` reading four keys and no others — so the rule is enforced by an
    * *absence*, and an absence is exactly what no test notices going away. Adding
    * a fifth key to that function today breaks nothing.
