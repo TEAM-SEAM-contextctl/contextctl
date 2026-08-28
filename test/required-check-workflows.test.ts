@@ -74,6 +74,17 @@ describe("required external check workflows", () => {
     expect(workflow).toContain("  id-token: write\n");
     expect(workflow).toContain("    environment: npm\n");
     expect(workflow).toContain("    if: ${{ github.ref == 'refs/heads/main' }}\n");
+    expect(workflow).not.toContain(
+      "    env:\n      CONTEXTCTL_QDRANT_URL: http://127.0.0.1:6333\n    steps:\n",
+    );
+    for (const step of [
+      "Wait for Qdrant readiness",
+      "Run Qdrant integration tests",
+    ]) {
+      expect(workflow).toContain(
+        `      - name: ${step}\n        env:\n          CONTEXTCTL_QDRANT_URL: http://127.0.0.1:6333\n`,
+      );
+    }
     expect(workflow).toContain(
       "          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}\n",
     );
