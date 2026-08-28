@@ -30,11 +30,23 @@ Release verification packs the five workspaces and installs them into an empty
 prefix, which is the only path that exercises the published artefacts rather
 than the working tree.
 
+The repository root stays private. The five release workspaces are public scoped
+packages and keep one integrated exact version. Publish them only after the
+release commit has passed every required check; dependency order is contracts,
+selection-delivery, registry-lifecycle, ingestion-indexing, then daemon. A
+GitHub tag or release never substitutes for confirming the same version from the
+public npm registry in an empty prefix.
+
 | Script | Environment |
 |---|---|
 | `npm run test:release-package` | — |
 | `npm run test:release-product` | `CONTEXTCTL_RELEASE_E2E_QDRANT_URL` (`…_QDRANT_API_KEY` if the server needs one) |
 | `npm run test:release-product-local` | the two above plus `CONTEXTCTL_RELEASE_E2E_ASSET_ROOT` |
+
+`npm run release:publish:dry-run` checks all five npm publication payloads
+without changing the registry. Actual publication is deliberately not a root
+script: each immutable package version is published in dependency order and
+verified from the registry before moving to the next dependent package.
 
 Development pins Node **24.18.0** and npm **11.16.0** exactly — `.nvmrc` and CI
 say so. Published packages declare `>=24.18.0 <25`: patch and later 24.x releases

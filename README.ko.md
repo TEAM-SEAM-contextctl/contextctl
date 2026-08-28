@@ -62,13 +62,12 @@ MCP 서버로도 뜨므로 Claude Code 같은 에이전트에 붙일 수 있습�
 ## 설치
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash
+npm install -g @contextctl/daemon@1.1.0
 ```
 
-스크립트는 하나의 불변 릴리스 태그를 먼저 확정하고, 그 릴리스의 `SHA256SUMS`와 패키지 5개를
-대조한 뒤 한 번의 `npm i -g`로 설치합니다. digest가 하나라도 다르면 npm을 호출하기 전에
-멈춥니다. 특정 버전을 다시 설치할 때는 파이프로 넘기는 Bash 인자 뒤에
-`-s -- --version vX.Y.Z`를 붙입니다. 전체 명령은 운영 안내서에 있습니다.
+나머지 네 Workspace도 같은 통합 버전으로 고정돼 함께 설치됩니다. SHA-256으로 검증한 GitHub
+자산을 쓰려면 [운영 안내서의 릴리스 설치](docs/operations.md#릴리스-설치-무결성)를 따르십시오.
+특정 버전의 재설치 명령도 그곳에 있습니다.
 
 **모델은 받지 않습니다.** 별도의 396.1 MiB(약 415 MB) 다운로드는 다음 단계에서
 동의를 묻습니다.

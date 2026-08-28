@@ -1,9 +1,11 @@
 {
   "name": "@contextctl/selection-delivery",
-  "version": "1.0.1",
-  "private": true,
+  "version": "1.1.0",
   "description": "Context Card selection and context delivery for Contextctl.",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/TEAM-SEAM-contextctl/contextctl.git",
