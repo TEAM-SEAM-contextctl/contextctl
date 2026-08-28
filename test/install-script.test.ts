@@ -103,9 +103,111 @@ describe("release installer", () => {
       const result = runInstaller(fixture, ["--version", "v1.2.3"]);
 
       expect(result.status, nodeVersion).toBe(1);
-      expect(result.stderr).toContain("지원 범위는 24.18.0 이상 25 미만");
+      expect(result.stderr).toContain("지원 범위는 >=24.18.0 <25");
       expect(() => readFileSync(fixture.curlMarker)).toThrow();
     }
+  });
+
+  it("renders one complete English installation when explicitly selected", () => {
+    const fixture = createFixture();
+
+    const result = runInstaller(fixture, ["--version", "v1.2.3"], "en");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Installing release v1.2.3.");
+    expect(result.stdout).toContain("Using Node.js v24.18.0.");
+    expect(result.stdout).toContain("Installation complete:");
+    expect(result.stdout).toContain("Next steps:");
+    expect(result.stdout).not.toMatch(/[가-힣]/u);
+    expect(result.stderr).not.toMatch(/[가-힣]/u);
+  });
+
+  it("keeps English failure paths free of Korean prose", () => {
+    const unsupported = runInstaller(
+      createFixture("valid", "v26.0.0"),
+      ["--version", "v1.2.3"],
+      "en",
+    );
+    expect(unsupported.status).toBe(1);
+    expect(unsupported.stderr).toContain("The supported range is >=24.18.0 <25");
+    expect(unsupported.stderr).not.toMatch(/[가-힣]/u);
+
+    const corruptFixture = createFixture();
+    writeFileSync(
+      join(corruptFixture.releaseDirectory, "contextctl-ingestion-indexing.tgz"),
+      "tampered after checksums were generated",
+    );
+    const corrupt = runInstaller(
+      corruptFixture,
+      ["--version", "v1.2.3"],
+      "en",
+    );
+    expect(corrupt.status).toBe(1);
+    expect(corrupt.stderr).toContain("SHA-256 verification failed");
+    expect(corrupt.stderr).toContain("The npm installation was not started");
+    expect(corrupt.stderr).not.toMatch(/[가-힣]/u);
+
+    const stale = runInstaller(
+      createFixture("valid", "v24.18.0", "1.2.2"),
+      ["--version", "v1.2.3"],
+      "en",
+    );
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain(
+      "The contextctl command on PATH does not match the requested release",
+    );
+    expect(stale.stderr).not.toMatch(/[가-힣]/u);
+  });
+
+  it.each([
+    ["en", "Usage: install.sh", "If you omit the version"],
+    ["ko", "사용법: install.sh", "버전을 생략하면"],
+  ] as const)("renders %s help", (locale, usage, explanation) => {
+    const result = runInstaller(createFixture(), ["--help"], locale);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(usage);
+    expect(result.stdout).toContain(explanation);
+  });
+
+  it("detects Korean from the OS locale when no explicit locale is set", () => {
+    const fixture = createFixture();
+
+    const result = runInstaller(
+      fixture,
+      ["--version", "v1.2.3"],
+      null,
+      "ko_KR.UTF-8",
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("릴리스 v1.2.3 를 설치합니다.");
+    expect(result.stdout).toContain("다음 단계:");
+  });
+
+  it("defaults unsupported OS locales to English", () => {
+    const fixture = createFixture();
+
+    const result = runInstaller(
+      fixture,
+      ["--version", "v1.2.3"],
+      null,
+      "de_DE.UTF-8",
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Installing release v1.2.3.");
+    expect(result.stdout).not.toMatch(/[가-힣]/u);
+  });
+
+  it("rejects an invalid explicit locale before any download", () => {
+    const fixture = createFixture();
+
+    const result = runInstaller(fixture, ["--version", "v1.2.3"], "fr");
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("[locale_invalid]");
+    expect(() => readFileSync(fixture.curlMarker)).toThrow();
   });
 
   it("rejects malformed release tags before downloading assets", () => {
@@ -193,18 +295,29 @@ function createFixture(
 function runInstaller(
   fixture: ReturnType<typeof createFixture>,
   arguments_: readonly string[] = [],
+  locale: string | null = "ko",
+  language = "C.UTF-8",
 ): { readonly status: number | null; readonly stdout: string; readonly stderr: string } {
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${fixture.binDirectory}:${process.env["PATH"] ?? "/usr/bin:/bin"}`,
+    CONTEXTCTL_INSTALL_RELEASE_BASE: "https://fixture.invalid/v1.2.3",
+    FAKE_RELEASE_DIRECTORY: fixture.releaseDirectory,
+    FAKE_GLOBAL_PREFIX: fixture.root,
+    FAKE_NPM_MARKER: fixture.npmMarker,
+    FAKE_CURL_MARKER: fixture.curlMarker,
+    LC_ALL: "",
+    LC_MESSAGES: "",
+    LANG: language,
+  };
+  if (locale === null) {
+    delete environment["CONTEXTCTL_LOCALE"];
+  } else {
+    environment["CONTEXTCTL_LOCALE"] = locale;
+  }
   const result = spawnSync("/bin/bash", [installer, ...arguments_], {
     cwd: repositoryRoot,
-    env: {
-      ...process.env,
-      PATH: `${fixture.binDirectory}:${process.env["PATH"] ?? "/usr/bin:/bin"}`,
-      CONTEXTCTL_INSTALL_RELEASE_BASE: "https://fixture.invalid/v1.2.3",
-      FAKE_RELEASE_DIRECTORY: fixture.releaseDirectory,
-      FAKE_GLOBAL_PREFIX: fixture.root,
-      FAKE_NPM_MARKER: fixture.npmMarker,
-      FAKE_CURL_MARKER: fixture.curlMarker,
-    },
+    env: environment,
     encoding: "utf8",
   });
   return {
