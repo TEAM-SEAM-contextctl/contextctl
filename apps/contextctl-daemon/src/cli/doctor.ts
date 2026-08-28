@@ -53,6 +53,10 @@ import { RegistryApprovedCardCatalog } from "../adapters/registry-approved-card-
 import type { ContextctlPaths } from "./paths.js";
 import { verifyRequiredRetainedLocalBindings } from "./retained-embedding-assets.js";
 import { inspectSelectionAuditDatabase } from "../selection-audit/sqlite-selection-audit-store.js";
+import {
+  isSupportedNodeVersion,
+  SUPPORTED_NODE_VERSION,
+} from "./node-runtime-support.js";
 
 /**
  * What `contextctl doctor` reports, and why it is not the composition root.
@@ -107,9 +111,6 @@ export interface DiagnosisInput {
   readonly deep?: boolean;
 }
 
-/** The lowest Node that ships `node:sqlite`, which both stores require. */
-const MINIMUM_NODE_MAJOR = 24;
-
 const ASSET_REMEDY =
   `contextctl install-assets 를 실행해 고정된 임베딩 모델(${DEFAULT_GRANITE_ASSET_SIZE_INLINE})을 설치하세요.`;
 
@@ -133,6 +134,7 @@ export async function runDiagnosis(
   const stateIdentity = readDaemonStateIdentity(input.environment);
   const steps: DiagnosisStep[] = [
     checkNodeVersion(),
+    checkNodeSqliteAvailability(),
     await checkHomeDirectory(paths.home),
     await checkSourcesFile(paths.sourcesFile),
     checkRegistryDatabase(paths.registryDatabase, stateIdentity),
@@ -286,21 +288,40 @@ function immutableDatabaseUrl(location: string): URL {
  * error from the *store*, which reads as a broken package rather than as a
  * wrong Node. Naming the version here turns that into one sentence.
  */
-function checkNodeVersion(): DiagnosisStep {
-  const version = process.versions.node;
-  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
-  if (Number.isNaN(major) || major < MINIMUM_NODE_MAJOR) {
+export function checkNodeVersion(
+  version = process.versions.node,
+): DiagnosisStep {
+  if (!isSupportedNodeVersion(version)) {
     return diagnosis(
       "node-version",
       "fail",
-      `Node ${version} 에서는 node:sqlite 를 쓸 수 없습니다. Registry·Ingestion 저장소가 열리지 않습니다.`,
-      `Node ${MINIMUM_NODE_MAJOR} 이상을 설치한 뒤 다시 실행하세요 (예: nvm install ${MINIMUM_NODE_MAJOR}).`,
+      `Node ${version} 은 지원 범위 ${SUPPORTED_NODE_VERSION.display} 밖입니다. 이 버전에서는 contextctl 릴리스를 검증하지 않았습니다.`,
+      `Node 24.18.0으로 전환한 뒤 다시 실행하세요 (예: nvm install 24.18.0).`,
     );
   }
   return diagnosis(
     "node-version",
     "ok",
-    `Node ${version} — node:sqlite 를 쓸 수 있습니다.`,
+    `Node ${version} — 지원 범위 ${SUPPORTED_NODE_VERSION.display} 안입니다.`,
+  );
+}
+
+function checkNodeSqliteAvailability(): DiagnosisStep {
+  const sqlite = process.getBuiltinModule("node:sqlite") as
+    | { readonly DatabaseSync?: unknown }
+    | undefined;
+  if (typeof sqlite?.DatabaseSync !== "function") {
+    return diagnosis(
+      "node-sqlite",
+      "fail",
+      "현재 Node 런타임에서 node:sqlite DatabaseSync를 사용할 수 없습니다.",
+      "Node 24.18.0 정식 릴리스를 설치한 뒤 다시 실행하세요.",
+    );
+  }
+  return diagnosis(
+    "node-sqlite",
+    "ok",
+    "node:sqlite DatabaseSync를 사용할 수 있습니다.",
   );
 }
 
