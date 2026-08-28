@@ -85,6 +85,16 @@ describe("required external check workflows", () => {
         `      - name: ${step}\n        env:\n          CONTEXTCTL_QDRANT_URL: http://127.0.0.1:6333\n`,
       );
     }
+    const benchmarkStep = workflow.slice(
+      workflow.indexOf("      - name: Run ingestion and indexing benchmark\n"),
+      workflow.indexOf("      - name: Verify installed local product combinations\n"),
+    );
+    expect(benchmarkStep).toContain(
+      "          CONTEXTCTL_QDRANT_URL: http://127.0.0.1:6333\n",
+    );
+    expect(benchmarkStep).toContain(
+      "          CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH:",
+    );
     expect(workflow).toContain(
       "          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}\n",
     );
