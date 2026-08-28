@@ -24,8 +24,9 @@ function healthy(overrides: Partial<StatusObservation> = {}): StatusObservation 
   return {
     assets: { status: "installed", directory: "/home/.contextctl/assets/rev_a" },
     vectorIndex: {
-      status: "configured",
+      status: "reachable",
       endpoint: "http://localhost:6333/",
+      elapsedMs: 4,
     },
     stateReadiness: { status: "ready" },
     registry: {
@@ -222,6 +223,42 @@ describe("judgeLanes", () => {
     expect(statusOf(report, "selection_assets")).toBe("ready");
     expect(report.serviceable).toBe(false);
   });
+
+  it.each([
+    ["timeout", "응답 제한 시간"],
+    ["connection_refused", "연결이 거부"],
+    ["unauthorized", "인증이 거부"],
+    ["invalid_response", "정상 응답"],
+    ["unknown", "확인할 수 없습니다"],
+  ] as const)(
+    "blocks resolve and ingestion when Qdrant is %s",
+    (code, expectedDetail) => {
+      const report = judgeLanes(
+        healthy({
+          vectorIndex: {
+            status: "unreachable",
+            endpoint: "https://vectors.example.com/",
+            code,
+          },
+          stateReadiness: { status: "not_checked" },
+        }),
+      );
+
+      expect(statusOf(report, "resolve")).toBe("not_ready");
+      expect(statusOf(report, "ingestion")).toBe("not_ready");
+      expect(
+        report.lanes.find((verdict) => verdict.lane === "resolve")?.detail,
+      ).toContain(expectedDetail);
+      expect(
+        report.lanes.find((verdict) => verdict.lane === "resolve")?.reason,
+      ).toEqual({
+        kind: "qdrant",
+        code,
+        endpoint: "https://vectors.example.com/",
+      });
+      expect(report.serviceable).toBe(false);
+    },
+  );
 
   it("tells an operator to install rather than only that a lane is down", () => {
     const report = judgeLanes(

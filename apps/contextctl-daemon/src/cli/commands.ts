@@ -53,7 +53,11 @@ import {
   type CardListing,
 } from "./render.js";
 import type { RegistryIntakeResult } from "../registry-intake.js";
-import { resolveVectorBackend } from "../vector-backend.js";
+import {
+  probeQdrantReadiness,
+  QDRANT_STATUS_TIMEOUT_MS,
+  resolveVectorBackend,
+} from "../vector-backend.js";
 import { DEFAULT_CONNECTOR_ID } from "../main.js";
 import { inspectSelectionAuditDatabase } from "../selection-audit/sqlite-selection-audit-store.js";
 
@@ -674,18 +678,29 @@ export async function runStatus(
   },
 ): Promise<CommandOutcome> {
   const paths = resolveContextctlPaths(context.environment, context.workingDirectory);
+  // The network probe is independent of SQLite reads. Start it immediately so
+  // the short deadline does not become added latency on every status call.
+  const vectorIndexPromise = observeVectorIndex(context.environment);
   const registry = await observeRegistry(cli);
+  const ingestion = await observeIngestion(cli, registry);
+  const vectorIndex = await vectorIndexPromise;
   const observation: StatusObservation = {
     assets: await observeAssets(paths.embeddingAssetDirectory),
     registry,
-    ingestion: await observeIngestion(cli, registry),
-    vectorIndex: observeVectorIndex(context.environment),
-    stateReadiness: await observeStateReadiness(
-      cli,
-      context.environment,
-      paths.ingestionDatabase,
-      paths.selectionAuditDatabase,
-    ),
+    ingestion,
+    vectorIndex,
+    // A dead service cannot answer collection-specific binding checks. Do not
+    // make the same failed network call again; the shared reachability result
+    // already blocks both lanes and names the actual cause.
+    stateReadiness:
+      vectorIndex.status === "reachable"
+        ? await observeStateReadiness(
+            cli,
+            context.environment,
+            paths.ingestionDatabase,
+            paths.selectionAuditDatabase,
+          )
+        : { status: "not_checked" },
     embedding: await observeEmbeddingBindings(
       cli,
       context.environment,
@@ -756,26 +771,28 @@ async function observeStateReadiness(
     const connectorId =
       readNonEmpty(environment, "CONTEXTCTL_CONNECTOR_ID") ??
       DEFAULT_CONNECTOR_ID;
-    await assertDaemonStateReady({
-      stateIdentity: cli.stateIdentity,
-      catalog: new RegistryApprovedCardCatalog(cli.cards),
-      publications: cli.indexPublications,
-      vectorIndexes: new StaticVectorIndexConnectorRegistry([
-        { connectorId, vectorIndex: vectorBackend.vectorIndex },
-      ]),
-    });
+    await assertDaemonStateReady(
+      {
+        stateIdentity: cli.stateIdentity,
+        catalog: new RegistryApprovedCardCatalog(cli.cards),
+        publications: cli.indexPublications,
+        vectorIndexes: new StaticVectorIndexConnectorRegistry([
+          { connectorId, vectorIndex: vectorBackend.vectorIndex },
+        ]),
+      },
+      AbortSignal.timeout(QDRANT_STATUS_TIMEOUT_MS),
+    );
     return { status: "ready" };
   } catch (error) {
     return { status: "unavailable", detail: describeError(error) };
   }
 }
 
-function observeVectorIndex(
+async function observeVectorIndex(
   environment: Readonly<Partial<Record<string, string>>>,
-): VectorIndexObservation {
+): Promise<VectorIndexObservation> {
   try {
-    const backend = resolveVectorBackend(environment);
-    return { status: "configured", endpoint: backend.endpoint };
+    return await probeQdrantReadiness(environment);
   } catch (error) {
     return { status: "unavailable", detail: describeError(error) };
   }
