@@ -75,6 +75,10 @@ describe("required external check workflows", () => {
     expect(workflow).toContain("    environment: npm\n");
     expect(workflow).toContain("    if: ${{ github.ref == 'refs/heads/main' }}\n");
     expect(workflow).toContain(
+      "          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}\n",
+    );
+    expect(workflow.match(/NODE_AUTH_TOKEN:/gu)).toHaveLength(1);
+    expect(workflow).toContain(
       "qdrant/qdrant@sha256:0fb8897412abc81d1c0430a899b9a81eb8328aa634e7242d1bc804c1fe8fe863",
     );
     for (const command of [
@@ -93,6 +97,12 @@ describe("required external check workflows", () => {
     }
     expect(workflow.indexOf("release:publish:candidate")).toBeLessThan(
       workflow.indexOf("release:verify:published"),
+    );
+    expect(workflow.indexOf("NODE_AUTH_TOKEN:")).toBeGreaterThan(
+      workflow.indexOf("- name: Publish immutable candidate packages"),
+    );
+    expect(workflow.indexOf("NODE_AUTH_TOKEN:")).toBeLessThan(
+      workflow.indexOf("release:publish:candidate"),
     );
   });
 });
