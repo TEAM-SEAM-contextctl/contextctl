@@ -23,6 +23,7 @@ import {
 
 import type { CliCommand } from "./arguments.js";
 import { EXIT_CODES, operatorExitCode, type ExitCode } from "./exit-codes.js";
+import type { CliStdoutPresentation } from "./presentation.js";
 import {
   describeAssetInstallationPlan,
   planAssetInstallation,
@@ -103,6 +104,8 @@ export interface CommandOutcome {
   /** Goes to stderr. Warnings, diagnoses, and anything a pipe must not eat. */
   readonly stderr: readonly string[];
   readonly exitCode: number;
+  /** Optional TTY-only structure. Redirected stdout still uses `stdout`. */
+  readonly stdoutPresentation?: CliStdoutPresentation;
 }
 
 export function ok(stdout: string, stderr: readonly string[] = []): CommandOutcome {
@@ -704,7 +707,14 @@ export async function runStatus(
     : renderStatusReport(report);
 
   if (report.serviceable) {
-    return ok(stdout);
+    return {
+      stdout,
+      stderr: [],
+      exitCode: EXIT_CODES.ok,
+      ...(command.json
+        ? {}
+        : { stdoutPresentation: { kind: "status" as const, rows: report.lanes } }),
+    };
   }
   // The report stays on stdout even when a lane is down — it is the same text a
   // healthy run prints and it names which lane — with the verdict repeated on
@@ -719,6 +729,9 @@ export async function runStatus(
         .join(", ")}`,
     ],
     exitCode: EXIT_CODES.laneNotReady,
+    ...(command.json
+      ? {}
+      : { stdoutPresentation: { kind: "status" as const, rows: report.lanes } }),
   };
 }
 

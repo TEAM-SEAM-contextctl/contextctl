@@ -1,3 +1,8 @@
+import type {
+  CliStdoutPresentation,
+  StatusDisplayRow,
+} from "./presentation.js";
+
 /** ANSI control sequences are confined to the interactive terminal adapter. */
 const ANSI = {
   clearLine: "\u001b[2K",
@@ -13,7 +18,7 @@ const HEADING_PATTERN =
   /^(질의:|선택 모드:|스코어링:|페이로드 스키마 버전:|예산:|판정 집계:|선택된 Card(?:\s|:)|컨텍스트 항목(?:\s|:)|runtime\s)/u;
 
 export interface CliTerminal {
-  readonly stdout: (text: string) => void;
+  readonly stdout: (text: string, presentation?: CliStdoutPresentation) => void;
   readonly stderr: (text: string) => void;
   readonly progress: (text: string) => void;
   /** Completes an in-place progress line before the process exits. */
@@ -49,10 +54,11 @@ export function createCliTerminal(input: {
   };
 
   return {
-    stdout: (text) => {
+    stdout: (text, presentation) => {
       const wrapped = wrapForTerminal(
         text,
         input.stdoutIsTTY ? input.stdoutColumns : undefined,
+        presentation,
       );
       input.writeStdout(
         `${input.stdoutIsTTY && ansiEnabled ? decorateStdout(wrapped) : wrapped}\n`,
@@ -82,7 +88,11 @@ export function createCliTerminal(input: {
 }
 
 /** Wraps human-facing TTY prose while preserving machine-readable JSON. */
-function wrapForTerminal(text: string, columns: number | undefined): string {
+function wrapForTerminal(
+  text: string,
+  columns: number | undefined,
+  presentation?: CliStdoutPresentation,
+): string {
   if (
     columns === undefined ||
     !Number.isInteger(columns) ||
@@ -91,10 +101,49 @@ function wrapForTerminal(text: string, columns: number | undefined): string {
   ) {
     return text;
   }
+  if (presentation?.kind === "status") {
+    return wrapStatusPresentation(text, presentation.rows, columns);
+  }
   return text
     .split("\n")
     .flatMap((line) => wrapLine(line, columns))
     .join("\n");
+}
+
+/**
+ * Lays out only rows the status command identified as rows. Ordinary output
+ * keeps using the conservative prose/table rules below, so an unrelated line
+ * with two spaces never changes merely because it resembles a status table.
+ */
+function wrapStatusPresentation(
+  text: string,
+  rows: readonly StatusDisplayRow[],
+  columns: number,
+): string {
+  const lines = text.split("\n");
+  const statusLines = lines.slice(0, rows.length).flatMap((line, index) => {
+    const row = rows[index];
+    if (row === undefined || displayWidth(line) <= columns) {
+      return [line];
+    }
+    return wrapStatusRow(row, columns);
+  });
+  const remainingLines = lines
+    .slice(rows.length)
+    .flatMap((line) => wrapLine(line, columns));
+  return [...statusLines, ...remainingLines].join("\n");
+}
+
+function wrapStatusRow(
+  row: StatusDisplayRow,
+  columns: number,
+): readonly string[] {
+  const heading = `${row.lane}  ${row.status}`;
+  const headingLines =
+    displayWidth(heading) <= columns
+      ? [heading]
+      : [row.lane, `  ${row.status}`];
+  return [...headingLines, ...wrapLine(`  ${row.detail}`, columns)];
 }
 
 function wrapLine(text: string, columns: number): readonly string[] {
@@ -124,7 +173,7 @@ function wrapLine(text: string, columns: number): readonly string[] {
   return lines;
 }
 
-/** Keeps padded tables and aligned status rows byte-for-byte intact. */
+/** Keeps padded tables byte-for-byte intact. Status rows use explicit data. */
 function isColumnarLine(text: string): boolean {
   return /\S(?: {2,}|\t)\S/u.test(text);
 }
@@ -203,8 +252,8 @@ function decorateStderr(text: string): string {
 }
 
 function decorateStatusLine(line: string): string {
-  return line.replace(
-    /^(resolve|registry|selection_assets|ingestion)(\s+)(ready|degraded|not_ready)(\s+)/u,
+  const decorated = line.replace(
+    /^(resolve|registry|selection_assets|ingestion)(\s+)(ready|degraded|not_ready)(\s+|$)/u,
     (_match, lane: string, firstGap: string, status: string, secondGap: string) => {
       const colourCode =
         status === "ready"
@@ -213,6 +262,21 @@ function decorateStatusLine(line: string): string {
             ? ANSI.yellow
             : ANSI.red;
       return `${lane}${firstGap}${colour(status, colourCode)}${secondGap}`;
+    },
+  );
+  if (decorated !== line) {
+    return decorated;
+  }
+  return line.replace(
+    /^(\s{2})(ready|degraded|not_ready)$/u,
+    (_match, indentation: string, status: string) => {
+      const colourCode =
+        status === "ready"
+          ? ANSI.green
+          : status === "degraded"
+            ? ANSI.yellow
+            : ANSI.red;
+      return `${indentation}${colour(status, colourCode)}`;
     },
   );
 }
