@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  probeQdrantReadiness,
   resolveVectorBackend,
   VectorBackendConfigurationError,
 } from "../../src/vector-backend.js";
@@ -96,3 +97,120 @@ describe("resolveVectorBackend", () => {
     expect(backend.endpoint).not.toContain(secret);
   });
 });
+
+describe("probeQdrantReadiness", () => {
+  it("uses one authenticated read-only request and validates Qdrant's response", async () => {
+    const calls: {
+      readonly url: string;
+      readonly init: RequestInit | undefined;
+    }[] = [];
+    const clock = [100, 112];
+    const result = await probeQdrantReadiness(
+      {
+        CONTEXTCTL_QDRANT_URL: "https://vectors.example.com/qdrant",
+        CONTEXTCTL_QDRANT_API_KEY: "secret-value",
+      },
+      {
+        fetch: async (input, init) => {
+          calls.push({ url: String(input), init });
+          return qdrantCollectionsResponse();
+        },
+        now: () => clock.shift() ?? 112,
+      },
+    );
+
+    expect(result).toEqual({
+      status: "reachable",
+      endpoint: "https://vectors.example.com/qdrant",
+      elapsedMs: 12,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://vectors.example.com/qdrant/collections");
+    expect(calls[0]?.init?.method).toBe("GET");
+    expect(calls[0]?.init?.headers).toEqual({ "api-key": "secret-value" });
+    expect(JSON.stringify(result)).not.toContain("secret-value");
+  });
+
+  it.each([
+    [401, "unauthorized"],
+    [403, "unauthorized"],
+    [500, "invalid_response"],
+  ] as const)("classifies HTTP %i without returning a response body", async (status, code) => {
+    const result = await probeQdrantReadiness(
+      { CONTEXTCTL_QDRANT_URL: "https://vectors.example.com" },
+      { fetch: async () => new Response("private upstream detail", { status }) },
+    );
+
+    expect(result).toEqual({
+      status: "unreachable",
+      endpoint: "https://vectors.example.com/",
+      code,
+    });
+    expect(JSON.stringify(result)).not.toContain("private upstream detail");
+  });
+
+  it("rejects a successful non-Qdrant response", async () => {
+    const result = await probeQdrantReadiness(
+      { CONTEXTCTL_QDRANT_URL: "https://vectors.example.com" },
+      { fetch: async () => new Response('{"ok":true}') },
+    );
+
+    expect(result).toMatchObject({
+      status: "unreachable",
+      code: "invalid_response",
+    });
+  });
+
+  it("bounds the collection-list response instead of buffering without limit", async () => {
+    const result = await probeQdrantReadiness(
+      { CONTEXTCTL_QDRANT_URL: "https://vectors.example.com" },
+      { fetch: async () => new Response("x".repeat(1024 * 1024 + 1)) },
+    );
+
+    expect(result).toMatchObject({
+      status: "unreachable",
+      code: "invalid_response",
+    });
+  });
+
+  it("bounds a hanging probe and reports the timeout", async () => {
+    const result = await probeQdrantReadiness(
+      { CONTEXTCTL_QDRANT_URL: "https://vectors.example.com" },
+      {
+        timeoutMs: 10,
+        fetch: (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+          }),
+      },
+    );
+
+    expect(result).toMatchObject({ status: "unreachable", code: "timeout" });
+  });
+
+  it("distinguishes a refused connection from an unknown transport failure", async () => {
+    const refused = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("connect refused"), { code: "ECONNREFUSED" }),
+    });
+    const result = await probeQdrantReadiness(
+      { CONTEXTCTL_QDRANT_URL: "http://127.0.0.1:6333" },
+      { fetch: async () => Promise.reject(refused) },
+    );
+
+    expect(result).toMatchObject({
+      status: "unreachable",
+      code: "connection_refused",
+    });
+  });
+});
+
+function qdrantCollectionsResponse(): Response {
+  return new Response(
+    JSON.stringify({ result: { collections: [] }, status: "ok", time: 0 }),
+    { headers: { "content-type": "application/json" } },
+  );
+}

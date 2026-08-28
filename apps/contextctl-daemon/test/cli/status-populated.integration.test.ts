@@ -28,7 +28,8 @@ import {
 import { EXIT_CODES } from "../../src/cli/exit-codes.js";
 
 /**
- * The lanes that only a populated machine can show, against real rows.
+ * The lanes that only a populated machine can show, against real rows and the
+ * durable Qdrant dependency that `status` now probes.
  *
  * The pure judgement is tested in `status.test.ts` and the wiring on a fresh
  * machine in `status-command.test.ts`. Neither reaches the SQL: whether a
