@@ -27,6 +27,7 @@ import {
 import type { LaneDepth } from "../runtime/admission.js";
 import type { DaemonLifecycleState } from "../runtime/lifecycle.js";
 import type { EmbeddingRuntimeSnapshot } from "../runtime/embedding-runtime-scheduler.js";
+import type { QdrantReadinessFailureCode } from "../vector-backend.js";
 
 export type LaneName = "resolve" | "registry" | "selection_assets" | "ingestion";
 
@@ -45,6 +46,12 @@ export interface LaneVerdict {
   readonly status: LaneStatus;
   /** Why, in the operator's language. One sentence per finding. */
   readonly detail: string;
+  /** Stable machine context for a dependency failure. Never localized. */
+  readonly reason?: {
+    readonly kind: "qdrant";
+    readonly code: QdrantReadinessFailureCode;
+    readonly endpoint: string;
+  };
 }
 
 /**
@@ -81,12 +88,22 @@ export type AssetObservation =
 
 /** The durable vector index required by both publish and resolve paths. */
 export type VectorIndexObservation =
-  | { readonly status: "configured"; readonly endpoint: string }
+  | {
+      readonly status: "reachable";
+      readonly endpoint: string;
+      readonly elapsedMs: number;
+    }
+  | {
+      readonly status: "unreachable";
+      readonly endpoint: string;
+      readonly code: QdrantReadinessFailureCode;
+    }
   | { readonly status: "unavailable"; readonly detail: string };
 
 /** Cross-store identity and every approved physical document binding. */
 export type StateReadinessObservation =
   | { readonly status: "ready" }
+  | { readonly status: "not_checked" }
   | { readonly status: "unavailable"; readonly detail: string };
 
 /**
@@ -207,6 +224,9 @@ export function judgeLanes(
  */
 function judgeResolve(observation: StatusObservation): LaneVerdict {
   const { registry, assets, vectorIndex } = observation;
+  if (vectorIndex.status !== "reachable") {
+    return vectorIndexFailureLane("resolve", vectorIndex, "검색할");
+  }
   if (observation.stateReadiness.status === "unavailable") {
     return lane(
       "resolve",
@@ -238,11 +258,11 @@ function judgeResolve(observation: StatusObservation): LaneVerdict {
       "임베딩 자산이 없어 질문을 벡터로 만들 수 없습니다. contextctl install-assets 를 실행하세요.",
     );
   }
-  if (vectorIndex.status === "unavailable") {
+  if (observation.stateReadiness.status === "not_checked") {
     return lane(
       "resolve",
       "not_ready",
-      `지속 가능한 벡터 인덱스가 설정되지 않았습니다: ${vectorIndex.detail}`,
+      "공유 상태의 식별값과 문서 인덱스 바인딩을 점검하지 못했습니다.",
     );
   }
   if (registry.approvedCardCount === 0) {
@@ -364,12 +384,8 @@ function judgeIngestion(
   observation: IngestionObservation,
   vectorIndex: VectorIndexObservation,
 ): LaneVerdict {
-  if (vectorIndex.status === "unavailable") {
-    return lane(
-      "ingestion",
-      "not_ready",
-      `게시할 지속 가능한 벡터 인덱스가 설정되지 않았습니다: ${vectorIndex.detail}`,
-    );
+  if (vectorIndex.status !== "reachable") {
+    return vectorIndexFailureLane("ingestion", vectorIndex, "게시할");
   }
   if (observation.status === "unreadable") {
     return lane(
@@ -389,8 +405,49 @@ function judgeIngestion(
   return lane("ingestion", "ready", `끝나지 않은 게시가 없습니다. ${limit}`);
 }
 
-function lane(name: LaneName, status: LaneStatus, detail: string): LaneVerdict {
-  return { lane: name, status, detail };
+function vectorIndexFailureLane(
+  name: "resolve" | "ingestion",
+  observation: Exclude<VectorIndexObservation, { readonly status: "reachable" }>,
+  purpose: string,
+): LaneVerdict {
+  if (observation.status === "unavailable") {
+    return lane(
+      name,
+      "not_ready",
+      `${purpose} 지속 가능한 벡터 인덱스 설정을 사용할 수 없습니다: ${observation.detail}`,
+    );
+  }
+  const reason: Record<QdrantReadinessFailureCode, string> = {
+    timeout: "응답 제한 시간을 초과했습니다",
+    connection_refused: "연결이 거부되었습니다",
+    unauthorized: "인증이 거부되었습니다",
+    invalid_response: "Qdrant 형식의 정상 응답을 받지 못했습니다",
+    unknown: "연결 상태를 확인할 수 없습니다",
+  };
+  return lane(
+    name,
+    "not_ready",
+    `${purpose} Qdrant에 연결할 수 없습니다 (${observation.endpoint}): ${reason[observation.code]}.`,
+    {
+      kind: "qdrant",
+      code: observation.code,
+      endpoint: observation.endpoint,
+    },
+  );
+}
+
+function lane(
+  name: LaneName,
+  status: LaneStatus,
+  detail: string,
+  reason?: LaneVerdict["reason"],
+): LaneVerdict {
+  return {
+    lane: name,
+    status,
+    detail,
+    ...(reason === undefined ? {} : { reason }),
+  };
 }
 
 /**
