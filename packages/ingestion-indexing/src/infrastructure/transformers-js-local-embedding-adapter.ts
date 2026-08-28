@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { constants as fileConstants } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { open, readFile, realpath, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
+import { Tokenizer, type Encoding } from "@huggingface/tokenizers";
+import * as onnx from "onnxruntime-node";
 
 import {
   assertValidEmbeddingProfile,
@@ -202,7 +205,7 @@ export class TransformersJsLocalEmbeddingAdapter implements EmbeddingPort {
     this.#profile = this.embeddingProfile;
     this.#artifactDirectory = options.artifactDirectory;
     this.#runtimeFactory = hasDirectory
-      ? (options.runtimeFactory ?? new TransformersJsRuntimeFactory())
+      ? (options.runtimeFactory ?? new TransformersCompatibleOnnxRuntimeFactory())
       : undefined;
     if (options.inferenceResource !== undefined) {
       assertMatchingInferenceResource(
@@ -312,7 +315,7 @@ export async function loadLocalDocumentEmbeddingInferenceResource(options: {
   }
   try {
     const resource = await (
-      options.runtimeFactory ?? new TransformersJsRuntimeFactory()
+      options.runtimeFactory ?? new TransformersCompatibleOnnxRuntimeFactory()
     ).load({
       artifactDirectory,
       execution: profile.execution,
@@ -399,7 +402,14 @@ export function serializeLocalEmbeddingAssetManifest(
   return `${canonicalJson(parseAssetManifest(manifest))}\n`;
 }
 
-class TransformersJsRuntimeFactory
+/**
+ * Reproduces the text feature-extraction semantics pinned by adapterVersion
+ * 4.2.0 without installing the unused browser and image runtimes pulled in by
+ * the full Transformers.js package. The tokenizer implementation is the same
+ * package used by Transformers.js 4.2.0, and the ONNX model path is already
+ * pinned and content-verified by the asset manifest.
+ */
+class TransformersCompatibleOnnxRuntimeFactory
   implements LocalFeatureExtractionRuntimeFactory
 {
   async load(input: {
@@ -407,54 +417,270 @@ class TransformersJsRuntimeFactory
     readonly execution: LocalDocumentEmbeddingExecution;
     readonly modelMaxTokens: number;
   }): Promise<LocalFeatureExtractionRuntime> {
-    const { env, mean_pooling, pipeline } = await import(
-      "@huggingface/transformers"
-    );
-    env.allowRemoteModels = false;
-    env.allowLocalModels = true;
-    env.localModelPath = `${input.artifactDirectory}${sep}`;
-    const extractor = await pipeline(
-      "feature-extraction",
-      input.artifactDirectory,
+    const [tokenizerDefinition, tokenizerConfig] = await Promise.all([
+      readJsonObject(resolve(input.artifactDirectory, "tokenizer.json")),
+      readJsonObject(resolve(input.artifactDirectory, "tokenizer_config.json")),
+    ]);
+    const tokenizer = new Tokenizer(tokenizerDefinition, tokenizerConfig);
+    const padding = readTokenizerPadding(tokenizerDefinition);
+    // ORT 1.29 enables platform telemetry bookkeeping by default. Disable it
+    // unless the host explicitly opted in: on macOS its fallback otherwise
+    // writes a `:memory:.ses` identifier into the process working directory.
+    process.env.ORT_DISABLE_TELEMETRY ??= "1";
+    // Keep non-actionable runtime warnings out of CLI stderr while preserving
+    // real inference errors.
+    onnx.env.logLevel = "error";
+    const session = await onnx.InferenceSession.create(
+      resolve(input.artifactDirectory, input.execution.artifactPath),
       {
-        local_files_only: true,
-        device: "cpu",
-        dtype: input.execution.precision,
-        subfolder: dirname(input.execution.artifactPath),
-        model_file_name: modelFileName(input.execution),
+        executionProviders: ["cpu"],
+        logSeverityLevel: 3,
       },
     );
+    assertSupportedOnnxInterface(session);
     return {
       execution: Object.freeze({ ...input.execution }),
       modelMaxTokens: input.modelMaxTokens,
-      tokenCount: (text) => extractor.tokenizer.encode(text).length,
+      tokenCount: (text) => tokenizer.encode(text).ids.length,
       embed: async (texts, options) => {
-        const modelInputs = extractor.tokenizer([...texts], {
-          padding: true,
-          truncation: false,
-        });
-        const modelOutputs = await extractor.model(modelInputs);
-        let tensor =
-          modelOutputs.last_hidden_state ??
-          modelOutputs.logits ??
-          modelOutputs.token_embeddings;
-        if (tensor === undefined) {
-          throw new EmbeddingProviderFault("invalid_response", false);
+        const batch = tokenizeBatch(tokenizer, texts, padding);
+        const feeds = createOnnxFeeds(session.inputNames, batch);
+        try {
+          const outputs = await session.run(feeds);
+          try {
+            const tensor = selectEmbeddingTensor(outputs);
+            return poolAndNormalizeTensor(tensor, batch, options.pooling);
+          } finally {
+            disposeTensors(Object.values(outputs));
+          }
+        } finally {
+          disposeTensors(Object.values(feeds));
         }
-        tensor =
-          options.pooling === "cls"
-            ? tensor.slice(null, 0)
-            : mean_pooling(tensor, modelInputs.attention_mask);
-        tensor = tensor.normalize(2, -1);
-        return {
-          dimensions: [...tensor.dims],
-          data:
-            input.execution.precision === "fp32"
-              ? asFloat32TensorData(tensor.data)
-              : Array.from(tensor.data, Number),
-        };
       },
     };
+  }
+}
+
+interface TokenizerPadding {
+  readonly id: number;
+  readonly typeId: number;
+}
+
+interface TokenizedBatch {
+  readonly batchSize: number;
+  readonly sequenceLength: number;
+  readonly inputIds: BigInt64Array;
+  readonly attentionMask: BigInt64Array;
+  readonly tokenTypeIds: BigInt64Array;
+}
+
+async function readJsonObject(path: string): Promise<Record<string, unknown>> {
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TypeError(`expected a JSON object at ${path}`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function readTokenizerPadding(
+  definition: Record<string, unknown>,
+): TokenizerPadding {
+  const padding = definition.padding;
+  if (padding === null || typeof padding !== "object" || Array.isArray(padding)) {
+    throw new TypeError("tokenizer definition requires padding metadata");
+  }
+  const values = padding as Record<string, unknown>;
+  const id = values.pad_id;
+  const typeId = values.pad_type_id;
+  if (
+    !Number.isSafeInteger(id) ||
+    (id as number) < 0 ||
+    !Number.isSafeInteger(typeId) ||
+    (typeId as number) < 0
+  ) {
+    throw new TypeError("tokenizer padding ids must be non-negative integers");
+  }
+  return { id: id as number, typeId: typeId as number };
+}
+
+function assertSupportedOnnxInterface(session: onnx.InferenceSession): void {
+  const inputs = new Set(session.inputNames);
+  const outputs = new Set(session.outputNames);
+  const supportedInputs = new Set([
+    "input_ids",
+    "attention_mask",
+    "token_type_ids",
+  ]);
+  if (
+    !inputs.has("input_ids") ||
+    !inputs.has("attention_mask") ||
+    session.inputNames.some((name) => !supportedInputs.has(name)) ||
+    !["last_hidden_state", "logits", "token_embeddings"].some((name) =>
+      outputs.has(name),
+    )
+  ) {
+    void session.release();
+    throw new TypeError("unsupported local embedding ONNX interface");
+  }
+}
+
+function tokenizeBatch(
+  tokenizer: Tokenizer,
+  texts: readonly string[],
+  padding: TokenizerPadding,
+): TokenizedBatch {
+  const encodings = texts.map((text) => tokenizer.encode(text));
+  const sequenceLength = Math.max(...encodings.map((item) => item.ids.length));
+  if (!Number.isSafeInteger(sequenceLength) || sequenceLength <= 0) {
+    throw new TypeError("tokenizer produced an empty batch");
+  }
+  const inputIds = new BigInt64Array(texts.length * sequenceLength);
+  const attentionMask = new BigInt64Array(texts.length * sequenceLength);
+  const tokenTypeIds = new BigInt64Array(texts.length * sequenceLength);
+  inputIds.fill(BigInt(padding.id));
+  tokenTypeIds.fill(BigInt(padding.typeId));
+  encodings.forEach((encoding, batchIndex) => {
+    writeEncoding(
+      encoding,
+      batchIndex * sequenceLength,
+      inputIds,
+      attentionMask,
+      tokenTypeIds,
+    );
+  });
+  return {
+    batchSize: texts.length,
+    sequenceLength,
+    inputIds,
+    attentionMask,
+    tokenTypeIds,
+  };
+}
+
+function writeEncoding(
+  encoding: Encoding,
+  offset: number,
+  inputIds: BigInt64Array,
+  attentionMask: BigInt64Array,
+  tokenTypeIds: BigInt64Array,
+): void {
+  encoding.ids.forEach((id: number, index: number) => {
+    inputIds[offset + index] = BigInt(id);
+    attentionMask[offset + index] = BigInt(
+      encoding.attention_mask[index] ?? 1,
+    );
+    tokenTypeIds[offset + index] = BigInt(
+      encoding.token_type_ids?.[index] ?? 0,
+    );
+  });
+}
+
+function createOnnxFeeds(
+  inputNames: readonly string[],
+  batch: TokenizedBatch,
+): Record<string, onnx.Tensor> {
+  const dimensions = [batch.batchSize, batch.sequenceLength];
+  const values: Record<string, BigInt64Array> = {
+    input_ids: batch.inputIds,
+    attention_mask: batch.attentionMask,
+    token_type_ids: batch.tokenTypeIds,
+  };
+  return Object.fromEntries(
+    inputNames.map((name) => [
+      name,
+      new onnx.Tensor("int64", values[name]!, dimensions),
+    ]),
+  );
+}
+
+function selectEmbeddingTensor(
+  outputs: onnx.InferenceSession.OnnxValueMapType,
+): onnx.Tensor {
+  const tensor =
+    outputs.last_hidden_state ?? outputs.logits ?? outputs.token_embeddings;
+  if (!(tensor instanceof onnx.Tensor)) {
+    throw new EmbeddingProviderFault("invalid_response", false);
+  }
+  return tensor;
+}
+
+function disposeTensors(values: readonly onnx.Tensor[]): void {
+  for (const tensor of values) tensor.dispose();
+}
+
+function poolAndNormalizeTensor(
+  tensor: onnx.Tensor,
+  batch: TokenizedBatch,
+  pooling: "cls" | "mean",
+): { readonly dimensions: readonly number[]; readonly data: Float32Array } {
+  const dimensions = tensor.dims;
+  const data = tensor.data;
+  if (
+    dimensions.length !== 3 ||
+    dimensions[0] !== batch.batchSize ||
+    dimensions[1] !== batch.sequenceLength ||
+    !(data instanceof Float32Array)
+  ) {
+    throw new EmbeddingProviderFault("invalid_response", false);
+  }
+  const width = dimensions[2]!;
+  const pooled = new Float32Array(batch.batchSize * width);
+  for (let batchIndex = 0; batchIndex < batch.batchSize; batchIndex += 1) {
+    for (let component = 0; component < width; component += 1) {
+      pooled[batchIndex * width + component] =
+        pooling === "cls"
+          ? data[batchIndex * batch.sequenceLength * width + component]!
+          : meanPooledComponent(data, batch, batchIndex, component, width);
+    }
+  }
+  normalizeFloat32Rows(pooled, batch.batchSize, width);
+  return { dimensions: [batch.batchSize, width], data: pooled };
+}
+
+function meanPooledComponent(
+  data: Float32Array,
+  batch: TokenizedBatch,
+  batchIndex: number,
+  component: number,
+  width: number,
+): number {
+  let sum = 0;
+  let count = 0;
+  for (let tokenIndex = 0; tokenIndex < batch.sequenceLength; tokenIndex += 1) {
+    const mask = Number(
+      batch.attentionMask[batchIndex * batch.sequenceLength + tokenIndex],
+    );
+    count += mask;
+    sum +=
+      data[
+        (batchIndex * batch.sequenceLength + tokenIndex) * width + component
+      ]! * mask;
+  }
+  if (count === 0) {
+    throw new EmbeddingProviderFault("invalid_response", false);
+  }
+  return sum / count;
+}
+
+/** Matches Transformers.js 4.2.0 Float32 accumulation and assignment. */
+function normalizeFloat32Rows(
+  values: Float32Array,
+  rows: number,
+  width: number,
+): void {
+  const norms = new Float32Array(rows);
+  for (let index = 0; index < values.length; index += 1) {
+    const row = Math.floor(index / width);
+    norms[row] = norms[row]! + values[index]! ** 2;
+  }
+  for (let row = 0; row < rows; row += 1) {
+    norms[row] = Math.sqrt(norms[row]!);
+    if (!Number.isFinite(norms[row]) || norms[row] === 0) {
+      throw new EmbeddingProviderFault("invalid_response", false);
+    }
+  }
+  for (let index = 0; index < values.length; index += 1) {
+    values[index] = values[index]! / norms[Math.floor(index / width)]!;
   }
 }
 
@@ -515,18 +741,6 @@ function outputsFromTensor(
     }
     return { key: input.key, vector };
   });
-}
-
-function asFloat32TensorData(data: ArrayLike<number>): Float32Array {
-  if (
-    data instanceof Float32Array &&
-    data.buffer instanceof ArrayBuffer &&
-    data.byteOffset === 0 &&
-    data.byteLength === data.buffer.byteLength
-  ) {
-    return data;
-  }
-  return Float32Array.from(data);
 }
 
 function parseAssetManifest(input: unknown): LocalEmbeddingAssetManifest {
@@ -645,20 +859,6 @@ function manifestDigest(manifest: LocalEmbeddingAssetManifest): string {
   return createHash("sha256")
     .update(canonicalJson(manifest), "utf8")
     .digest("hex");
-}
-
-function modelFileName(execution: LocalDocumentEmbeddingExecution): string {
-  const suffix =
-    execution.precision === "q8"
-      ? "_quantized.onnx"
-      : execution.precision === "fp16"
-        ? "_fp16.onnx"
-        : ".onnx";
-  const file = basename(execution.artifactPath);
-  if (!file.endsWith(suffix) || file.length === suffix.length) {
-    throw new EmbeddingProviderFault("embedding_artifact_unavailable", false);
-  }
-  return file.slice(0, -suffix.length);
 }
 
 function isWithinRoot(root: string, candidate: string): boolean {
