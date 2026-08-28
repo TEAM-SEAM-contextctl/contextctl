@@ -43,10 +43,39 @@ public npm registry in an empty prefix.
 | `npm run test:release-product` | `CONTEXTCTL_RELEASE_E2E_QDRANT_URL` (`…_QDRANT_API_KEY` if the server needs one) |
 | `npm run test:release-product-local` | the two above plus `CONTEXTCTL_RELEASE_E2E_ASSET_ROOT` |
 
-`npm run release:publish:dry-run` checks all five npm publication payloads
-without changing the registry. Actual publication is deliberately not a root
-script: each immutable package version is published in dependency order and
-verified from the registry before moving to the next dependent package.
+`npm run release:publish:plan` derives and prints the dependency DAG.
+`npm run release:publish:dry-run` checks all five publication payloads in that
+order without changing a Registry. Do not run `npm publish --workspaces`.
+
+For an isolated Verdaccio on loopback, publish the candidate and verify a clean
+daemon-only install with:
+
+```bash
+npm run release:publish:candidate -- \
+  --target isolated --registry http://127.0.0.1:4873/ --yes
+npm run release:verify:published -- \
+  --target isolated --registry http://127.0.0.1:4873/
+```
+
+Public candidates are published only by the `Publish npm candidate` workflow.
+It requires a clean `main` whose HEAD equals `origin/main`, an immutable
+`v<version>` tag at that commit, the protected `npm` environment and npm Trusted
+Publishing. The workflow repeats the release-critical Qdrant, Granite, quality,
+consumer and installed-product gates before publishing with provenance.
+
+After the exact candidate passes its public install, audit, CLI, demo and native
+load checks, an authenticated release operator promotes it locally. Promotion
+is idempotent, advances dependencies in DAG order and advances daemon last:
+
+```bash
+npm run release:publish:promote -- --yes
+```
+
+Authenticate with npm's user configuration or a least-privilege automation
+token. Never pass tokens or one-time passwords as command-line arguments.
+
+If candidate publication stops after any package, never reuse that version.
+Prepare a new integrated patch version instead; npm versions are immutable.
 
 Development pins Node **24.18.0** and npm **11.16.0** exactly — `.nvmrc` and CI
 say so. Published packages declare `>=24.18.0 <25`: patch and later 24.x releases
