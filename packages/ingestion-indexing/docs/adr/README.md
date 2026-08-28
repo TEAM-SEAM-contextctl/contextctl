@@ -33,9 +33,10 @@
 | [0010](./0010-do-not-expose-the-shared-inference-resource-as-a-port.md) | 공유 물리 추론 자원을 `EmbeddingPort`로 노출하지 않는다 | Accepted | 2026-08-21 |
 | [0011](./0011-do-not-depend-on-optional-openai-compatible-fields.md) | OpenAI 호환 임베딩 계약에서 선택 필드에 의존하지 않는다 | Accepted | 2026-08-21 |
 | [0012](./0012-retry-only-idempotent-operations.md) | 재시도는 요청 종료 상태가 멱등인 연산에만 적용한다 | Accepted | 2026-08-20 |
+| [0013](./0013-use-a-minimal-text-only-local-embedding-runtime.md) | 로컬 임베딩은 텍스트 전용 최소 런타임으로 실행한다 | Accepted | 2026-08-28 |
 
-0001~0006은 문서 관측·청킹·계보와 증분 재색인의 결정이고, 0007~0011은 문서 임베딩 제공자
-경계의 결정이며, 0012는 벡터 저장소 어댑터의 결정이다.
+0001~0006은 문서 관측·청킹·계보와 증분 재색인의 결정이고, 0007~0011과 0013은 문서 임베딩
+제공자 경계의 결정이며, 0012는 벡터 저장소 어댑터의 결정이다.
 
 이 기록들은 결정 시점보다 늦게 작성됐다. `날짜`는 문서를 쓴 날이 아니라 해당 결정이 코드에
 반영된 커밋의 날짜이며, 각 기록의 `참고`에 그 커밋과 시험 경로를 남겼다.
