@@ -73,15 +73,9 @@ The package pins the other four workspaces to the same integrated release. For a
 SHA-256-checked installation from GitHub assets, use the
 [release installer](docs/operations.md#릴리스-설치-무결성). Neither path downloads the
 model; the next step asks before downloading 396.1 MiB (about 415 MB).
-If `PATH` does not reach the install, `contextctl paths` reports the active Node
-installation and its executable directory. The GitHub installer also prints the
-exact `export PATH=…` line to add.
-
-The GitHub installer supports English and Korean. Set
-`CONTEXTCTL_LOCALE=en|ko` to choose explicitly; otherwise it follows `LC_ALL`,
-`LC_MESSAGES`, then `LANG`, and defaults to English for unknown locales.
-
----
+If `PATH` does not reach the install, `contextctl paths` reports its executable
+directory. The GitHub installer prints the exact `export PATH=…` line and supports
+English and Korean (`CONTEXTCTL_LOCALE=en|ko`); unknown locales default to English.
 
 ## Five minutes
 
