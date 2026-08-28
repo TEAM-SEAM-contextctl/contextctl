@@ -114,6 +114,7 @@ jobs:
         run: npm run test:eval:document-retrieval
       - name: Run ingestion and indexing benchmark
         env:
+          CONTEXTCTL_QDRANT_URL: http://127.0.0.1:6333
           CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH: ${{ runner.temp }}/document-retrieval-eval.json
           CONTEXTCTL_INGESTION_BENCHMARK_RESULT_PATH: ${{ runner.temp }}/ingestion-indexing-benchmark.json
         run: npm run test:benchmark:ingestion-indexing
