@@ -54,7 +54,7 @@ export const SELECTION_PLANNING_POLICY_VERSION = "selection-planning-v2" as cons
  * every item's public guide — the bytes the guides actually occupy on the wire,
  * not a character count that would undercount anything outside ASCII.
  *
- * The immediate plan limits are the SOT's (L1470):
+ * The immediate plan limits are fixed by `selection-planning-v2`:
  * 32 / 128 / 64 / 8 / 256 / 64 KiB. `responseBytes` is the separate 2 MiB
  * pre-retrieval response ceiling, evaluated once the plan and context budget
  * are both available.
@@ -133,8 +133,8 @@ export interface SelectionPlanSummary {
    * The policy this selection ran under and the Cards it kept out of scoring.
    *
    * On the plan and not on the response: the response's counts describe the
-   * Cards that were evaluated, and a Card the policy excluded was not (SOT
-   * L2486). The exclusions are named here so that an operator reading the plan
+   * Cards that were evaluated, and a Card the policy excluded was not. The
+   * exclusions are named here so that an operator reading the plan
    * can tell a Card the policy refused from a Card the threshold rejected —
    * the two look identical from the outside, and only one of them is a
    * question about the catalog.
@@ -263,8 +263,8 @@ export function managedTargetKey(
  * Scope *is*: a different selector, a different index snapshot, a different
  * table or path under one name. Picking either definition would widen one
  * Card's access to whatever the other Card was approved for, so neither is
- * picked and the request fails as a whole (SOT L1635, "중복 제거 우선순위를
- * 정하지 않고 요청 단위 `selection_invariant_violation`으로 실패한다").
+ * picked and the request fails as a whole with
+ * `selection_invariant_violation` (the access-and-output invariant).
  *
  * `admitted` arrives in ranked order, so first appearance is rank order and
  * `selectedBy` inherits it by construction. That ordering is total already —
@@ -291,8 +291,8 @@ export function planSelectedScopes(
 
       // Checked before the merge, so a Card that contradicts an earlier Card
       // about a Scope is refused rather than filed as a second item. The key
-      // is the reference alone, deliberately: that is the identity the SOT
-      // says must be unique, and the guide digest is too fine to notice two
+      // is the reference alone, deliberately: that is the identity the access
+      // contract says must be unique, and the guide digest is too fine to notice two
       // definitions sharing it.
       const scopeKey = scopeRefKey(guide.scopeRef);
       const knownItemKey = itemKeyByScopeRef.get(scopeKey);
@@ -351,7 +351,7 @@ export function planSelectedScopes(
  * Every `selection-planning-v2` ceiling the plan is over, after merging.
  *
  * Measured on the merged plan rather than on the raw Card list, because the
- * SOT bounds what a query *causes* and merging is what decides that: two
+ * The planning policy bounds what a query *causes*, and merging decides that: two
  * Cards on one Scope are one item and one read. `admittedCount` is the one
  * figure the plan itself no longer shows — admitted Cards that merged onto
  * shared items are not countable from the items — so it is handed in.
@@ -360,8 +360,8 @@ export function planSelectedScopes(
  * refusal sees every dimension that was crossed in one message instead of
  * fixing one and discovering the next. An empty list is a plan within policy.
  * Nothing is trimmed to fit: the caller either executes the plan or refuses
- * it whole, which is the SOT's rule — "Guide, selectedBy나 대상을 조용히
- * 자르지 않고 Plan 실행 전에 selection_plan_limit_exceeded로 실패한다".
+ * it whole with `selection_plan_limit_exceeded`; no Guide, `selectedBy` list or
+ * target is silently trimmed.
  */
 export function planningLimitViolations(
   admittedCount: number,
@@ -400,7 +400,8 @@ export function planningLimitViolations(
 
 /**
  * Re-derives every key and every correspondence a finished plan claims, and
- * refuses the plan if any of them does not hold (SOT L2358).
+ * refuses the plan if any of them does not hold (the managed-document
+ * retrieval invariant).
  *
  * Checking the *existence* of keys is not enough: a plan whose `itemKey` was
  * computed from one guide and whose `guide` was later replaced still has a

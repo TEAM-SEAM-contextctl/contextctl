@@ -4,9 +4,8 @@
  * A different question from `doctor`, which is why it is a different command.
  * `doctor` asks whether the install is correct and answers with one boolean;
  * this asks which lane cannot do its work at this moment, and one boolean cannot
- * carry that answer. The design says so directly (§130): 상태 점검은 프로세스 하나의
- * 불리언이 아니라 `resolve`, `registry`, `selection_assets`, `ingestion`별
- * `ready | degraded | not_ready`를 제공한다.
+ * carry that answer. Status therefore reports `ready | degraded | not_ready`
+ * separately for `resolve`, `registry`, `selection_assets` and `ingestion`.
  *
  * The judgement is pure and the reads are the caller's. That split is the whole
  * reason this file exists separately from `commands.ts`: every interesting case
@@ -191,10 +190,10 @@ export function judgeLanes(
 /**
  * Whether a question can be answered right now.
  *
- * The one lane whose rule the design states outright (§120): 마지막 정상 Card와
- * Index를 읽을 수 있으면 Registry 또는 Ingestion 실행 영역이 저하여도 Resolve는
- * 준비 상태를 유지한다. 설정·마이그레이션·공유 저장소가 손상됐거나 승인 대상을
- * 안전하게 해석할 수 없으면 준비 상태로 전환하지 않는다.
+ * Resolve stays ready while it can read the last sound Card and Index, even
+ * when Registry or Ingestion is degraded. It is not ready when configuration,
+ * migration or shared state is damaged, or an approved target cannot be
+ * interpreted safely.
  *
  * So a Registry that is behind does not appear here at all. Answering from a
  * Card that is a day old is the system working as designed — the Card describes

@@ -9,7 +9,7 @@ import { CardCatalogInvariantError, PolicyContextInvariantError } from "./errors
  * access, which is the one thing this type exists to make unrepresentable.
  * `usage` is the literal `"retrieval"` rather than a string because v1 defines
  * no other purpose, and a wider type would be a permission nobody decided to
- * grant (SOT L78, L88).
+ * grant (the v1 access model).
  */
 export interface PolicyContext {
   readonly usage: "retrieval";
@@ -61,12 +61,13 @@ const policyApplicationCache = new WeakMap<
  * is absent from both the lexical and the semantic candidate set, never
  * ranked, never counted, and never named in a response. Excluding it after
  * ranking would let it displace an eligible Card from a top-K and would leave
- * its presence legible in the counts (SOT L88, L1424, L2486).
+ * its presence legible in the counts (the v1 access model and
+ * `SelectionSummary` contract).
  *
  * The catalog's shape is validated first and as a whole. A Card whose policy
  * cannot be read is not silently dropped — dropping it would make a malformed
  * catalog indistinguishable from a strict one — so the whole catalog is
- * refused instead (SOT L88).
+ * refused instead (the v1 access model's closed-failure rule).
  *
  * When a Card fails both tests the usage reason is reported: usage is the
  * broader gate, and a Card not approved for this purpose is kept out whatever
@@ -122,7 +123,7 @@ function exclusionReason(
  * back once per Card. Refused as a whole rather than filtered, because a
  * policy this code cannot read is a policy it cannot enforce, and scoring the
  * readable remainder would present a partial catalog as the approved one
- * (SOT L88: `selection_catalog_invalid`, never a silent drop).
+ * (`selection_catalog_invalid`, never a silent drop).
  *
  * The checks are structural — what the read model promises and a translation
  * could still break: `allowedUsage` must be a non-empty array of distinct,

@@ -27,7 +27,7 @@
     {
       "id": "multiple_cards_required",
       "title": "실제로 여러 카드가 필요한 질의",
-      "description": "required가 둘 이상. 완전 집합 recall(L1452)로 잰다"
+      "description": "required가 둘 이상. 완전 집합 recall 계약으로 잰다"
     }
   ],
   "fields": {

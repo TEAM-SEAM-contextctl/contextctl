@@ -88,10 +88,11 @@ export interface LocalCardEmbeddingExecution {
  * A provider reached over the network.
  *
  * `model` is the identifier the provider pins immutably — a revision or a dated
- * name, never a floating alias (SOT L599) — and it is what the adapter sends
+ * name, never a floating alias (the production embedding-profile invariant) —
+ * and it is what the adapter sends
  * and what the provider must echo back. The endpoint and the credential are
  * not here: they are the daemon's runtime binding, and swapping either for
- * another that serves the same model changes no vector (SOT L1374).
+ * another that serves the same model changes no vector.
  */
 export interface RemoteCardEmbeddingExecution {
   readonly kind: "remote";
@@ -271,8 +272,8 @@ export interface RemoteCardSelectionProfileInput {
  * There is deliberately no remote profile constant in this package. A
  * production remote profile pins the model a particular endpoint serves, at a
  * revision and a width that endpoint guarantees — a decision about a service,
- * not about this code (SOT L599: no floating model alias under a production
- * index). What this package can fix is the part that is the same for every
+ * not about this code (a production index must not use a floating model alias).
+ * What this package can fix is the part that is the same for every
  * remote family: `provider_defined` pooling, L2 normalization, cosine distance,
  * the `card-selection-text-v3` input transform on both sides, and the admission
  * limits. The result is validated before it is returned, so a caller cannot

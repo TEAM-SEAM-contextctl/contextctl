@@ -234,7 +234,7 @@ describe("judgeLanes", () => {
   });
 
   it("cannot judge resolve when the approved catalog is unreadable", () => {
-    // The design's own second condition (§120): 승인 대상을 안전하게 해석할 수 없으면
+    // The readiness contract's second condition: 승인 대상을 안전하게 해석할 수 없으면
     // 준비 상태로 전환하지 않는다. A lane that does not know what is approved must
     // not answer, even though the assets are installed and the model works.
     const report = judgeLanes(

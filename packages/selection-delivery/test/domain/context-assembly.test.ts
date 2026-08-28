@@ -182,7 +182,7 @@ describe("rrf-v1 fusion", () => {
       roomy,
     );
 
-    // SOT L1536: lowest rank, then `targetKey` ascending. TARGET_A < TARGET_B,
+    // Context assembly order: lowest rank, then `targetKey` ascending. TARGET_A < TARGET_B,
     // so the copy from read A survives whichever was listed first.
     expect(forward.chunks[0]?.targetKey).toBe(TARGET_A);
     expect(reversed.chunks[0]?.targetKey).toBe(TARGET_A);
@@ -214,7 +214,7 @@ describe("rrf-v1 fusion", () => {
       roomy,
     );
 
-    // Same read, same rank: the SOT's two keys tie, and the item is the only
+    // Same read, same rank: the two defined keys tie, and the item is the only
     // thing left to order on.
     expect(evidence.chunks[0]?.itemKey).toBe(ITEM_A);
   });
@@ -230,7 +230,7 @@ describe("rrf-v1 fusion", () => {
 
   it("refuses a rank below one instead of scoring it zero", () => {
     // A zero rank breaks the 1-based contract. It used to earn no score and
-    // travel anyway; SOT L1639 has the read that reported it fail instead, and
+    // travel anyway; the Context assembly contract has the read fail instead, and
     // `assembleContext` applies that per target before fusion. Here, with no
     // application layer in front, the domain states the precondition itself.
     expect(() =>
@@ -324,7 +324,7 @@ describe("cross-target integrity", () => {
 
     // Had A's first place leaked into the fusion, `rev_shared` would score
     // 1/61 + 1/63. It scores 1/63: the ranking is recomputed over the sound
-    // reads alone, as if A had never answered (SOT L1534).
+    // reads alone, as if A had never answered (the Context assembly invariant).
     expect(revisionsOf(evidence.chunks)).toEqual(["rev_shared"]);
     expect(evidence.chunks[0]?.score).toBe(reciprocal(3));
     expect(evidence.chunks[0]?.targetKey).toBe(TARGET_C);

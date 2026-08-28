@@ -178,7 +178,7 @@ export interface SelectContextOptions {
    * `semantic` beside it, and for the same reason stated more sharply: a
    * request type that could carry this field would be a caller granting itself
    * access. `ResolveContextRequest` has no such field, and must not gain one
-   * (SOT L88: not the query, not an MCP argument, not a CLI flag).
+   * (the v1 access model: not the query, not an MCP argument, not a CLI flag).
    */
   readonly policy?: PolicyContext;
 }
@@ -219,8 +219,9 @@ export async function selectContext(
   // policy keeps out is absent from the lexical set and from the semantic
   // search alike, so it can neither be ranked nor take a top-K place an
   // eligible Card should have had; and it is absent from the verdicts, so the
-  // counts a consumer sees describe only what was evaluated (SOT L88, L1424,
-  // L2486). A catalog whose policies cannot be read is refused here as a whole.
+  // counts a consumer sees describe only what was evaluated (the v1 access
+  // model and `SelectionSummary` contract). A catalog whose policies
+  // cannot be read is refused here as a whole.
   const policy = applyPolicyContext(
     cards,
     options.policy ?? DEFAULT_POLICY_CONTEXT,
@@ -260,7 +261,8 @@ export async function selectContext(
   const planned = planSelectedScopes(admitted, chunkLimit);
   // After merging and before anything is executed: the plan's real size is
   // only known once same-Scope Cards have collapsed onto shared items, and a
-  // plan over policy must not be trimmed to fit or read at all (SOT L1470).
+  // plan over policy must not be trimmed to fit or read at all (the Retrieval
+  // Guide limit invariant).
   const violations = planningLimitViolations(admitted.length, planned);
   if (violations.length > 0) {
     throw new SelectionPlanLimitExceededError(violations);
@@ -280,7 +282,8 @@ export async function selectContext(
   };
   // Re-derived before the plan leaves: the keys the executor will read by are
   // recomputed from the fields they are defined over, and the plan's Cards are
-  // compared against the verdicts that were just handed down (SOT L2358).
+  // compared against the verdicts that were just handed down (the managed-
+  // document retrieval invariant).
   verifySelectionPlan(plan, { query: queryText });
   return plan;
 }
@@ -344,15 +347,16 @@ async function scoreWithSemantics(
   if (catalog.length === 0) {
     // An empty catalog has no candidate index to be accurate about, and
     // embedding a query no vector could be compared against would cost a model
-    // call to produce a ranking over nothing. SOT allows exactly this case to
+    // call to produce a ranking over nothing. The degradation contract allows this case to
     // report as degraded when the policy permits it.
     return degrade("the catalog holds no approved Card to build an index from");
   }
   if (policy.eligible.length === 0) {
     // Every approved Card is kept out by policy. Not a degradation and not an
     // error: the hybrid policy applied in full and simply had nothing to rank,
-    // which SOT L2486 names as a `hybrid` run whose call condition skipped the
-    // semantic call, and L2525 as an ordinary empty answer. No query vector is
+    // which the `SelectionSummary` contract names as a `hybrid` run whose call
+    // condition skipped the semantic call, while the same section defines an
+    // ordinary empty answer. No query vector is
     // built, because there is no eligible vector to compare it against — and
     // the degradation policy is not consulted, because a deployment that
     // forbids lexical answers has not forbidden empty ones.
@@ -405,7 +409,7 @@ async function scoreWithSemantics(
         // Pre-filtered inside the exact scan, before the cut: an ineligible
         // Card is never compared, so it cannot hold one of the `semanticTopK`
         // places. Filtering the returned list instead would be the post-filter
-        // SOT L88 forbids.
+        // v1 access model forbids.
         semantic: index.topK(
           queryVector,
           degradation.semanticTopK ?? DEFAULT_SEMANTIC_TOP_K,

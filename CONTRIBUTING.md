@@ -50,7 +50,7 @@ exact image digest, so reproduce a CI failure with the image in
 | Workspace | Responsibility |
 |---|---|
 | `apps/contextctl-daemon` | Runtime entry point, dependency assembly, CLI |
-| `packages/contracts` | Types and schemas that cross a package boundary |
+| `packages/contracts` | Versioned lifecycle types and schemas stored or transmitted independently across domain boundaries |
 | `packages/ingestion-indexing` | Document capture, semantic units, chunks, index |
 | `packages/registry-lifecycle` | Context Cards, lineage, versions, lifecycle |
 | `packages/selection-delivery` | Retrieval scope selection and delivery surfaces |
@@ -60,9 +60,13 @@ import each other's internal paths. When a real cross-package import is
 introduced, add the workspace dependency and the TypeScript project reference in
 the same change.
 
-Domain packages do not depend on each other at all. Values that cross a boundary
-travel through `@contextctl/contracts`, and the daemon is the only place that
-knows about more than one domain.
+Domain packages do not depend on each other at all. Independently stored or
+transmitted lifecycle values travel through `@contextctl/contracts`, and the
+daemon is the only place that knows about more than one domain. Process-local
+application DTOs — such as Selection plans, Indexing search commands and
+results, and Delivery assembly inputs — stay with the package whose public API
+defines them; the daemon translates them without promoting them into shared
+lifecycle contracts.
 
 ## Language
 
@@ -77,6 +81,8 @@ One rule decides it:
 | `docs/*.md` | Korean — the reference quotes CLI output extensively |
 | `packages/*/docs/adr/*.md` | Korean — internal decision records |
 | Code, comments, commit messages | English |
+| GitHub Release titles and notes | English — public distribution metadata |
+| Team pull-request bodies | Korean; titles remain English |
 | CLI messages | Korean today; locale support is planned, not implemented |
 
 **The two READMEs are the only mirrored pair.** Do not add a second language to

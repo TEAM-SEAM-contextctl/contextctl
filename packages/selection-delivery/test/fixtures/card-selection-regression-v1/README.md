@@ -2,7 +2,7 @@
 
 SEAM-100(같은 문서의 unit Card들이 공통 키워드로 함께 admit된다)을 고정하는 회귀 세트.
 SEAM-106 §6.2가 요구하는 다섯 종류 질의와 네 지표를 한 곳에 둔다. `selection-eval-v1`
-(최종 설계안 L1426-1456, 질의 50개·보정/홀드아웃 분할)의 정식 규격이 **아니다** — 이건
+(현재 Selection 품질 계약의 질의 50개·보정/홀드아웃 분할)의 정식 규격이 **아니다** — 이건
 스코어러를 고칠 때 무엇이 좋아지고 무엇이 나빠졌는지 범주별로 보이게 하는 회귀 고정이다.
 
 ## 파일
@@ -27,7 +27,7 @@ sha256이 있다. 로더(`../card-selection-regression.ts`)가 파일 바이트�
 | `adjacent_wrong_section` | 같은 문서 안의 인접한 오답 섹션 | SEAM-100의 핵심. **같은 문서의 다른 섹션은 전부 `forbidden`** |
 | `similar_term_other_document` | 다른 문서의 유사한 업무 용어 | `안내`·`알림`·`카드`·`배송`처럼 문서를 넘나드는 단어 |
 | `no_answer_or_low_confidence` | 정답이 없거나 신뢰도가 낮은 질의 | `confidence: none`은 어떤 Card도 admit되면 안 됨. `low`는 정답은 있으나 선언 어휘가 없음 |
-| `multiple_cards_required` | 실제로 여러 카드가 필요한 질의 | `required`가 둘 이상. 완전 집합 recall(L1452) |
+| `multiple_cards_required` | 실제로 여러 카드가 필요한 질의 | `required`가 둘 이상. 완전 집합 recall 계약 |
 
 `forbidden`에 없는 다른 문서의 Card가 admit되면 "기대 외"로 **오답 비율에만** 센다.
 `forbidden` admit은 따로 센다(`forbiddenAdmits`).
@@ -50,16 +50,16 @@ sha256이 있다. 로더(`../card-selection-regression.ts`)가 파일 바이트�
 1. **불변 게이트** — 스코어러가 어떻게 바뀌어도 깨지면 안 되는 것. 완전 무관 질의 admit 0,
    본문 어휘 범주 1위 정답률, 다중 카드 완전 집합 하한.
 2. **baseline 비퇴행 + 버전·임계값 핀** — `baseline.json`의 정책 버전·임계값이 현재 코드와
-   같음을 먼저 단언한다. **임계값만 바꾸면 여기서 깨진다**(L794: 같은 이름의 버전에서
-   임계값을 바꾸지 않는다; §6.2: 입력 정보가 부족한 문제를 임계값 조정만으로 가리지 않는다).
+   같음을 먼저 단언한다. **임계값만 바꾸면 여기서 깨진다**. 같은 이름의 정책 버전에서
+   임계값을 바꾸지 않고, 입력 정보가 부족한 문제를 임계값 조정만으로 가리지 않는다.
    같은 버전이면 1위 정답률·오답 비율이 baseline보다 나빠지지 않음만 본다.
-3. **개선 목표(`it.fails`)** — 설계에 있는 수치(L1452: 오수용률 ≤ 0.10, 완전 집합 recall
+3. **개선 목표(`it.fails`)** — 품질 계약의 수치(오수용률 ≤ 0.10, 완전 집합 recall
    ≥ 0.75, 금지 Card 수용 0)와 분포 형태("보류 비율 > 0")를 실패하는 테스트로 적어 둔다.
    스코어러가 목표에 닿는 날 `it.fails`가 깨져 정식 게이트로 승격하게 강제한다.
 
 ## baseline 갱신 절차
 
-1. 스코어러·임계값·정책 버전 중 하나라도 바꿨으면 정책 버전을 올린다(L1456).
+1. 스코어러·임계값·정책 버전 중 하나라도 바꿨으면 정책 버전을 올린다.
 2. `npx vitest run packages/selection-delivery/test/application/card-selection-regression.test.ts`
    를 돌려 출력된 리포트로 `baseline.json`을 다시 쓴다. `measuredAt`과 digest를 갱신한다.
 3. 어느 지표가 어떻게 움직였는지 PR 본문에 범주별로 적는다. 목표에 닿은 `it.fails`는

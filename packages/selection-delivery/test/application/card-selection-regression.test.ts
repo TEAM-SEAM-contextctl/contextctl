@@ -24,7 +24,8 @@ import {
  *    They pass today and a failure is a genuine regression.
  * 2. Baseline non-regression — the numbers in `baseline.json`, pinned to the
  *    policy versions and thresholds they were measured under. Changing a
- *    threshold without changing the version fails here first (SOT L794; §6.2:
+ *    threshold without changing the version fails here first (the Selection
+ *    quality contract; SEAM-106 §6.2:
  *    an input-side defect is not to be hidden by moving a threshold).
  * 3. Quality gates — the design's criteria that lexical v4 now meets. These
  *    stay as ordinary assertions so a later scorer cannot restore v1's broad
@@ -42,7 +43,7 @@ const BODY_VOCABULARY_TOP1_FLOOR = 4 / 5;
 const FULL_SET_RECALL_FLOOR = 4 / 5;
 const ADMIT_RATIO_CEILING = 0.25;
 
-/** Design targets, SOT L1452. */
+/** Targets from the Selection quality contract. */
 const TARGET_WRONG_ADMIT_RATIO = 0.1;
 
 describe.each(GENERATORS)("card-selection-regression-v1 · %s snapshot", (generator) => {
@@ -108,8 +109,8 @@ describe.each(GENERATORS)("card-selection-regression-v1 · %s snapshot", (genera
     it("is measured under the policy versions and thresholds the baseline records", () => {
       // Checked before any number is compared. A baseline measured under one
       // threshold band says nothing about a scorer running under another, and
-      // a threshold moved without a version bump is exactly the change SOT
-      // L794 forbids and SEAM-106 §6.2 warns against: it would hide the
+      // a threshold moved without a version bump is exactly the change the
+      // quality contract and SEAM-106 §6.2 forbid: it would hide the
       // input-side defect behind a number that merely looks better.
       expect(QUERY_SCORING_POLICY_VERSION).toBe(baseline.scoringPolicyVersion);
       expect(SELECTION_RANKING_POLICY_VERSION).toBe(baseline.rankingPolicyVersion);
@@ -140,11 +141,11 @@ describe.each(GENERATORS)("card-selection-regression-v1 · %s snapshot", (genera
   });
 
   describe("lexical v4 quality gates", () => {
-    it("admits no forbidden Card (SOT L1452: 금지된 Card 수용 0)", () => {
+    it("admits no forbidden Card (quality contract: forbidden admits 0)", () => {
       expect(report.metrics.forbiddenAdmits).toBe(0);
     });
 
-    it("keeps the share of wrong admits at or under 0.10 (SOT L1452)", () => {
+    it("keeps the share of wrong admits at or under 0.10 (quality contract)", () => {
       expect(report.metrics.wrongAdmitRatio).not.toBeNull();
       expect(report.metrics.wrongAdmitRatio as number).toBeLessThanOrEqual(
         TARGET_WRONG_ADMIT_RATIO,

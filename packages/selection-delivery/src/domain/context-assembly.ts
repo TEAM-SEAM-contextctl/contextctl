@@ -166,8 +166,8 @@ export function toContextOmission(omitted: OmittedChunk): ContextOmission {
  * The steps run in a fixed order and each one is deterministic, so the same
  * candidates and the same budget always produce the same evidence.
  *
- * Quarantine comes before everything (SOT L1534, L1639). Two reads that return
- * the same `chunkRevisionId` are describing one immutable chunk, so they have
+ * Quarantine comes before everything (the Context assembly invariant). Two
+ * reads that return the same `chunkRevisionId` are describing one immutable chunk, so they have
  * to agree about it — its identifiers, its text, its digest. When they do not,
  * at least one of them is wrong and nothing in this domain can tell which, so
  * neither is trusted: every read that took part in the contradiction is set
@@ -217,8 +217,8 @@ export function assembleDocumentContext(
  * Sets aside every read that took part in a contradiction, and repeats until
  * the reads that remain agree with one another.
  *
- * Two contradictions are looked for, both from SOT L1639. Occurrences of one
- * `chunkRevisionId` must carry the same `chunkId`, `documentId`,
+ * Two contradictions are looked for by the Context assembly invariant.
+ * Occurrences of one `chunkRevisionId` must carry the same `chunkId`, `documentId`,
  * `semanticUnitId`, `text` and `contentDigest` — a revision is immutable, so two
  * descriptions of it that differ cannot both be descriptions of it. And
  * occurrences of one `contentDigest` must carry the same `text` — a digest
@@ -326,8 +326,8 @@ function groupBy<T>(
  * The surviving occurrence is the one whose target ranked it best, so the
  * chunk is attributed to the item that found it most relevant rather than to
  * whichever target happened to be executed first. A tie on rank falls back to
- * `targetKey` ascending — the rule SOT L1536 states ("가장 낮은 순위, 그다음
- * `targetKey` 오름차순") — and only then to `itemKey`, for the one case the SOT
+ * `targetKey` ascending — the defined order is lowest rank and then ascending
+ * `targetKey` — and only then to `itemKey`, for the one case the architecture
  * leaves open: two items planned over the same read, which share a `targetKey`
  * and can only be told apart by the item. All three keys are digests, so the
  * order is the same on every machine and every run.
@@ -384,8 +384,8 @@ function fuseByChunkRevision(
  * A rank that is not a positive integer is refused, not scored. It used to
  * contribute zero and travel anyway, on the theory that a readable chunk beats
  * an aborted answer; but a rank outside `1..N` means the executor broke the
- * 1-based contract for that whole read, and SOT L1639 has that read fail as
- * `resolution_outcome_invalid` rather than sink. `assembleContext` applies that
+ * 1-based contract for that whole read, and the Context assembly contract has
+ * that read fail as `resolution_outcome_invalid` rather than sink. `assembleContext` applies that
  * rule per target before anything reaches here, so in the pipeline this branch
  * is unreachable — it stays as the statement of a precondition this function
  * will not quietly work around if some other caller forgets it.
@@ -475,7 +475,7 @@ function applyBudget(
  * Best rank first, then `targetKey` ascending, then `itemKey` ascending.
  * Decides which copy of a revision survives and which item cites it.
  *
- * `targetKey` before `itemKey` because the SOT says so (L1536) and because it
+ * `targetKey` before `itemKey` because that is the defined order and because it
  * is the key that names the read: a tie between two reads is broken by the
  * reads' identities, not by the identities of whichever items happened to plan
  * them. Ranks are known to be positive integers by the time this runs — see

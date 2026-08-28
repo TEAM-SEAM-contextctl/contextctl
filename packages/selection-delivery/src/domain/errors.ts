@@ -134,7 +134,8 @@ export class ManagedResolutionInvariantError extends Error {
  * that is empty or repeats itself, a sensitivity flag that is not a boolean —
  * is refused with the whole catalog rather than dropped on its own. Dropping it
  * would present the readable remainder as the approved catalog, and a consumer
- * could not tell that from a catalog that was simply small (SOT L88).
+ * could not tell that from a catalog that was simply small (the v1 access
+ * model's closed-failure rule).
  */
 export class CardCatalogInvariantError extends Error {
   constructor(message: string) {

@@ -7,6 +7,13 @@ Format adopted from `@contextctl/selection-delivery`, whose README invites other
 domains to use it under their own package. Records are written in Korean.
 See [`0000-template.md`](./0000-template.md).
 
+Accepted records may cite internal design drafts or former repository paths such
+as `CLAUDE.md`, `design.md`, `responsibility.md`, `docs/ai/GLOSSARY.md`, and
+「개발 파트 분담」. Those references identify the material reviewed when the
+decision was written; they are not public files or live dependencies. Verify the
+current behavior through the package root API, public contracts, tests, and the
+status in this index. Keep the old citations in accepted records unchanged.
+
 ## Rules
 
 - One decision per file, named `NNNN-kebab-case.md`.
@@ -25,3 +32,4 @@ See [`0000-template.md`](./0000-template.md).
 | [0002](./0002-registry-classifies-scope-reachability.md) | Registry가 Published Scope의 도달 가능성을 판정하고 보고한다 | Accepted | 2026-08-14 |
 | [0003](./0003-no-reverse-lifecycle-contract-to-indexing.md) | Registry에서 Indexing으로 가는 역방향 lifecycle 계약을 만들지 않는다 | Accepted | 2026-08-14 |
 | [0004](./0004-backlog-reported-as-behind-and-lag.md) | Registry는 backlog를 개수가 아니라 밀림 여부와 지연 시간으로 보고한다 | Accepted | 2026-08-20 |
+| [0005](./0005-removed-knowledge-is-withdrawn-immediately.md) | 원본이 사라진 Card는 즉시 회수한다 | Accepted | 2026-08-21 |

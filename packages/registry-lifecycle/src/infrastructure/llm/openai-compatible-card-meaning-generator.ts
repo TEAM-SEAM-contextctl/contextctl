@@ -13,7 +13,7 @@ import type {
 /**
  * Why a model-backed generation did not produce usable text.
  *
- * ARCHITECTURE.md §7.4 asks that an outage stay distinguishable from a delay,
+ * The generation failure contract keeps an outage distinguishable from a delay,
  * so the reasons are kept apart rather than collapsed into one error: a
  * `timeout` says the model is slow, `transport` that it is unreachable,
  * `http_status` that it answered and refused, and `malformed_response` that it
@@ -64,8 +64,8 @@ export interface OpenAiCompatibleGeneratorConfig {
  * The model writes description, questions, aliases, and keywords, and nothing
  * else. Coordinates, scopes, and every other machine-decidable value are
  * already fixed by the observation before this runs, which is what keeps a
- * model from naming a table or document that does not exist (root CLAUDE.md
- * §2-4). `groundCardVersion` re-checks the output regardless; nothing here is
+ * model from naming a table or document that does not exist (the Registry
+ * grounding boundary). `groundCardVersion` re-checks the output regardless; nothing here is
  * exempt.
  *
  * Configuration arrives through the constructor. The daemon still owns loading

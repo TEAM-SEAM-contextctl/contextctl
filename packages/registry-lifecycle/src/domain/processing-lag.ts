@@ -157,10 +157,10 @@ function elapsedMs(from: string, to: string): number | undefined {
 /**
  * One Source's position, as the report publishes it.
  *
- * Exactly the three fields the design names, and no more. The delay travels in
- * `sourceFreshnessLags` instead of here because the design keeps the two apart —
- * §6 speaks of "Source freshness lag와 sourceCheckpoints" as two places a new
- * Publication's unprocessed state shows up, not one. Folding the delay into the
+ * Exactly the three fields the reachability contract names, and no more. The
+ * delay travels in `sourceFreshnessLags` instead of here because freshness and
+ * `sourceCheckpoints` are separate views of a new Publication's unprocessed
+ * state. Folding the delay into the
  * position would also mean a consumer that wants only the watermark has to read
  * past a judgement it did not ask for.
  */

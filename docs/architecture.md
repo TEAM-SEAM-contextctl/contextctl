@@ -16,35 +16,47 @@
    |  source add / ingest
    v
  +-----------------------------+  Publication  +------------------------------+
- | Ingestion store             | ------------> | Registry                     |
+ | Ingestion / Indexing        | ------------> | Registry / Lifecycle         |
  | ingestion.db (node:sqlite)  |               | registry.db (node:sqlite)    |
  +-------------+---------------+               +--------------+---------------+
-               | 벡터 게시                                     |
-               v                                     Card (pending)
- +-----------------------------+                              |
- | Qdrant (필수)                |                       사람 승인  cards approve /
- | 지속 가능한 벡터 색인          |                              |  reject / disable / rollback
- +-------------+---------------+                              v
-               | 벡터 검색                            approved Card   <- 여기서부터만 검색됨
-               v                                              |
- +------------------------------------------------------------v----------------+
+               | 관리 문서 벡터 게시                           | Card (pending)
+               v                                               | 사람 승인
+ +-----------------------------+               +---------------v--------------+
+ | Qdrant (필수)                |               | 승인 Card snapshot           |
+ | 불변 문서 벡터 색인           |               | → 프로세스 로컬 후보 Index 재구축 |
+ +-------------+---------------+               +---------------+--------------+
+               |                                               |
+               +-------------------+   +-----------------------+
+                                   v   v
+ +-----------------------------------------------------------------------------+
  | query / serve                                                               |
- |  CLI  contextctl query "<질문>"                                              |
- |  MCP  contextctl serve   (stdio, 도구는 resolve_context 하나)                 |
- |  HTTP 선택 - 기본 꺼짐, loopback 전용 (CONTEXTCTL_HTTP_PORT)                    |
+ |  Selection: Card와 검색 범위 계획                                             |
+ |  daemon: 관리 문서 대상만 Qdrant에서 검색                                      |
+ |  Delivery: 완료된 결과를 ContextResolution으로 조립                            |
+ |  CLI query · MCP serve(resolve_context 하나) · 선택 HTTP(loopback 전용)         |
  +-----------------------------------------------------------------------------+
-               ^  질문 -> 벡터
- +-------------+---------------------------------------------------------------+
- | 임베딩 모델  Granite 97m multilingual (ONNX, 로컬 실행)                          |
- | `~/.contextctl/embedding-assets/revisions/<sha>/` + `active.json`               |
- +-----------------------------------------------------------------------------+
+               ^                               ^
+               | 문서·질의 벡터                  | Card·질의 벡터
+ +-------------+------------------+  +----------+------------------------------+
+ | 문서 검색 임베딩 계층            |  | Card 선택 임베딩 계층                    |
+ | Ingestion/Indexing 소유          |  | Selection/Delivery 소유                 |
+ +--------------------------------+  +-----------------------------------------+
+               \______________________  ______________________/
+                                      \/
+              기본 로컬 구성은 검증된 Granite 97m fp32 세션을 물리 공유할 수 있음
+              각 계층은 OpenAI 호환 원격 제공자로 독립 설정할 수도 있음
 ```
 
 - 수집(`ingest`)과 질의(`query`/`serve`) 모두 Qdrant 를 씁니다. 인메모리 색인은 테스트 전용입니다.
 - Selection 판정은 원문 검색 전에 보호된 로컬 감사 저장소에 기록됩니다. 원문 질의와 일치 문자열은
   투영에서 제외하며, 조회는 로컬 `audit` CLI에만 둡니다.
-  `CONTEXTCTL_QDRANT_URL` 이 없으면 데이터베이스를 열기 전에 `qdrant_endpoint_required` 로 실패하므로,
+- `CONTEXTCTL_QDRANT_URL` 이 없으면 데이터베이스를 열기 전에 `qdrant_endpoint_required` 로 실패하므로,
   벡터 없이 게시 완료 상태만 남는 일이 없습니다.
+- 두 임베딩 계층은 프로필·벡터·후보 Index와 재구축 주기가 서로 다릅니다. 둘 다 로컬이고 물리
+  실행 사양과 자산 디렉터리가 정확히 같을 때 daemon이 읽기 전용 Granite 추론 세션만 공유하며,
+  한 계층을 원격으로 바꿔도 다른 계층의 설정은 바뀌지 않습니다.
+- Card 후보 Index는 승인 Card snapshot에서 다시 만들 수 있는 프로세스 로컬 자산입니다. Qdrant의
+  관리 문서 Index와 같은 저장소가 아니고, 백업의 기준 상태로 취급하지 않습니다.
 - Registry, Ingestion, Qdrant 색인은 하나의 운영 상태입니다. 일부만 지워 재구축하는 복구 절차는
   지원하지 않습니다.
 
@@ -53,7 +65,7 @@
 | 워크스페이스 | 책임 |
 |---|---|
 | `apps/contextctl-daemon` | 런타임 진입점과 의존성 조립, CLI |
-| `packages/contracts` | 패키지 경계를 넘는 타입과 스키마 |
+| `packages/contracts` | 도메인 경계를 넘어 독립 저장·전달되는 버전형 생명주기 타입과 스키마 |
 | `packages/ingestion-indexing` | 문서 수집, 의미 단위, 청크, 색인 |
 | `packages/registry-lifecycle` | Context Card, 계보, 버전, 생애주기 |
 | `packages/selection-delivery` | 검색 범위 선택과 전달 표면 |
@@ -63,13 +75,15 @@
 ### 실행 영역 (lane)
 
 daemon 은 프로세스 하나지만 그 안에서 성격이 다른 일이 동시에 벌어집니다.
-`contextctl status` 는 아래 네 영역을 따로 판정합니다.
+`contextctl status` 는 아래 네 영역을 따로 판정합니다. 영속 상태와 설정을 한 번 읽어 준비 상태를
+판정하고, 같은 `CONTEXTCTL_HOME`에서 실행 중인 `serve`가 있으면 보호된 활동 스냅샷을 읽어
+대기열·활성 요청·이벤트 루프 지연·RSS도 별도 `runtime` 구역으로 보여줍니다.
 
 | 실행 영역 | 판정 근거 |
 |---|---|
 | `resolve` | 승인 Card 를 읽고 공유 상태 식별자와 문서 색인 바인딩을 검증하며 질문을 벡터로 만들어 검색할 수 있는가 |
 | `registry` | 소비하지 않은 Publication 이 있는가, 5분 넘게 대기 중인 Scope 가 있는가 |
-| `selection_assets` | 고정된 임베딩 자산이 설치되어 있는가 |
+| `selection_assets` | 두 임베딩 계층의 활성 프로필과 승인 Scope가 아직 참조하는 이전 문서 프로필의 바인딩을 구성할 수 있는가, 필요한 로컬 자산의 구조가 유효한가. 파일 내용 다이제스트는 `doctor --deep`·`query`·`serve`가 추가 검증 |
 | `ingestion` | 지속 가능한 색인이 설정됐고 끝나지 않은 게시가 남은 Source 가 없는가 |
 
 ---

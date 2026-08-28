@@ -204,7 +204,7 @@ describe("selectContext over a catalog that contradicts itself about a Scope", (
     }
 
     // The existing ladder already maps the domain invariant; nothing new had
-    // to be taught to the surfaces for the SOT's code to come out.
+    // to be taught to the surfaces for the defined error code to come out.
     const code = toResolveContextErrorCode(thrown);
     expect(code).toBe("selection_invariant_violation");
     expect(resolveContextErrorStatus(code)).toBe(500);

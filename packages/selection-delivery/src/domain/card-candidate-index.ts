@@ -204,8 +204,8 @@ export class CardCandidateIndex {
    * never forces a rebuild, and the policy is applied at search time as a
    * pre-filter over the exact scan — a record outside the set is never
    * compared, so it cannot occupy a place in the `limit` that an eligible Card
-   * would have taken. Removing it after the cut would be the post-filter SOT
-   * L88 forbids, and a top-K of twenty could come back with three.
+   * would have taken. Removing it after the cut would be the forbidden
+   * post-filter, and a top-K of twenty could come back with three.
    */
   topK(
     queryVector: readonly number[],

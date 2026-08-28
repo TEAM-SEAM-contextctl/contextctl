@@ -19,8 +19,8 @@ import type {
  * obviously mechanical. What it buys is that Registry can consume a Publication
  * at all: `claimPublication` requires this port, so without an implementation
  * no Card is ever created. It also gives the pipeline something to fall back to
- * when a model-backed generator is unreachable, which ARCHITECTURE.md §7.4 asks
- * for: an outage should degrade the Card text, not stop Registry.
+ * when a model-backed generator is unreachable: an outage should degrade the
+ * Card text, not stop Registry.
  *
  * Because every word comes from the request, it cannot name a table, column,
  * path, or document that the source does not have. The grounding check still

@@ -33,21 +33,20 @@ It also runs as an MCP server, so an agent like Claude Code can use it.
 | | |
 |---|---|
 | **Represent** | The released ingest path turns Markdown into structure-preserving semantic units and chunks, embeds them, and publishes them to an index. Contracts can carry PostgreSQL and OpenAPI coordinates, but their capture adapters are not included in this release |
-| **Lifecycle** | Capture and registration run on **independent cycles**. When a document changes, only the changed chunks are re-embedded; when registration falls behind, the delay is reported rather than hidden. Cards are never overwritten — versions accumulate and only a validated one is promoted |
-| **Select** | Picks the knowledge areas and retrieval scopes that fit a question. The answer is not a ranked list but an **admit / defer / reject verdict**, and it reports what it discarded as well as what it chose |
+| **Lifecycle** | Capture and registration run on **independent cycles**. An ordinary content edit under the same capture policy and embedding profile re-embeds only changed chunks; an incompatible policy or profile change rebuilds the index. When registration falls behind, the delay is reported rather than hidden. Cards are never overwritten — versions accumulate and only a validated one is promoted |
+| **Select** | Picks the knowledge areas and retrieval scopes that fit a question. The answer is not a ranked list: it returns the selected Cards and aggregate **admit / defer / reject counts**. Rejected Card identities and individual reasons are not part of the public response |
 | **Deliver** | For managed Markdown it assembles supporting text in the same request. Database and API guide shapes exist in the contracts for future adapters; this release neither captures nor executes those systems |
 
 ## What it will not do
 
 Keeping the responsibility narrow is the design, not a missing feature.
 
-- **It does not write or run SQL, or call an HTTP API.** Database and API guide
-  contracts stop at verifiable coordinates; their capture adapters are not in
-  this release
-- **It does not produce the final answer.** It assembles grounds; the caller
-  answers
-- **It never reads retrieved document text as instruction.** Every response
-  carries `contentTrust: untrusted` — retrieved text is data
+- **It does not execute the consumer database or API sources named by a Card.** Database
+  and API guide contracts stop at verifiable coordinates; their capture adapters are not
+  in this release. Qdrant and optional model providers are separate product infrastructure
+- **It does not produce the final answer.** It assembles grounds; the caller answers
+- **It never reads retrieved document text as instruction.** Every fulfilled
+  document context carries `contentTrust: untrusted` — retrieved text is data
 
 ---
 
@@ -57,7 +56,7 @@ Keeping the responsibility narrow is the design, not a missing feature.
 |---|---|
 | **Node.js** | **24.18.0 or newer, below 25** — accepted by the installer and package engines; required CI runs 24.18.0 |
 | **Qdrant** | Required. `ingest`, `query` and `serve` refuse to start without `CONTEXTCTL_QDRANT_URL` |
-| **Disk** | **396.1 MiB (about 415 MB)** for the embedding model — with the default local execution. Running both embedding layers remotely needs none of it |
+| **Disk** | **396.1 MiB (about 415 MB)** for the embedding model — with the default local execution. A new or fully migrated deployment with both layers remote needs none; an approved Scope still published under an older local profile keeps the assets required until that reference is retired |
 | **Memory** | No host minimum is claimed yet. Required CI caps the Granite-backed 10,000-Card scale process at **1,536 MiB peak RSS**; Qdrant and the operating system are outside that process |
 
 > ★ **Using `fnm`, `nvm` or `asdf`?** They install into the **active Node
@@ -134,8 +133,9 @@ then returns what it chose and why.
         …
 ```
 
-IDs above are shortened with `…` for readability. Actual IDs vary between
-installations and ingestion runs.
+IDs above are shortened with `…` for readability. A fresh state or destructive
+rebuild may issue different IDs. Within one persisted state, retries, restarts and
+ordinary re-ingestion preserve the IDs of the same logical entities.
 
 **Step 5 is the boundary this product exists for.** Capturing alone searches
 nothing. A Card you do not approve is never used, and one you did approve can be

@@ -1,8 +1,7 @@
 # 설정
 
-설정은 전부 환경변수입니다. 손으로 작성하는 설정 파일은 없습니다 — 유일한 파일인
-`sources.json` 도 저장소가 아니라 홈 디렉터리(`~/.contextctl/`)에 있고, `source add` 가
-대신 만들어 씁니다.
+운영 설정은 전부 환경변수입니다. 손으로 작성하는 설정 파일은 없습니다. Source 등록 목록인
+`sources.json`은 홈 디렉터리(`~/.contextctl/`)에 있고 `source add`가 대신 만들어 씁니다.
 
 값을 바꾸기 전에 지금 무엇으로 돌고 있는지 보는 편이 빠릅니다.
 
@@ -11,8 +10,8 @@ contextctl paths     # 경로가 실제로 어디로 해석됐는지
 contextctl doctor    # 설정이 유효한지, 무엇이 비었는지
 ```
 
-바꿀 수 없는 것도 여기 적어둡니다. 임베딩 모델이 그렇고, 왜 못 바꾸는지가 설정 문서에서 가장
-자주 나오는 질문이기 때문입니다.
+바꿀 수 없는 것도 여기 적어둡니다. 로컬 기본 임베딩 모델이 그렇고, 왜 못 바꾸는지가 설정
+문서에서 가장 자주 나오는 질문이기 때문입니다.
 
 - [경로](#경로)
 - [상태 식별](#상태-식별) — 이 홈의 상태가 어느 배포 것인지
@@ -123,8 +122,9 @@ ingest, query, serve를 시작하기 전에 영속 Qdrant 인덱스를 설정하
 > 색인은 `ingest` 가 끝나면 사라지므로, 그것을 허용하면 **게시는 완료됐는데 벡터가 없는 상태**가
 > 남고 질의는 조용히 빈 결과를 냅니다. 인메모리 어댑터는 시험에서 직접 주입할 때만 쓰입니다.
 
-컬렉션 이름은 임베딩 프로필에서 파생됩니다. 프로필이 다르면 다른 컬렉션이 되므로, 같은
-Qdrant 를 여러 실험에 써도 벡터가 섞이지 않습니다.
+컬렉션 이름은 상태 네임스페이스, 보안 도메인, 전체 임베딩 프로필과 Vector payload 스키마 버전의
+호환성 다이제스트에서 파생됩니다. 이 가운데 하나라도 다르면 다른 컬렉션이 되므로, 같은 Qdrant를
+여러 배포나 실험에 써도 벡터가 섞이지 않습니다.
 
 잘못된 값은 경고가 아니라 오류입니다. 타임아웃 문자열이 숫자가 아니라고 조용히 넘어가면,
 내구성 있는 저장소를 제대로 설정한 운영자가 그 사실을 모르게 됩니다.
@@ -155,25 +155,60 @@ Qdrant 를 여러 실험에 써도 벡터가 섞이지 않습니다.
 임베딩은 **두 계층**이고 따로 설정합니다 — 문서 검색용(`CONTEXTCTL_DOCUMENT_EMBEDDING_*`)과
 Card 선택용(`CONTEXTCTL_CARD_EMBEDDING_*`)은 벡터·색인·재생성 주기가 서로 다릅니다.
 
-| 변수 (계층별) | 기본값 | |
+| 변수 (문서 / Card) | 기본값 | |
 |---|---|---|
-| `…_EMBEDDING_MODE` | `local` | `local` 또는 `remote`. 그 외 값은 시작 거부 |
-| `…_EMBEDDING_ENDPOINT` | — | `remote` 일 때 필수. OpenAI 호환 임베딩 엔드포인트 |
-| `…_EMBEDDING_API_KEY` | — | `remote` 일 때 필수 (`credential_missing` 으로 거부) |
-| `…_EMBEDDING_PROVIDER_ID` | — | `remote` 일 때 필수. 제공자 식별자 |
-| `…_EMBEDDING_PROFILE` | 로컬 기본 프로필 | `remote` 일 때 **전체 프로필을 JSON 으로 명시해야** 합니다 — 엔드포인트가 어떤 모델·차원을 낼지 URL 로는 알 수 없기 때문입니다 |
+| `CONTEXTCTL_DOCUMENT_EMBEDDING_MODE` / `CONTEXTCTL_CARD_EMBEDDING_MODE` | `local` | `local` 또는 `remote`. 그 외 값은 시작 거부 |
+| `CONTEXTCTL_DOCUMENT_EMBEDDING_ENDPOINT` / `CONTEXTCTL_CARD_EMBEDDING_ENDPOINT` | — | `remote` 일 때 필수. OpenAI 호환 임베딩 엔드포인트 |
+| `CONTEXTCTL_DOCUMENT_EMBEDDING_API_KEY` / `CONTEXTCTL_CARD_EMBEDDING_API_KEY` | — | `remote` 일 때 필수 (`credential_missing` 으로 거부) |
+| `CONTEXTCTL_DOCUMENT_EMBEDDING_PROVIDER_ID` / `CONTEXTCTL_CARD_EMBEDDING_PROVIDER_ID` | `remote.<securityDomain>.document` / `remote.<securityDomain>.card` | 선택. 제공자 허용 목록에 쓰는 논리 식별자 |
+| `CONTEXTCTL_DOCUMENT_EMBEDDING_PROFILE` / `CONTEXTCTL_CARD_EMBEDDING_PROFILE` | 로컬 기본 프로필 | `remote` 일 때 **전체 프로필을 JSON 으로 명시해야** 합니다 — 엔드포인트가 어떤 모델·차원을 낼지 URL 로는 알 수 없기 때문입니다 |
 | `CONTEXTCTL_DOCUMENT_RETAINED_EMBEDDING_BINDINGS` | — | 프로필을 바꾼 뒤에도 옛 벡터 계열을 서비스해야 할 때, 그 계열의 바인딩을 유지합니다 |
 
 네 조합(`local/local`, `local/remote`, `remote/local`, `remote/remote`)이 모두 지원되고,
 **로컬·원격 사이 자동 대체는 없습니다** — 원격 설정이 불완전하면 조용히 로컬로 내려가는 대신
 시작을 거부합니다.
 
+원격 `ENDPOINT`는 daemon이 경로를 덧붙이지 않는 **전체 임베딩 요청 URL**입니다. 예를 들어
+`https://provider.example/v1/embeddings`처럼 `/embeddings` 표면까지 적습니다. API 키는
+`Authorization: Bearer <key>`로 고정 전송하며 임의 헤더를 환경변수로 추가하는 표면은 없습니다.
+HTTPS를 사용해야 하고, 암호화하지 않은 HTTP는 loopback 호스트에서만 허용합니다. URL 안의
+사용자 정보·query·fragment는 거부합니다.
+
 ```
 resolve           not_ready  임베딩 제공자를 조립할 수 없어 질문을 벡터로 만들 수 없습니다: document embedding remote binding is invalid: endpoint_missing
 ```
 
-두 계층이 모두 원격이면 아래 로컬 모델(396.1 MiB, 약 415 MB)은 필요하지 않고, `status` 가
-`로컬 자산이 필요하지 않습니다` 로 알려줍니다.
+새 상태이거나 모든 도달 가능한 문서 Scope와 활성 Card 후보 Index를 원격 프로필로 이관한 뒤에는
+두 계층이 모두 원격일 때 아래 로컬 모델(396.1 MiB, 약 415 MB)이 필요하지 않습니다. 이 경우
+`status`가 `로컬 자산이 필요하지 않습니다`로 알려줍니다. 설정만 원격으로 바꿔도 승인 Card가
+이전 로컬 프로필로 게시된 Scope를 가리키면 그 프로필의 바인딩과 자산은 계속 필요합니다.
+
+그 이관 구간에는 `CONTEXTCTL_DOCUMENT_RETAINED_EMBEDDING_BINDINGS`에 이전 문서 프로필별 정확한
+바인딩을 JSON 배열로 둡니다. 로컬 항목은 절대 `artifactDirectory`를, 원격 항목은 전체
+`endpoint`·`providerId`와 비밀 값이 아니라 비밀 값을 담은 `credentialVariable` 이름을 적습니다.
+
+```json
+[
+  {
+    "profileId": "document-old-local-v1",
+    "profileVersion": "1",
+    "mode": "local",
+    "artifactDirectory": "/srv/contextctl/embedding-assets/revisions/old"
+  },
+  {
+    "profileId": "document-old-remote-v1",
+    "profileVersion": "1",
+    "mode": "remote",
+    "endpoint": "https://provider.example/v1/embeddings",
+    "providerId": "provider.documents.old",
+    "credentialVariable": "CONTEXTCTL_OLD_DOCUMENT_EMBEDDING_KEY"
+  }
+]
+```
+
+배열은 최대 64개이고 같은 프로필 ID·버전을 중복할 수 없습니다. 이전 Scope 참조가 모두 끝난 뒤에만
+해당 항목과 로컬 자산을 제거합니다. `query`와 `serve`는 시작할 때 필요한 이전 로컬 바인딩 각각의
+`artifactDirectory`를 해당 프로필로 다시 검증하며, 하나라도 없거나 다르면 실행을 거부합니다.
 
 ### 로컬 모델 — 기본값이고 고정입니다
 
@@ -207,7 +242,8 @@ export CONTEXTCTL_CARD_MEANING_MODEL=your-model
 export CONTEXTCTL_CARD_MEANING_API_KEY=...
 ```
 
-선택 항목: `CONTEXTCTL_CARD_MEANING_TIMEOUT_MS`, `_CONTEXT_TOKENS`, `_MAX_OUTPUT_TOKENS`.
+선택 항목: `CONTEXTCTL_CARD_MEANING_TIMEOUT_MS`, `CONTEXTCTL_CARD_MEANING_CONTEXT_TOKENS`,
+`CONTEXTCTL_CARD_MEANING_MAX_OUTPUT_TOKENS`.
 
 **기본값은 모델을 쓰지 않는 결정적 생성기입니다.** 제목·섹션 라벨과 본문에서 파생한
 `keywords.derived` 로 Card 의미를 만들므로, 외부 LLM 없이도 수집부터 질의까지 돌아갑니다.

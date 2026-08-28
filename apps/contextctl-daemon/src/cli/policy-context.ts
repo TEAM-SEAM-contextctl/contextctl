@@ -36,8 +36,7 @@ export class PolicyContextConfigurationError extends Error {
  * One function, called by every composition path — the CLI runtime behind
  * `query`, the served process behind MCP and HTTP, and `doctor` — so the three
  * surfaces cannot read the environment differently and return different
- * answers to the same question (SOT §6.6: MCP, HTTP and CLI return the same
- * policy result).
+ * answers to the same question (the access-surface equivalence invariant).
  *
  * Unset is `deny`, the documented default. Any other value than the two
  * defined ones is refused rather than read as the default, the rule every
