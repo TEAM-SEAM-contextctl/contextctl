@@ -30,6 +30,7 @@ import {
   resolveAssetInstallationTarget,
   runAssetInstallation,
 } from "./asset-installation.js";
+import type { AssetInstallationConsent } from "./asset-installation-consent.js";
 import {
   describeAssetDirectoryProblem,
   resolveActiveAssetDirectory,
@@ -1089,7 +1090,7 @@ export async function runInstallAssets(input: {
   readonly environment: Readonly<Partial<Record<string, string>>>;
   readonly workingDirectory?: string;
   readonly progress: (message: string) => void;
-  readonly confirm?: () => Promise<boolean>;
+  readonly consent: AssetInstallationConsent;
 }): Promise<CommandOutcome> {
   const targetDirectory = resolveAssetInstallationTarget({
     environment: input.environment,
@@ -1104,21 +1105,36 @@ export async function runInstallAssets(input: {
       ? {}
       : { sourceDirectory: input.command.sourceDirectory }),
   });
-  // The plan is shown before anything is asked, so the operator is agreeing to
-  // a stated size, origin and licence rather than to the word "yes".
-  input.progress(describeAssetInstallationPlan(plan));
-
   const outcome = await runAssetInstallation({
     targetDirectory,
     ...(input.command.sourceDirectory === undefined
       ? {}
       : { sourceDirectory: input.command.sourceDirectory }),
     progress: input.progress,
-    ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
+    // The plan comes after the cheap installed-pointer check, so a repeat run
+    // does not claim that it is about to download bytes it already has.
+    beforeConsent: () => input.progress(describeAssetInstallationPlan(plan)),
+    ...(input.consent.kind === "granted"
+      ? {}
+      : {
+          confirm:
+            input.consent.kind === "prompt"
+              ? input.consent.confirm
+              : async () => false,
+        }),
   });
 
   switch (outcome.status) {
     case "declined":
+      if (input.consent.kind === "required") {
+        return failedWith(
+          EXIT_CODES.usageError,
+          [
+            "비대화형 환경에서는 모델 설치 동의를 추정하지 않습니다.",
+            "계속하려면 contextctl install-assets --yes 를 사용하십시오.",
+          ].join("\n"),
+        );
+      }
       // Not a failure. The operator was asked and said no, and reporting that
       // as an error would make a deliberate choice look like a broken install.
       return ok("설치를 취소했습니다.");

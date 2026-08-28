@@ -496,6 +496,10 @@ describe("usageText", () => {
     expect(usageText()).toContain("396.1 MiB, 약 415 MB");
   });
 
+  it("states that unattended asset installation needs explicit consent", () => {
+    expect(usageText("install-assets")).toContain("비대화형 환경은 --yes 가 필요하다");
+  });
+
   it("puts the usage into every rejection message", () => {
     const parsed = parseCliArguments(["query"]);
 
