@@ -8,6 +8,7 @@ import {
 } from "../embedding-guidance.js";
 import { parseCliArguments, usageText, type CliCommand } from "./arguments.js";
 import type { CommandOutcome } from "./commands.js";
+import type { CliStdoutPresentation } from "./presentation.js";
 import type { CliRuntime, RegistryOnlyRuntime } from "./runtime.js";
 import { resolveContextctlPaths } from "./paths.js";
 import { createCliTerminal } from "./terminal.js";
@@ -57,7 +58,7 @@ function needsRuntime(command: CliCommand): boolean {
 export async function runCli(input: {
   readonly argv: readonly string[];
   readonly environment: Readonly<Partial<Record<string, string>>>;
-  readonly stdout: (text: string) => void;
+  readonly stdout: (text: string, presentation?: CliStdoutPresentation) => void;
   readonly stderr: (text: string) => void;
   readonly progress?: (text: string) => void;
   readonly workingDirectory?: string;
@@ -211,11 +212,14 @@ export async function runCli(input: {
 }
 
 function emit(
-  input: { readonly stdout: (text: string) => void; readonly stderr: (text: string) => void },
+  input: {
+    readonly stdout: (text: string, presentation?: CliStdoutPresentation) => void;
+    readonly stderr: (text: string) => void;
+  },
   outcome: CommandOutcome,
 ): number {
   if (outcome.stdout !== "") {
-    input.stdout(outcome.stdout);
+    input.stdout(outcome.stdout, outcome.stdoutPresentation);
   }
   for (const line of outcome.stderr) {
     input.stderr(line);

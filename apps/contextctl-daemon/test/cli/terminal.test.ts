@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type {
+  CliStdoutPresentation,
+  StatusDisplayRow,
+} from "../../src/cli/presentation.js";
 import { createCliTerminal } from "../../src/cli/terminal.js";
 
 const ANSI_PATTERN = /\u001b\[[0-9;]*[A-Za-z]/u;
@@ -33,7 +37,14 @@ describe("createCliTerminal", () => {
   it("keeps redirected output byte-stable and ANSI-free", () => {
     const { terminal, stdout, stderr } = capture();
 
-    terminal.stdout("registry  ready      정상");
+    terminal.stdout(
+      "registry  ready      정상",
+      statusPresentation({
+        lane: "registry",
+        status: "ready",
+        detail: "정상",
+      }),
+    );
     terminal.stderr("경고: 확인 필요");
     terminal.progress("[1/2] 모델 다운로드 50%");
     terminal.finish();
@@ -128,19 +139,169 @@ describe("createCliTerminal", () => {
     expect(stripAnsi(json.stdout.join("")).trim()).toBe(document);
   });
 
-  it("preserves padded status columns even when the row exceeds the terminal", () => {
+  it("moves structured status details below the verdict on narrow terminals", () => {
     const { terminal, stdout } = capture({
       stdoutIsTTY: true,
       stdoutColumns: 24,
     });
     const row = "registry  ready      상태 설명이 터미널보다 깁니다";
 
+    terminal.stdout(
+      row,
+      statusPresentation({
+        lane: "registry",
+        status: "ready",
+        detail: "상태 설명이 터미널보다 깁니다",
+      }),
+    );
+
+    const lines = stripAnsi(stdout.join("")).trimEnd().split("\n");
+    expect(lines[0]).toBe("registry  ready");
+    expect(lines.slice(1).every((line) => line.startsWith("  "))).toBe(true);
+    expect(lines.map((line) => line.trim()).join(" ")).toBe(
+      "registry  ready 상태 설명이 터미널보다 깁니다",
+    );
+    expect(lines.every((line) => testDisplayWidth(line) <= 24)).toBe(true);
+  });
+
+  it("stacks a verdict that cannot share a 24-column heading", () => {
+    const { terminal, stdout } = capture({
+      stdoutIsTTY: true,
+      stdoutColumns: 24,
+    });
+
+    terminal.stdout(
+      "selection_assets  not_ready  로컬 임베딩 자산을 찾을 수 없습니다.",
+      statusPresentation({
+        lane: "selection_assets",
+        status: "not_ready",
+        detail: "로컬 임베딩 자산을 찾을 수 없습니다.",
+      }),
+    );
+
+    const output = stdout.join("");
+    const lines = stripAnsi(output).trimEnd().split("\n");
+    expect(lines.slice(0, 2)).toEqual(["selection_assets", "  not_ready"]);
+    expect(output).toContain("\u001b[31mnot_ready\u001b[0m");
+    expect(lines.every((line) => testDisplayWidth(line) <= 24)).toBe(true);
+  });
+
+  it.each([24, 40, 80])(
+    "keeps mixed-language structured status output within %i columns",
+    (columns) => {
+      const detail =
+        "Qdrant 연결이 지연되어 document retrieval 준비 상태를 확인하고 있습니다.";
+      const { terminal, stdout } = capture({
+        stdoutIsTTY: true,
+        stdoutColumns: columns,
+      });
+
+      terminal.stdout(
+        `ingestion       degraded   ${detail}`,
+        statusPresentation({ lane: "ingestion", status: "degraded", detail }),
+      );
+
+      const lines = stripAnsi(stdout.join("")).trimEnd().split("\n");
+      expect(lines.every((line) => testDisplayWidth(line) <= columns)).toBe(true);
+      const normalized = lines.join(" ").replace(/\s+/gu, " ");
+      expect(normalized).toContain("Qdrant");
+      expect(normalized).toContain("document retrieval");
+    },
+  );
+
+  it("keeps the existing three-column status row when 120 columns are enough", () => {
+    const row = "registry          ready      Registry 상태가 정상입니다.";
+    const { terminal, stdout } = capture({
+      stdoutIsTTY: true,
+      stdoutColumns: 120,
+      environment: { NO_COLOR: "1" },
+    });
+
+    terminal.stdout(
+      row,
+      statusPresentation({
+        lane: "registry",
+        status: "ready",
+        detail: "Registry 상태가 정상입니다.",
+      }),
+    );
+
+    expect(stdout.join("")).toBe(`${row}\n`);
+  });
+
+  it("does not infer ordinary padded rows as structured status output", () => {
+    const row = "name              value that exceeds a narrow terminal";
+    const { terminal, stdout } = capture({
+      stdoutIsTTY: true,
+      stdoutColumns: 24,
+      environment: { NO_COLOR: "1" },
+    });
+
     terminal.stdout(row);
 
-    expect(stripAnsi(stdout.join("")).trim()).toBe(row);
+    expect(stdout.join("")).toBe(`${row}\n`);
+  });
+
+  it("does not split a long URL in a structured status detail", () => {
+    const url = "http://127.0.0.1:6333/collections/contextctl_document_segments_v1";
+    const { terminal, stdout } = capture({
+      stdoutIsTTY: true,
+      stdoutColumns: 40,
+    });
+
+    terminal.stdout(
+      `ingestion  not_ready  Qdrant endpoint ${url}`,
+      statusPresentation({
+        lane: "ingestion",
+        status: "not_ready",
+        detail: `Qdrant endpoint ${url}`,
+      }),
+    );
+
+    expect(stripAnsi(stdout.join("")).split(url)).toHaveLength(2);
+  });
+
+  it("leaves status output unchanged below the safe wrapping width", () => {
+    const row = "registry  ready      a deliberately long status detail";
+    const { terminal, stdout } = capture({
+      stdoutIsTTY: true,
+      stdoutColumns: 19,
+      environment: { NO_COLOR: "1" },
+    });
+
+    terminal.stdout(
+      row,
+      statusPresentation({
+        lane: "registry",
+        status: "ready",
+        detail: "a deliberately long status detail",
+      }),
+    );
+
+    expect(stdout.join("")).toBe(`${row}\n`);
   });
 });
 
+function statusPresentation(row: StatusDisplayRow): CliStdoutPresentation {
+  return { kind: "status", rows: [row] };
+}
+
 function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;]*[A-Za-z]/gu, "");
+}
+
+function testDisplayWidth(text: string): number {
+  let width = 0;
+  for (const character of text) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    width +=
+      codePoint >= 0x1100 &&
+      (codePoint <= 0x115f ||
+        (codePoint >= 0x2e80 && codePoint <= 0xa4c6) ||
+        (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+        (codePoint >= 0xf900 && codePoint <= 0xfaff))
+        ? 2
+        : 1;
+  }
+  return width;
 }
