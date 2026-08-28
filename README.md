@@ -77,6 +77,10 @@ If `PATH` does not reach the install, `contextctl paths` reports the active Node
 installation and its executable directory. The GitHub installer also prints the
 exact `export PATH=…` line to add.
 
+The GitHub installer supports English and Korean. Set
+`CONTEXTCTL_LOCALE=en|ko` to choose explicitly; otherwise it follows `LC_ALL`,
+`LC_MESSAGES`, then `LANG`, and defaults to English for unknown locales.
+
 ---
 
 ## Five minutes

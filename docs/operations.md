@@ -338,6 +338,16 @@ Workspace를 섞지 않습니다.
 curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | bash -s -- --version vX.Y.Z
 ```
 
+설치기 문장은 영어와 한국어를 지원합니다. 명시적으로 고정하려면 다음처럼 실행합니다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TEAM-SEAM-contextctl/contextctl/main/install.sh | CONTEXTCTL_LOCALE=ko bash
+```
+
+값은 `en` 또는 `ko`만 허용합니다. 명시하지 않으면 `LC_ALL`, `LC_MESSAGES`, `LANG` 순서로
+판단하고, 지원하지 않는 locale은 영어를 사용합니다. 명령어·버전·checksum·경로는 언어에 따라
+바뀌지 않습니다.
+
 릴리스 담당자는 빌드가 끝난 깨끗한 작업 트리에서 다음 명령으로 업로드 자산을 만듭니다. 출력
 디렉터리가 비어 있지 않으면 서로 다른 릴리스가 섞이지 않도록 실패합니다.
 
