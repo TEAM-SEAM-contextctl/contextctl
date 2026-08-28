@@ -9,24 +9,17 @@
 
 [한국어](README.ko.md)
 
-MCP connects external data to an AI. contextctl makes that connected knowledge
-searchable, keeps it current, and restricts what an AI may search to **what a
-person approved**.
+MCP connects external data to an AI. contextctl makes that knowledge searchable,
+keeps it current, and restricts an AI to **what a person approved**.
 
-Registering a document does not make it searchable. A human approves a Card
-first, and every query answers from inside that approved scope.
+Registering a document does not make it searchable. A human approves a Card first,
+and every query stays inside that approved scope. It also runs as an MCP server.
 
-It also runs as an MCP server, so an agent like Claude Code can use it.
+> **The CLI speaks Korean.** Commands and flags are English; messages, diagnostics
+> and reference docs are Korean. Locale support is planned, not implemented.
 
-> **The CLI speaks Korean.** Command names and flags are English; messages,
-> diagnostics and the reference docs are Korean. Locale support is planned, not
-> implemented.
-
-> **Verified on Linux x64** — required CI installs the release tarballs and runs
-> the product lifecycle against real Qdrant and Granite. macOS arm64 is verified
-> by hand; Windows and WSL are untested.
-
----
+> **Verified on Linux x64** — required CI installs release tarballs and runs the
+> lifecycle against real Qdrant and Granite. macOS arm64 is checked by hand; Windows and WSL are untested.
 
 ## What it does
 
@@ -48,8 +41,6 @@ Keeping the responsibility narrow is the design, not a missing feature.
 - **It never reads retrieved document text as instruction.** Every fulfilled
   document context carries `contentTrust: untrusted` — retrieved text is data
 
----
-
 ## Requirements
 
 | | |
@@ -59,9 +50,8 @@ Keeping the responsibility narrow is the design, not a missing feature.
 | **Disk** | **396.1 MiB (about 415 MB)** for the embedding model — with the default local execution. A new or fully migrated deployment with both layers remote needs none; an approved Scope still published under an older local profile keeps the assets required until that reference is retired |
 | **Memory** | No host minimum is claimed yet. Required CI caps the Granite-backed 10,000-Card scale process at **1,536 MiB peak RSS**; Qdrant and the operating system are outside that process |
 
-> ★ **Using `fnm`, `nvm` or `asdf`?** They install into the **active Node
-> version's `bin` only**. Switching versions makes `contextctl` look like it
-> vanished. `contextctl paths` reports which Node it is under.
+> ★ **Using `fnm`, `nvm` or `asdf`?** They install into the active Node version's
+> `bin`. After switching versions, use `contextctl paths` to locate the executable.
 
 ## Install
 
@@ -69,18 +59,17 @@ Keeping the responsibility narrow is the design, not a missing feature.
 npm install -g @contextctl/daemon@1.1.0
 ```
 
-The package pins the other four workspaces to the same integrated release. For a
-SHA-256-checked installation from GitHub assets, use the
+The package installs all five workspaces at one integrated release. For
+SHA-256-checked GitHub assets, use the
 [release installer](docs/operations.md#릴리스-설치-무결성). Neither path downloads the
-model; the next step asks before downloading 396.1 MiB (about 415 MB).
-If `PATH` does not reach the install, `contextctl paths` reports its executable
-directory. The GitHub installer prints the exact `export PATH=…` line and supports
-English and Korean (`CONTEXTCTL_LOCALE=en|ko`); unknown locales default to English.
+model; the next step asks before downloading 396.1 MiB. For `PATH` problems,
+`contextctl paths` reports the executable directory. The GitHub installer prints
+the exact `export PATH=…` line and supports English and Korean
+(`CONTEXTCTL_LOCALE=en|ko`); unknown locales default to English.
 
 ## Five minutes
 
-> The `SQLite is an experimental feature` warning on `stderr` is expected. It is
-> not suppressed because doing so would also hide warnings that matter.
+> The `SQLite is an experimental feature` warning is expected; suppressing it would hide other warnings too.
 
 ```bash
 # 1. Start the vector index
@@ -106,11 +95,9 @@ contextctl cards approve <cardId>  # choose the Card described as "반차 · 인
 contextctl query "오전 반차와 오후 반차는 연차를 얼마나 차감하나요?"
 ```
 
-`doctor` does not create, claim, or migrate application state. It only creates and removes
-a short-lived permission probe; missing stores are warnings on a fresh home.
+`doctor` does not create or migrate application state; missing stores are warnings on a fresh home.
 
-Step 4 produces nine pending Card versions for the bundled `leave.md`; step 6
-then returns what it chose and why.
+Step 4 produces nine pending Card versions; step 6 returns what it chose and why.
 
 ```
 질의: 오전 반차와 오후 반차는 연차를 얼마나 차감하나요?
@@ -131,21 +118,14 @@ then returns what it chose and why.
         …
 ```
 
-IDs above are shortened with `…` for readability. A fresh state or destructive
-rebuild may issue different IDs. Within one persisted state, retries, restarts and
-ordinary re-ingestion preserve the IDs of the same logical entities.
+IDs are shortened with `…`. A fresh state or destructive rebuild may issue new IDs;
+within one persisted state, retries, restarts and ordinary re-ingestion preserve them.
 
-**Step 5 is the boundary this product exists for.** Capturing alone searches
-nothing. A Card you do not approve is never used, and one you did approve can be
-withdrawn with `cards disable` and approved again later — without re-capturing.
+**Step 5 is the product boundary.** Capturing alone searches nothing. Unapproved
+Cards are never used; approved Cards can be disabled and reapproved without recapturing.
 
-> **A Card meaning generator is optional.** The default one is deterministic —
-> it builds a Card's meaning from titles, section labels and derived keywords —
-> so the run above needs no external LLM. Attaching a model turns descriptions
-> and representative questions into sentences; what each one produces is in
-> [설정 / Configuration](docs/configuration.md#card-의미-생성기-선택) (Korean).
-
----
+> **A Card meaning generator is optional.** The deterministic default needs no
+> external LLM. Model-backed behavior is covered in [Configuration](docs/configuration.md#card-의미-생성기-선택) (Korean).
 
 ## As an MCP server
 
@@ -153,9 +133,8 @@ withdrawn with `cards disable` and approved again later — without re-capturing
 contextctl serve
 ```
 
-Speaks MCP over stdin/stdout. Exactly **one tool** is exposed to an agent:
-`resolve_context`. Control commands like approve and reject are deliberately
-absent — approval stays in human hands.
+MCP runs over stdin/stdout and exposes exactly one tool: `resolve_context`.
+Control commands are deliberately absent — approval stays in human hands.
 
 For Claude Code, in the project's `.mcp.json`:
 
@@ -171,21 +150,15 @@ For Claude Code, in the project's `.mcp.json`:
 }
 ```
 
-> ★ **This configuration shape is not verified in this repository.** We confirmed
-> that `contextctl serve` works as an MCP stdio server, but we have not
-> registered it in Claude Code with the `.mcp.json` above.
+> ★ `contextctl serve` is verified as an MCP stdio server; this exact Claude Code
+> registration has not been tested in this repository.
 
-The HTTP query surface is off unless a port is set, and it binds to loopback
-only — v1 ships no authentication layer. Request and response ceilings apply on
-every surface. Both are covered in
-[설정 / Configuration](docs/configuration.md#http-질의-표면) (Korean).
-
----
+The optional HTTP surface binds to loopback and ships without authentication.
+Limits and configuration are documented in [Configuration](docs/configuration.md#http-질의-표면) (Korean).
 
 ## Documentation
 
-The reference is in Korean, for the reason stated at the top — it quotes CLI
-output extensively.
+The reference is in Korean because it quotes CLI output extensively.
 
 | | |
 |---|---|
@@ -206,10 +179,8 @@ contextctl audit list           # recent Card and minimum-scope decisions
 
 ## Contributing
 
-Bug reports and pull requests are welcome. Read
-[CONTRIBUTING.md](CONTRIBUTING.md) first — it carries the verification commands,
-the exact pinned Node and npm, the workspace boundaries, and the branch, commit
-and review rules.
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
+covers verification, pinned tools, workspace boundaries and review rules.
 
 ## License
 
