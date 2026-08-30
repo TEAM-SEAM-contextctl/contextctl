@@ -331,26 +331,8 @@ export async function publishCandidate(plan, options) {
         registry,
       );
       if (latestBefore === undefined && latest === entry.version) {
-        await requireSuccessful(
-          await options.runNpm([
-            "dist-tag",
-            "rm",
-            entry.name,
-            LATEST_TAG,
-            "--registry",
-            registry,
-          ]),
-          `remove npm-created ${entry.name}@${LATEST_TAG}`,
-        );
-        await waitForMissingTag({
-          runNpm: options.runNpm,
-          name: entry.name,
-          tag: LATEST_TAG,
-          registry,
-          wait: options.wait,
-        });
         options.report?.(
-          `removed npm-created ${entry.name}@${LATEST_TAG}; candidate remains ${entry.version}`,
+          `npm created required ${entry.name}@${LATEST_TAG}=${entry.version} for the first publication; retaining it until final promotion verification`,
         );
       } else if (latest !== latestBefore) {
         throw new Error(
@@ -857,28 +839,6 @@ async function waitForPublishedCandidate(options) {
   }
   throw new Error(
     `${options.name}@${options.tag} did not resolve to ${options.version} after ${REGISTRY_OBSERVATION_ATTEMPTS} Registry checks; received ${observedTag ?? "nothing"}`,
-  );
-}
-
-async function waitForMissingTag(options) {
-  const wait = options.wait ?? (async (milliseconds) => {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
-  });
-  let observed;
-  for (let attempt = 1; attempt <= REGISTRY_OBSERVATION_ATTEMPTS; attempt += 1) {
-    observed = await readTaggedVersion(
-      options.runNpm,
-      options.name,
-      options.tag,
-      options.registry,
-    );
-    if (observed === undefined) return;
-    if (attempt < REGISTRY_OBSERVATION_ATTEMPTS) {
-      await wait(REGISTRY_OBSERVATION_INTERVAL_MS);
-    }
-  }
-  throw new Error(
-    `${options.name}@${options.tag} still resolves to ${observed} after removal`,
   );
 }
 

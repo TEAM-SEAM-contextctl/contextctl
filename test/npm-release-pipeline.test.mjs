@@ -329,12 +329,13 @@ describe("candidate publishing", () => {
     ).toBe(true);
   });
 
-  it("removes latest when npm creates it automatically for a first publication", async () => {
+  it("retains and reports Registry-required latest on a first publication", async () => {
     const plan = await loadReleasePlan(repositoryRoot);
     const published = new Set();
     const candidate = new Map();
     const latest = new Map();
-    const removedLatest = [];
+    const report = vi.fn();
+    const calls = [];
     const byDirectory = new Map(
       plan.packages.map((entry) => [entry.absoluteDirectory, entry.name]),
     );
@@ -350,7 +351,9 @@ describe("candidate publishing", () => {
       },
       runGit: publicReleaseGit(plan),
       wait: async () => undefined,
+      report,
       runNpm: async (arguments_) => {
+        calls.push(arguments_);
         if (arguments_[0] === "view") {
           const spec = arguments_[1];
           const split = spec.lastIndexOf("@");
@@ -377,18 +380,17 @@ describe("candidate publishing", () => {
           latest.set(name, plan.version);
           return success();
         }
-        if (arguments_[0] === "dist-tag" && arguments_[1] === "rm") {
-          const name = arguments_[2];
-          removedLatest.push(name);
-          latest.delete(name);
-          return success();
-        }
         throw new Error(`unexpected npm call: ${arguments_.join(" ")}`);
       },
     });
 
-    expect(removedLatest).toEqual(plan.packages.map((entry) => entry.name));
-    expect(latest.size).toBe(0);
+    expect(calls.some((arguments_) => arguments_[0] === "dist-tag")).toBe(false);
+    expect([...latest]).toEqual(
+      plan.packages.map((entry) => [entry.name, plan.version]),
+    );
+    expect(report).toHaveBeenCalledWith(
+      "npm created required @contextctl/contracts@latest=1.1.2 for the first publication; retaining it until final promotion verification",
+    );
   });
 
   it("stops when a Registry changes latest during candidate publication", async () => {
