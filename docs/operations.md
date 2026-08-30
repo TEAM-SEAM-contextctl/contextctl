@@ -324,10 +324,10 @@ npm rm -g @contextctl/daemon @contextctl/selection-delivery \
 npm 공개 레지스트리 경로는 정확한 통합 버전을 설치합니다.
 
 ```bash
-npm install -g @contextctl/daemon@1.1.0
+npm install -g @contextctl/daemon@1.1.1
 ```
 
-`@contextctl/daemon`의 내부 의존성도 같은 `1.1.0`으로 고정돼 있어 npm이 다른 릴리스의
+`@contextctl/daemon`의 내부 의존성도 같은 `1.1.1`으로 고정돼 있어 npm이 다른 릴리스의
 Workspace를 섞지 않습니다.
 
 `install.sh`는 `latest` 주소에서 패키지를 곧바로 섞어 받지 않습니다. 먼저 정확한 릴리스 태그를

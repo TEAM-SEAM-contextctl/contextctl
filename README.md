@@ -56,7 +56,7 @@ Keeping the responsibility narrow is the design, not a missing feature.
 ## Install
 
 ```bash
-npm install -g @contextctl/daemon@1.1.0
+npm install -g @contextctl/daemon@1.1.1
 ```
 
 The package installs all five workspaces at one integrated release. For
