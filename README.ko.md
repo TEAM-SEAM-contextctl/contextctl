@@ -55,7 +55,7 @@ MCP가 외부 데이터를 AI에 연결한다면, contextctl은 그 지식을 �
 ## 설치
 
 ```bash
-npm install -g @contextctl/daemon@1.1.1
+npm install -g @contextctl/daemon@1.1.2
 ```
 
 다섯 Workspace는 같은 통합 버전으로 설치됩니다. SHA-256으로 검증한 GitHub 자산은
