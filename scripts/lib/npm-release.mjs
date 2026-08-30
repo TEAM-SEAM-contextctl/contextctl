@@ -18,6 +18,9 @@ export const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org/";
 export const CANDIDATE_TAG = "candidate";
 export const LATEST_TAG = "latest";
 
+const REGISTRY_OBSERVATION_ATTEMPTS = 60;
+const REGISTRY_OBSERVATION_INTERVAL_MS = 10_000;
+
 export const RELEASE_WORKSPACES = Object.freeze([
   Object.freeze({ directory: "packages/contracts" }),
   Object.freeze({ directory: "packages/selection-delivery" }),
@@ -308,31 +311,50 @@ export async function publishCandidate(plan, options) {
         `candidate publish failed for ${entry.name}; already published in this attempt: ${partial}. Do not reuse ${plan.version}; prepare a new patch version. ${commandFailure(result)}`,
       );
     }
-    await waitForExactVersion({
+    options.report?.(
+      `npm accepted ${entry.name}@${entry.version}; waiting for public Registry visibility`,
+    );
+    await waitForPublishedCandidate({
       runNpm: options.runNpm,
       name: entry.name,
       version: entry.version,
-      registry,
-      wait: options.wait,
-    });
-    await waitForTaggedVersion({
-      runNpm: options.runNpm,
-      name: entry.name,
       tag: CANDIDATE_TAG,
-      expected: entry.version,
       registry,
       wait: options.wait,
     });
     if (options.target === "public") {
+      const latestBefore = latestBeforePublish.get(entry.name);
       const latest = await readTaggedVersion(
         options.runNpm,
         entry.name,
         LATEST_TAG,
         registry,
       );
-      if (latest !== latestBeforePublish.get(entry.name)) {
+      if (latestBefore === undefined && latest === entry.version) {
+        await requireSuccessful(
+          await options.runNpm([
+            "dist-tag",
+            "rm",
+            entry.name,
+            LATEST_TAG,
+            "--registry",
+            registry,
+          ]),
+          `remove npm-created ${entry.name}@${LATEST_TAG}`,
+        );
+        await waitForMissingTag({
+          runNpm: options.runNpm,
+          name: entry.name,
+          tag: LATEST_TAG,
+          registry,
+          wait: options.wait,
+        });
+        options.report?.(
+          `removed npm-created ${entry.name}@${LATEST_TAG}; candidate remains ${entry.version}`,
+        );
+      } else if (latest !== latestBefore) {
         throw new Error(
-          `${entry.name}@latest changed during candidate publication; expected ${latestBeforePublish.get(entry.name) ?? "no tag"}, received ${latest ?? "no tag"}. Stop promotion and investigate the Registry state.`,
+          `${entry.name}@latest changed during candidate publication; expected ${latestBefore ?? "no tag"}, received ${latest ?? "no tag"}. Stop promotion and investigate the Registry state.`,
         );
       }
     }
@@ -735,6 +757,7 @@ async function readPublishedVersion(runNpm, name, version, registry) {
     "--json",
     "--registry",
     registry,
+    "--prefer-online",
   ]);
   if (result.exitCode !== 0) {
     if (isNotFound(result)) return undefined;
@@ -754,11 +777,13 @@ async function readTaggedVersion(runNpm, name, tag, registry) {
     "--json",
     "--registry",
     registry,
+    "--prefer-online",
   ]);
   if (result.exitCode !== 0) {
     if (isNotFound(result)) return undefined;
     throw new Error(`cannot query ${name}@${tag}: ${commandFailure(result)}`);
   }
+  if (result.stdout.trim() === "") return undefined;
   const parsed = parseJson(result.stdout, `npm view ${name}@${tag}`);
   return typeof parsed === "string" ? parsed : undefined;
 }
@@ -770,6 +795,7 @@ async function readPublishedMetadata(runNpm, name, version, registry) {
     "--json",
     "--registry",
     registry,
+    "--prefer-online",
   ]);
   if (result.exitCode !== 0) {
     throw new Error(`cannot read ${name}@${version}: ${commandFailure(result)}`);
@@ -798,47 +824,61 @@ function assertPublishedMetadata(entry, metadata, options) {
   }
 }
 
-async function waitForExactVersion(options) {
+async function waitForPublishedCandidate(options) {
   const wait = options.wait ?? (async (milliseconds) => {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
   });
-  for (let attempt = 1; attempt <= 6; attempt += 1) {
-    if (
-      (await readPublishedVersion(
-        options.runNpm,
-        options.name,
-        options.version,
-        options.registry,
-      )) === options.version
-    ) {
-      return;
-    }
-    if (attempt < 6) await wait(attempt * 1_000);
-  }
-  throw new Error(
-    `${options.name}@${options.version} was not observable after publishing`,
-  );
-}
-
-async function waitForTaggedVersion(options) {
-  const wait = options.wait ?? (async (milliseconds) => {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
-  });
-  for (let attempt = 1; attempt <= 6; attempt += 1) {
-    if (
-      (await readTaggedVersion(
+  let observedVersion;
+  let observedTag;
+  for (let attempt = 1; attempt <= REGISTRY_OBSERVATION_ATTEMPTS; attempt += 1) {
+    observedVersion = await readPublishedVersion(
+      options.runNpm,
+      options.name,
+      options.version,
+      options.registry,
+    );
+    if (observedVersion === options.version) {
+      observedTag = await readTaggedVersion(
         options.runNpm,
         options.name,
         options.tag,
         options.registry,
-      )) === options.expected
-    ) {
-      return;
+      );
+      if (observedTag === options.version) return;
     }
-    if (attempt < 6) await wait(attempt * 1_000);
+    if (attempt < REGISTRY_OBSERVATION_ATTEMPTS) {
+      await wait(REGISTRY_OBSERVATION_INTERVAL_MS);
+    }
+  }
+  if (observedVersion !== options.version) {
+    throw new Error(
+      `${options.name}@${options.version} was accepted by npm but was not observable after ${REGISTRY_OBSERVATION_ATTEMPTS} Registry checks. Do not reuse ${options.version}; prepare a new patch version`,
+    );
   }
   throw new Error(
-    `${options.name}@${options.tag} did not resolve to ${options.expected} after publishing`,
+    `${options.name}@${options.tag} did not resolve to ${options.version} after ${REGISTRY_OBSERVATION_ATTEMPTS} Registry checks; received ${observedTag ?? "nothing"}`,
+  );
+}
+
+async function waitForMissingTag(options) {
+  const wait = options.wait ?? (async (milliseconds) => {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+  });
+  let observed;
+  for (let attempt = 1; attempt <= REGISTRY_OBSERVATION_ATTEMPTS; attempt += 1) {
+    observed = await readTaggedVersion(
+      options.runNpm,
+      options.name,
+      options.tag,
+      options.registry,
+    );
+    if (observed === undefined) return;
+    if (attempt < REGISTRY_OBSERVATION_ATTEMPTS) {
+      await wait(REGISTRY_OBSERVATION_INTERVAL_MS);
+    }
+  }
+  throw new Error(
+    `${options.name}@${options.tag} still resolves to ${observed} after removal`,
   );
 }
 

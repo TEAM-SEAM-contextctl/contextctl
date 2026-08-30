@@ -171,6 +171,57 @@ describe("candidate publishing", () => {
     );
   });
 
+  it("waits through delayed public Registry visibility after npm accepts a package", async () => {
+    const plan = await loadReleasePlan(repositoryRoot);
+    const published = new Set();
+    const exactChecks = new Map();
+    const waits = vi.fn(async () => undefined);
+    const report = vi.fn();
+    const byDirectory = new Map(
+      plan.packages.map((entry) => [entry.absoluteDirectory, entry.name]),
+    );
+
+    await publishCandidate(plan, {
+      target: "isolated",
+      registry: "http://127.0.0.1:4873",
+      confirm: true,
+      provenance: false,
+      runGit: async () => success(),
+      wait: waits,
+      report,
+      runNpm: async (arguments_) => {
+        if (arguments_[0] === "whoami") return success("release-test\n");
+        if (arguments_[0] === "publish") {
+          published.add(byDirectory.get(arguments_[1]));
+          return success();
+        }
+        if (arguments_[0] !== "view") {
+          throw new Error(`unexpected npm call: ${arguments_.join(" ")}`);
+        }
+        expect(arguments_).toContain("--prefer-online");
+        const spec = arguments_[1];
+        const split = spec.lastIndexOf("@");
+        const name = spec.slice(0, split);
+        const selector = spec.slice(split + 1);
+        if (!published.has(name) || selector === "latest") {
+          return failure("npm error code E404");
+        }
+        if (name === "@contextctl/contracts" && selector === plan.version) {
+          const checks = (exactChecks.get(name) ?? 0) + 1;
+          exactChecks.set(name, checks);
+          if (checks <= 7) return failure("npm error code E404");
+        }
+        return success(JSON.stringify(plan.version));
+      },
+    });
+
+    expect(waits).toHaveBeenCalledTimes(7);
+    expect(waits).toHaveBeenCalledWith(10_000);
+    expect(report).toHaveBeenCalledWith(
+      "npm accepted @contextctl/contracts@1.1.0; waiting for public Registry visibility",
+    );
+  });
+
   it("checks every package before writing and refuses immutable version reuse", async () => {
     const plan = await loadReleasePlan(repositoryRoot);
     const calls = [];
@@ -278,6 +329,68 @@ describe("candidate publishing", () => {
     ).toBe(true);
   });
 
+  it("removes latest when npm creates it automatically for a first publication", async () => {
+    const plan = await loadReleasePlan(repositoryRoot);
+    const published = new Set();
+    const candidate = new Map();
+    const latest = new Map();
+    const removedLatest = [];
+    const byDirectory = new Map(
+      plan.packages.map((entry) => [entry.absoluteDirectory, entry.name]),
+    );
+
+    await publishCandidate(plan, {
+      target: "public",
+      registry: PUBLIC_NPM_REGISTRY,
+      confirm: true,
+      provenance: true,
+      environment: {
+        ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.example",
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "opaque-token",
+      },
+      runGit: publicReleaseGit(plan),
+      wait: async () => undefined,
+      runNpm: async (arguments_) => {
+        if (arguments_[0] === "view") {
+          const spec = arguments_[1];
+          const split = spec.lastIndexOf("@");
+          const name = spec.slice(0, split);
+          const selector = spec.slice(split + 1);
+          if (selector === "latest") {
+            return latest.has(name)
+              ? success(JSON.stringify(latest.get(name)))
+              : success("");
+          }
+          if (selector === "candidate") {
+            return candidate.has(name)
+              ? success(JSON.stringify(candidate.get(name)))
+              : failure("npm error code E404");
+          }
+          return published.has(name)
+            ? success(JSON.stringify(plan.version))
+            : failure("npm error code E404");
+        }
+        if (arguments_[0] === "publish") {
+          const name = byDirectory.get(arguments_[1]);
+          published.add(name);
+          candidate.set(name, plan.version);
+          latest.set(name, plan.version);
+          return success();
+        }
+        if (arguments_[0] === "dist-tag" && arguments_[1] === "rm") {
+          const name = arguments_[2];
+          removedLatest.push(name);
+          latest.delete(name);
+          return success();
+        }
+        throw new Error(`unexpected npm call: ${arguments_.join(" ")}`);
+      },
+    });
+
+    expect(removedLatest).toEqual(plan.packages.map((entry) => entry.name));
+    expect(latest.size).toBe(0);
+  });
+
   it("stops when a Registry changes latest during candidate publication", async () => {
     const plan = await loadReleasePlan(repositoryRoot);
     let firstPackagePublished = false;
@@ -296,9 +409,12 @@ describe("candidate publishing", () => {
         wait: async () => undefined,
         runNpm: async (arguments_) => {
           if (arguments_[0] === "view") {
-            return firstPackagePublished
-              ? success(JSON.stringify(plan.version))
-              : failure("npm error code E404");
+            if (!firstPackagePublished) return failure("npm error code E404");
+            return success(
+              JSON.stringify(
+                arguments_[1].endsWith("@latest") ? "9.9.9" : plan.version,
+              ),
+            );
           }
           if (arguments_[0] === "publish") {
             firstPackagePublished = true;
