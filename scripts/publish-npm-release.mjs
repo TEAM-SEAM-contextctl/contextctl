@@ -29,6 +29,7 @@ if (parsed.action === "dry-run") {
     target: parsed.target,
     confirm: parsed.yes,
     provenance: parsed.provenance,
+    report: (message) => process.stdout.write(`${message}\n`),
   });
   process.stdout.write(
     `published ${published.length} packages with candidate tag; verify the exact version before promotion\n`,
