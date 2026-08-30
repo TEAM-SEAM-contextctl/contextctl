@@ -1,6 +1,6 @@
 {
   "name": "@contextctl/registry-lifecycle",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Context Card registry and lifecycle management for Contextctl.",
   "license": "MIT",
   "publishConfig": {
@@ -26,6 +26,6 @@
   },
   "files": ["dist", "LICENSE", "README.md", "!dist/.tsbuildinfo"],
   "dependencies": {
-    "@contextctl/contracts": "1.1.1"
+    "@contextctl/contracts": "1.1.2"
   }
 }

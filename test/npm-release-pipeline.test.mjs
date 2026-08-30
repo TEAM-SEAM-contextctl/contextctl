@@ -33,7 +33,7 @@ describe("npm release plan", () => {
   it("derives a stable dependency order and keeps the daemon last", async () => {
     const plan = await loadReleasePlan(repositoryRoot);
 
-    expect(plan.version).toBe("1.1.1");
+    expect(plan.version).toBe("1.1.2");
     expect(plan.packages.map((entry) => entry.name)).toEqual([
       "@contextctl/contracts",
       "@contextctl/selection-delivery",
@@ -218,7 +218,7 @@ describe("candidate publishing", () => {
     expect(waits).toHaveBeenCalledTimes(7);
     expect(waits).toHaveBeenCalledWith(10_000);
     expect(report).toHaveBeenCalledWith(
-      "npm accepted @contextctl/contracts@1.1.1; waiting for public Registry visibility",
+      "npm accepted @contextctl/contracts@1.1.2; waiting for public Registry visibility",
     );
   });
 
@@ -240,8 +240,8 @@ describe("candidate publishing", () => {
           if (arguments_[0] !== "view") {
             throw new Error("publish must not start during preflight");
           }
-          return arguments_[1] === "@contextctl/contracts@1.1.1"
-            ? success(JSON.stringify("1.1.1"))
+          return arguments_[1] === "@contextctl/contracts@1.1.2"
+            ? success(JSON.stringify("1.1.2"))
             : failure("npm error code E404");
         },
       }),
@@ -282,7 +282,7 @@ describe("candidate publishing", () => {
           return success();
         },
       }),
-    ).rejects.toThrow("Do not reuse 1.1.1; prepare a new patch version");
+    ).rejects.toThrow("Do not reuse 1.1.2; prepare a new patch version");
   });
 
   it("uses GitHub OIDC for public provenance publishing without a token-only whoami", async () => {
