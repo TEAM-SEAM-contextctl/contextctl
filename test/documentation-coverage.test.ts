@@ -114,6 +114,62 @@ describe("documentation coverage", () => {
     expect(read("README.ko.md")).toContain("(README.md)");
   });
 
+  it("keeps security and conduct reporting discoverable", () => {
+    for (const path of ["README.md", "README.ko.md", "CONTRIBUTING.md"]) {
+      const body = read(path);
+      expect(body, `${path} should link to the security policy`).toContain(
+        "(SECURITY.md)",
+      );
+      expect(body, `${path} should link to the code of conduct`).toContain(
+        "(CODE_OF_CONDUCT.md)",
+      );
+    }
+
+    expect(read("SECURITY.md")).toContain(
+      "contextctl/security/advisories/new",
+    );
+    expect(read("CODE_OF_CONDUCT.md")).toContain(
+      "contextctl/security/advisories/new",
+    );
+  });
+
+  it("keeps public npm publishing credential-free", () => {
+    const contributing = read("CONTRIBUTING.md");
+    const workflow = read(".github/workflows/publish-npm-candidate.yml");
+
+    for (const body of [contributing, workflow]) {
+      expect(body).not.toContain("NPM_BOOTSTRAP_TOKEN");
+      expect(body).not.toContain("NODE_AUTH_TOKEN:");
+    }
+    expect(contributing).toContain("GitHub OIDC");
+    expect(workflow).toContain("id-token: write");
+  });
+
+  it("gives npm package pages a usable support boundary", () => {
+    const daemon = read("apps/contextctl-daemon/README.md");
+    expect(daemon).toContain("npm install -g @contextctl/daemon");
+    expect(daemon).toContain("Node.js `>=24.18.0 <25`");
+    expect(daemon).toContain("Qdrant is required");
+
+    for (const path of [
+      "packages/contracts/README.md",
+      "packages/ingestion-indexing/README.md",
+      "packages/registry-lifecycle/README.md",
+      "packages/selection-delivery/README.md",
+    ]) {
+      const body = read(path);
+      expect(body, `${path} should state integrated-version compatibility`).toContain(
+        "same exact version",
+      );
+      expect(body, `${path} should state its public API boundary`).toContain(
+        "package-root ESM export",
+      );
+      expect(body, `${path} should link private security reporting`).toContain(
+        "SECURITY.md",
+      );
+    }
+  });
+
   it("keeps both READMEs short enough to read in one sitting", () => {
     // The split exists because a 497-line README buried the introduction. A
     // number here is arbitrary; a number that fails when the manual creeps back
@@ -185,6 +241,9 @@ describe("documentation coverage", () => {
     const documents = [
       "README.md",
       "README.ko.md",
+      "SECURITY.md",
+      "CODE_OF_CONDUCT.md",
+      "CONTRIBUTING.md",
       "docs/README.md",
       "docs/architecture.md",
       "docs/cli.md",
