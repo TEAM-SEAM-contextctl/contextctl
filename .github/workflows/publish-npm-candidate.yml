@@ -125,10 +125,6 @@ jobs:
         run: npm run test:release-product-local
       - run: npm run release:publish:dry-run
       - name: Publish immutable candidate packages
-        env:
-          # Remove this environment secret after the first five packages exist and
-          # npm Trusted Publishing has been configured for each package.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
         run: npm run release:publish:candidate -- --target public --registry https://registry.npmjs.org/ --yes --provenance
       - name: Verify exact public candidate installs
         run: npm run release:verify:published -- --target public --registry https://registry.npmjs.org/ --require-provenance
