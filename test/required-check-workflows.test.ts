@@ -95,10 +95,8 @@ describe("required external check workflows", () => {
     expect(benchmarkStep).toContain(
       "          CONTEXTCTL_DOCUMENT_RETRIEVAL_RESULT_PATH:",
     );
-    expect(workflow).toContain(
-      "          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}\n",
-    );
-    expect(workflow.match(/NODE_AUTH_TOKEN:/gu)).toHaveLength(1);
+    expect(workflow).not.toContain("NPM_BOOTSTRAP_TOKEN");
+    expect(workflow).not.toContain("NODE_AUTH_TOKEN:");
     expect(workflow).toContain(
       "qdrant/qdrant@sha256:0fb8897412abc81d1c0430a899b9a81eb8328aa634e7242d1bc804c1fe8fe863",
     );
@@ -119,11 +117,8 @@ describe("required external check workflows", () => {
     expect(workflow.indexOf("release:publish:candidate")).toBeLessThan(
       workflow.indexOf("release:verify:published"),
     );
-    expect(workflow.indexOf("NODE_AUTH_TOKEN:")).toBeGreaterThan(
+    expect(workflow.indexOf("id-token: write")).toBeLessThan(
       workflow.indexOf("- name: Publish immutable candidate packages"),
-    );
-    expect(workflow.indexOf("NODE_AUTH_TOKEN:")).toBeLessThan(
-      workflow.indexOf("release:publish:candidate"),
     );
   });
 });
