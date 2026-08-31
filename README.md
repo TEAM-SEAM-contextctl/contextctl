@@ -167,6 +167,8 @@ The reference is in Korean because it quotes CLI output extensively.
 | [설정](docs/configuration.md) | Environment variables, state identity, HTTP surface, embedding, meaning generator |
 | [운영](docs/operations.md) | Troubleshooting, status checks, backup and restore, index rebuild, uninstall |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, branch and review rules |
+| [Security](SECURITY.md) | Supported versions and private vulnerability reporting |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards and confidential conduct reporting |
 
 In a terminal the CLI tells you itself.
 

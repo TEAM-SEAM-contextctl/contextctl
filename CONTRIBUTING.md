@@ -2,6 +2,10 @@
 
 Thank you for contributing to Contextctl.
 
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md). Report
+security vulnerabilities through the private process in [SECURITY.md](SECURITY.md),
+not through a public issue.
+
 ## Setup
 
 ```bash
@@ -63,15 +67,12 @@ It requires a clean `main` whose HEAD equals `origin/main`, an immutable
 Publishing. The workflow repeats the release-critical Qdrant, Granite, quality,
 consumer and installed-product gates before publishing with provenance.
 
-There is one bootstrap exception: npm Trusted Publishing is configured per
-existing package, so it cannot authorize these five package names before their
-first publication. For that first candidate only, store a short-lived,
-least-privilege npm token as the protected environment secret
-`NPM_BOOTSTRAP_TOKEN`. GitHub Actions maps it to `NODE_AUTH_TOKEN` only for the
-publish step and still generates provenance from the immutable release ref.
-After all five packages exist, configure the same workflow as their trusted
-publisher and delete `NPM_BOOTSTRAP_TOKEN` before any later release. Never keep
-the bootstrap token as a fallback credential.
+All five published package names already trust this workflow. Keep candidate
+publishing credential-free: the job receives short-lived npm authorization from
+GitHub OIDC and must not read an npm token from repository or environment
+secrets. A future package name that does not yet exist on npm needs a separate,
+reviewed first-publication plan; do not turn that one-time bootstrap into a
+fallback credential for the existing packages.
 
 After the exact candidate passes its public install, audit, CLI, demo and native
 load checks, an authenticated release operator promotes it locally. Promotion

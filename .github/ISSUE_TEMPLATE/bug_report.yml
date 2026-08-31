@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a reproducible Contextctl defect
+title: "bug: "
+labels:
+  - type:bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a defect. Do not include credentials, retrieved customer text, or other private data.
+        Security vulnerabilities must use the private reporting link below instead of this public form.
+  - type: input
+    id: version
+    attributes:
+      label: Contextctl version
+      description: Run `contextctl --version` and paste the exact result.
+      placeholder: contextctl 1.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - npm global install
+        - GitHub Release installer
+        - Repository checkout
+        - Direct library dependency
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, architecture, Node.js, npm, Qdrant, and local or remote embedding mode as relevant.
+      placeholder: |
+        OS: Ubuntu 24.04 x64
+        Node.js: 24.18.0
+        npm: 11.16.0
+        Qdrant: 1.15.5
+        Embedding: local/local
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest sequence of commands or API calls that reproduces the defect.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error codes and exit status. Redact credentials, queries, retrieved text, and private paths.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues for the same defect.
+          required: true
+        - label: I removed credentials, customer data, queries, and retrieved text from this report.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

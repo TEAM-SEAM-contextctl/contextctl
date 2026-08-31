@@ -169,6 +169,8 @@ Claude Code 라면 프로젝트 루트 `.mcp.json` 에 이렇게 씁니다.
 | [설정](docs/configuration.md) | 환경변수, 상태 식별, HTTP 표면, 임베딩, Card 의미 생성기 |
 | [운영](docs/operations.md) | 문제 해결, 상태 점검, 백업·복원, 색인 복구, 제거 |
 | [CONTRIBUTING](CONTRIBUTING.md) | 개발 환경, 브랜치와 리뷰 규칙 |
+| [Security](SECURITY.md) | 지원 버전과 비공개 취약점 제보 절차 |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | 커뮤니티 행동 기준과 비공개 신고 절차 |
 
 터미널에서는 CLI 가 직접 알려줍니다.
 
