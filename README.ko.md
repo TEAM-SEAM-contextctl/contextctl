@@ -181,6 +181,12 @@ contextctl status               # 지금 어느 실행 영역이 일을 못 하�
 contextctl audit list           # 최근 Card 선택·최소 검색 범위 판정
 ```
 
+## 데모
+
+contextctl을 실제로 사용하는 과정을 녹화한 영상입니다.
+
+https://github.com/user-attachments/assets/524ccdfd-865d-4278-9460-58332308d1a2
+
 ## 기여
 
 버그 신고와 Pull Request를 환영합니다. [CONTRIBUTING.md](CONTRIBUTING.md)에서
