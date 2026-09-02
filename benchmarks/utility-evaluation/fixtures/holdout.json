@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "split": "holdout",
+  "sealedAt": "2026-09-02T00:00:00.000Z",
+  "queries": [
+    {
+      "id": "shipping-tracking-states",
+      "category": "single_section",
+      "query": "배송 조회 화면에는 어떤 단계들이 표시되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["출고 완료, 집하, 간선 이동, 배송 출발, 배송 완료의 5단계"],
+      "relevantChunkAnchors": ["배송 조회 상태는 출고 완료, 집하, 간선 이동"]
+    },
+    {
+      "id": "shipping-cutoff",
+      "category": "single_section",
+      "query": "평일 오후 두 시 전후 주문은 각각 언제 출고되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["평일 14:00 이전 주문은 당일 출고", "14:00 이후 주문과 주말·공휴일 주문은 다음 영업일"],
+      "relevantChunkAnchors": ["평일 14:00 이전 주문은 당일 출고하고"]
+    },
+    {
+      "id": "shipping-island-restrictions",
+      "category": "single_section",
+      "query": "도서산간 지역에서 지원하지 않는 배송과 제한되는 상품은 무엇인가요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["새벽 배송과 예약 배송을 지원하지 않고", "냉장·냉동 상품은 배송이 제한"],
+      "relevantChunkAnchors": ["도서산간 지역은 새벽 배송과 예약 배송을 지원하지 않고"]
+    },
+    {
+      "id": "shipping-damage",
+      "category": "procedure",
+      "query": "배송 완료 뒤 파손을 발견하면 언제까지 접수하고 확인 후 어떤 처리를 받나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["배송 완료 표시일로부터 3일 안", "동일 상품을 재발송"],
+      "relevantChunkAnchors": ["배송 조회 상태가 배송 완료인데 상품을 받지 못했거나"]
+    },
+    {
+      "id": "refund-defect-window",
+      "category": "single_section",
+      "query": "상품 하자를 뒤늦게 알았다면 청약철회 기한은 어떻게 계산하나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["받은 날로부터 3개월 안", "그 사실을 안 날로부터 30일 안"],
+      "relevantChunkAnchors": ["상품이 표시된 내용과 다르거나 하자가 있는 경우에는"]
+    },
+    {
+      "id": "refund-bank-transfer",
+      "category": "single_section",
+      "query": "계좌이체 결제는 환불 확정 후 언제 입금되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["계좌이체는 당일 처리"],
+      "relevantChunkAnchors": ["카드는 3~5영업일, 계좌이체는 당일 처리됩니다"]
+    },
+    {
+      "id": "refund-exchange-option",
+      "category": "single_section",
+      "query": "교환할 때 아예 다른 상품으로 바꿀 수 있나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["동일 상품의 다른 옵션", "다른 상품으로의 교환은 지원하지 않으며"],
+      "relevantChunkAnchors": ["교환은 동일 상품의 다른 옵션"]
+    },
+    {
+      "id": "refund-return-timeout",
+      "category": "exception",
+      "query": "환불 접수 뒤 반품 상품을 열흘 넘게 보내지 않으면 어떻게 되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["환불 신청 후 10일 안", "환불 신청은 자동 취소"],
+      "relevantChunkAnchors": ["환불 신청 후 10일 안에 반품 상품이"]
+    },
+    {
+      "id": "payment-approval-timeout",
+      "category": "procedure",
+      "query": "PG 승인 응답이 60초를 넘기면 주문과 재고는 어떻게 처리하나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["승인 여부를 5분 안에 다시 확인", "재고를 15분 동안 임시 확보"],
+      "relevantChunkAnchors": ["PG사의 승인 응답이 60초를 초과하면"]
+    },
+    {
+      "id": "payment-virtual-account",
+      "category": "single_section",
+      "query": "가상계좌를 발급받고 하루 안에 입금하지 않으면 어떻게 되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["발급 후 24시간 안에 입금하지 않으면", "주문이 자동 취소"],
+      "relevantChunkAnchors": ["가상계좌는 발급 후 24시간 안에"]
+    },
+    {
+      "id": "payment-partial-failure",
+      "category": "procedure",
+      "query": "포인트 부분 결제의 사용 한도와 나머지 결제 승인 실패 시 처리를 알려주세요.",
+      "expectedAnswerable": true,
+      "requiredFacts": ["주문 금액의 최대 50%", "사용한 포인트는 즉시 원상 복구"],
+      "relevantChunkAnchors": ["부분 결제는 한 주문의 금액을 포인트와"]
+    },
+    {
+      "id": "payment-maintenance-window",
+      "category": "exception",
+      "query": "자정 PG 점검 시간에 생긴 결제 실패도 재시도 횟수에 들어가나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["매일 00:00부터 00:30까지", "재시도 횟수에 포함하지 않습니다"],
+      "relevantChunkAnchors": ["PG사 점검 시간(매일 00:00부터 00:30까지)"]
+    },
+    {
+      "id": "leave-halfday-hours",
+      "category": "single_section",
+      "query": "오전 반차와 오후 반차의 시간대를 각각 알려주세요.",
+      "expectedAnswerable": true,
+      "requiredFacts": ["오전 반차는 09:00부터 13:00까지", "오후 반차는 14:00부터 18:00까지"],
+      "relevantChunkAnchors": ["반차는 오전 반차와 오후 반차로 나뉘며"]
+    },
+    {
+      "id": "leave-long-request",
+      "category": "single_section",
+      "query": "닷새 연속 장기 휴가는 언제까지 신청해야 하나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["5일 이상 연속으로 사용하는 장기 휴가", "2주 전에 신청"],
+      "relevantChunkAnchors": ["5일 이상 연속으로 사용하는 장기 휴가는"]
+    },
+    {
+      "id": "leave-carryover-exception",
+      "category": "exception",
+      "query": "승인된 휴가가 회사 사정으로 취소된 경우에도 연차가 소멸하나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["회사 사정으로 승인된 휴가가 취소된 경우에만", "다음 해로 이월"],
+      "relevantChunkAnchors": ["회사 사정으로 승인된 휴가가 취소된 경우에만"]
+    },
+    {
+      "id": "leave-sick-document",
+      "category": "single_section",
+      "query": "병가가 나흘 이상이면 필요한 서류와 열흘 초과 시 급여 처리는 어떻게 되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["의료기관 진단서", "10일을 초과하는 병가는 무급"],
+      "relevantChunkAnchors": ["병가는 연간 10일까지 유급으로"]
+    },
+    {
+      "id": "expense-corporate-card",
+      "category": "multi_fact",
+      "query": "법인카드 30만 원 초과 결제와 심야 사용에 적용되는 기준은 무엇인가요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["30만 원을 초과하면 사용 전에 부서장 사전 승인", "23:00부터 06:00까지"],
+      "relevantChunkAnchors": ["법인카드는 업무 목적의 경비에만 사용할 수 있으며"]
+    },
+    {
+      "id": "expense-lost-receipt",
+      "category": "exception",
+      "query": "영수증을 잃어버렸을 때 어떤 서류로 몇 번까지 인정받을 수 있나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["지출 사유서와 부서장 확인", "1회에 한해 인정"],
+      "relevantChunkAnchors": ["영수증 분실 시"]
+    },
+    {
+      "id": "expense-long-trip",
+      "category": "exception",
+      "query": "출장이 닷새를 넘으면 일비는 어떻게 조정되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["6일째부터 일비를 80%로 조정"],
+      "relevantChunkAnchors": ["출장 기간이 5일을 초과하면"]
+    },
+    {
+      "id": "expense-processing",
+      "category": "procedure",
+      "query": "경비 등록부터 지급까지 보통 얼마나 걸리고 최종 지급일은 언제인가요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["등록부터 지급까지 통상 20일", "당월 25일에 급여 계좌로 지급"],
+      "relevantChunkAnchors": ["경비 정산은 경비 시스템 등록"]
+    },
+    {
+      "id": "unknown-password-reset",
+      "category": "unanswerable",
+      "query": "계정 비밀번호를 잊었을 때 재설정 링크는 몇 분 동안 유효한가요?",
+      "expectedAnswerable": false,
+      "requiredFacts": [],
+      "relevantChunkAnchors": []
+    },
+    {
+      "id": "unknown-overseas-shipping",
+      "category": "unanswerable",
+      "query": "미국으로 국제 배송할 때 관세는 누가 부담하나요?",
+      "expectedAnswerable": false,
+      "requiredFacts": [],
+      "relevantChunkAnchors": []
+    },
+    {
+      "id": "unknown-parental-leave",
+      "category": "unanswerable",
+      "query": "육아휴직은 최대 몇 개월 사용할 수 있나요?",
+      "expectedAnswerable": false,
+      "requiredFacts": [],
+      "relevantChunkAnchors": []
+    },
+    {
+      "id": "unknown-card-reissue",
+      "category": "unanswerable",
+      "query": "법인카드를 분실했을 때 재발급 수수료는 얼마인가요?",
+      "expectedAnswerable": false,
+      "requiredFacts": [],
+      "relevantChunkAnchors": []
+    },
+    {
+      "id": "unknown-customer-center-hours",
+      "category": "unanswerable",
+      "query": "고객센터는 주말에 몇 시까지 전화 상담을 하나요?",
+      "expectedAnswerable": false,
+      "requiredFacts": [],
+      "relevantChunkAnchors": []
+    }
+  ]
+}

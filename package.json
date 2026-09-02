@@ -32,7 +32,9 @@
     "test:integration:qdrant": "node scripts/run-external-test.mjs qdrant",
     "test:integration:granite": "node scripts/run-external-test.mjs granite",
     "test:eval:document-retrieval": "node scripts/run-external-test.mjs document-retrieval",
-    "test:benchmark:ingestion-indexing": "node scripts/run-external-test.mjs ingestion-indexing-benchmark"
+    "test:benchmark:ingestion-indexing": "node scripts/run-external-test.mjs ingestion-indexing-benchmark",
+    "test:benchmark:utility": "npm --prefix benchmarks/utility-evaluation run evaluate",
+    "test:benchmark:utility:validate": "npm --prefix benchmarks/utility-evaluation run validate"
   },
   "dependencies": {
     "@contextctl/daemon": "1.1.3",
