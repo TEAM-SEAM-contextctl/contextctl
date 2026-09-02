@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "split": "development",
+  "queries": [
+    {
+      "id": "payment-limit-retry",
+      "category": "single_section",
+      "query": "카드 한도 초과로 결제가 실패하면 자동으로 다시 시도하나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["재시도하지 않고", "다른 결제 수단"],
+      "relevantChunkAnchors": ["카드 한도 초과로 결제 승인이 거절되면"]
+    },
+    {
+      "id": "payment-retry-schedule",
+      "category": "single_section",
+      "query": "자동 결제 실패는 몇 번, 어떤 간격으로 다시 시도하나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["최대 세 번", "5분, 30분, 2시간"],
+      "relevantChunkAnchors": ["결제 실패는 최대 세 번까지 재시도합니다"]
+    },
+    {
+      "id": "leave-carryover",
+      "category": "single_section",
+      "query": "안 쓴 연차는 다음 해로 이월되나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["다음 해로 이월되지 않습니다", "12월 31일에 소멸"],
+      "relevantChunkAnchors": ["사용하지 않은 연차는 다음 해로 이월되지 않습니다"]
+    },
+    {
+      "id": "leave-first-year",
+      "category": "single_section",
+      "query": "입사 1년 미만 직원의 연차는 어떻게 생기나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["1개월 개근할 때마다 연차 1일", "최대 11일"],
+      "relevantChunkAnchors": ["입사 1년 미만인 직원은 1개월 개근할 때마다"]
+    },
+    {
+      "id": "shipping-invoice",
+      "category": "single_section",
+      "query": "운송장 번호는 언제 발급되고 얼마나 오래 조회할 수 있나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["출고 후 2시간 이내", "90일 동안 조회"],
+      "relevantChunkAnchors": ["운송장은 출고 후 2시간 이내에 발급됩니다"]
+    },
+    {
+      "id": "shipping-delay",
+      "category": "single_section",
+      "query": "배송 지연이 일주일을 넘으면 어떤 보상을 받나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["7영업일을 초과", "배송비 전액을 포인트로 보상"],
+      "relevantChunkAnchors": ["배송 지연이 7영업일을 초과하면"]
+    },
+    {
+      "id": "refund-card",
+      "category": "single_section",
+      "query": "카드 결제 환불은 보통 며칠 걸리나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["3~5영업일", "최대 7영업일"],
+      "relevantChunkAnchors": ["카드는 3~5영업일"]
+    },
+    {
+      "id": "refund-custom",
+      "category": "single_section",
+      "query": "주문 제작 상품도 단순 변심으로 환불할 수 있나요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["개별 제작된 주문 제작 상품", "환불과 교환이 불가"],
+      "relevantChunkAnchors": ["고객 요청으로 개별 제작된 주문 제작 상품"]
+    },
+    {
+      "id": "expense-receipt",
+      "category": "single_section",
+      "query": "3만 원 이상 경비에는 어떤 증빙이 필요한가요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["세금계산서, 카드 매출전표, 현금영수증", "반드시 제출"],
+      "relevantChunkAnchors": ["경비 정산 증빙은 3만 원 이상 지출 시"]
+    },
+    {
+      "id": "expense-deadline",
+      "category": "single_section",
+      "query": "전월 경비 정산 마감일과 지급일은 언제인가요?",
+      "expectedAnswerable": true,
+      "requiredFacts": ["매월 5일", "당월 25일"],
+      "relevantChunkAnchors": ["경비 정산 마감일은 매월 5일"]
+    }
+  ]
+}
