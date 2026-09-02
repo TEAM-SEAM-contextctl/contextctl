@@ -179,6 +179,12 @@ contextctl status               # which execution lane cannot work right now
 contextctl audit list           # recent Card and minimum-scope decisions
 ```
 
+## Demo
+
+A recorded walkthrough of contextctl in use.
+
+https://github.com/user-attachments/assets/524ccdfd-865d-4278-9460-58332308d1a2
+
 ## Contributing
 
 Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
