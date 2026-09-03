@@ -2,7 +2,8 @@
 
 This benchmark compares the released Contextctl path with a strong Hybrid RAG
 baseline under the same corpus, chunks, document vectors, document-query
-embedding profile, final top-k, context budget, answer prompt, and answer model.
+embedding profile, final top-k, and context budget. When generation is enabled,
+the two paths also share the answer prompt and answer model.
 
 Contextctl is prepared through its public CLI:
 
