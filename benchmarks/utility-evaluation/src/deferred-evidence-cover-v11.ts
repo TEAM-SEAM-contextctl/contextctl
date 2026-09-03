@@ -288,7 +288,7 @@ async function main(): Promise<void> {
         );
       }
       const answerable = queries.filter((query) => query.expectedAnswerable);
-      const strictlyRejected = queries.filter(
+      const closedWithoutExecution = queries.filter(
         (query) =>
           query.selectionExpectation.kind === "unrelated" ||
           query.selectionExpectation.kind === "forbidden" ||
@@ -333,8 +333,12 @@ async function main(): Promise<void> {
           "= 100%",
         ),
         gate(
-          `${split}: unrelated and forbidden rejection`,
-          mean(strictlyRejected.map((query) => (query.executable ? 0 : 1))),
+          `${split}: non-answerable Scope execution closure`,
+          mean(
+            closedWithoutExecution.map((query) =>
+              query.executable ? 0 : 1,
+            ),
+          ),
           1,
           "= 100%",
         ),
