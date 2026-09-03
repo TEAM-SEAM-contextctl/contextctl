@@ -22,7 +22,7 @@ import {
   DEFERRED_EVIDENCE_COVER_CONFIGURATION,
   DEFERRED_EVIDENCE_COVER_POLICY_DIGEST,
   DEFERRED_EVIDENCE_COVER_POLICY_VERSION,
-} from "./deferred-evidence-cover-v10-policy.js";
+} from "./deferred-evidence-cover-v11-policy.js";
 import { readConfiguration } from "./config.js";
 import { corpusDigest, readEvaluationDataset } from "./dataset.js";
 import { createEvaluationEmbedders } from "./embedding.js";
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
       evidenceRole: "development_only" as const,
     })),
   );
-  const diagnosticFixture = process.env["CONTEXTCTL_DEFERRED_V10_DIAGNOSTIC_FIXTURE"];
+  const diagnosticFixture = process.env["CONTEXTCTL_DEFERRED_V11_DIAGNOSTIC_FIXTURE"];
   if (diagnosticFixture !== undefined) {
     datasets.push({
       split: "shadow",
@@ -284,7 +284,7 @@ async function main(): Promise<void> {
           audit: candidate.audit,
         });
         process.stdout.write(
-          `[v10 ${split} ${String(index + 1)}/${String(dataset.queries.length)}] ${fixture.id}\n`,
+          `[v11 ${split} ${String(index + 1)}/${String(dataset.queries.length)}] ${fixture.id}\n`,
         );
       }
       const answerable = queries.filter((query) => query.expectedAnswerable);
@@ -407,7 +407,7 @@ async function main(): Promise<void> {
   const result = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
-    experiment: "selection-deferred-evidence-cover-candidate-v10",
+    experiment: "selection-deferred-evidence-cover-candidate-v11",
     commit: await gitCommit(configuration.repositoryRoot),
     contextctlVersion: product.version,
     environment: {
@@ -423,7 +423,7 @@ async function main(): Promise<void> {
         join(
           configuration.benchmarkDirectory,
           "src",
-          "deferred-evidence-cover-v10-policy.ts",
+          "deferred-evidence-cover-v11-policy.ts",
         ),
       ),
       configuration: {
@@ -454,7 +454,7 @@ async function main(): Promise<void> {
   };
   await mkdir(configuration.resultsDirectory, { recursive: false });
   await writeFile(
-    join(configuration.resultsDirectory, "deferred-evidence-cover-v10-result.json"),
+    join(configuration.resultsDirectory, "deferred-evidence-cover-v11-result.json"),
     `${JSON.stringify(result, undefined, 2)}\n`,
   );
   process.stdout.write(

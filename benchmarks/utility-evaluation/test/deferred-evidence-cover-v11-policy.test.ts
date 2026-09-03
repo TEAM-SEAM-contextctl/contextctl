@@ -7,9 +7,9 @@ import {
   planDeferredEvidenceCover,
   type ProbedCardInput,
   type ScopeProbeCandidate,
-} from "../src/deferred-evidence-cover-v10-policy.js";
+} from "../src/deferred-evidence-cover-v11-policy.js";
 
-describe("deferred evidence cover candidate v10", () => {
+describe("deferred evidence cover candidate v11", () => {
   it("forms a deterministic bounded union from both Card signals", () => {
     const inputs = [
       signal(card("lexical"), 1, 0.2),
