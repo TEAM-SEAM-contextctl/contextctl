@@ -5,9 +5,11 @@
   "evidenceCommit": "e7da814555c192ab063e5081928524d72b7a8aec",
   "claimBoundary": {
     "corpus": "bundled five-document public demo",
+    "retrievalContextQualityMeasured": true,
+    "finalAnswerGenerationInProductScope": false,
     "generationEnabled": false,
-    "promptTokenReductionEstablished": false,
-    "answerQualityParityEstablished": false,
+    "callerPromptTokenReductionEstablished": false,
+    "callerAnswerQualityParityEstablished": false,
     "generalRagSuperiorityEstablished": false
   },
   "sharedConditions": {

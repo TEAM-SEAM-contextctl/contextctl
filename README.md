@@ -45,7 +45,8 @@ We measured five public demo documents and a sealed 25-question holdout against 
 | Retrieval p95 | 63.34ms | 128.71ms |
 
 Delivered context fell 82.26% and all five unanswerable queries were closed. The cost was two of twenty answerable queries losing their evidence, and higher retrieval latency.
-No generation API was connected, so this counts source characters rather than tokens, and it is not a claim that contextctl always beats general RAG. [Method and full metrics](docs/benchmark.md) (Korean)
+Retrieval-output quality was measured through required-fact coverage, relevant-chunk recall, ranking, and irrelevant context. contextctl does not generate the final answer, so the comparison counts delivered source characters rather than tokens from a caller's LLM.
+This bounded demo result is not a claim that contextctl always beats general RAG. [Method and full metrics](docs/benchmark.md) (Korean)
 
 ## What it will not do
 
