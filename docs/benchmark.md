@@ -36,6 +36,7 @@ demo init → source add → ingest → cards approve → serve → HTTP resolve
 
 홀드아웃은 2026-09-02 00:00 UTC에 봉인했다. 답변 가능 20문항과 답변 불가 5문항으로
 구성했으며, 각 질의를 5회 실행했다. 정책을 이 결과에 맞춰 조정하지 않았다.
+이 자료는 공개 시점부터 blind 자격을 잃으므로 다음 후보 승격 근거로 재사용하지 않는다.
 
 | 지표 | Hybrid RAG | contextctl | 차이 |
 |---|---:|---:|---:|

@@ -34,9 +34,7 @@ and every query stays inside that approved scope. It also runs as an MCP server.
 
 Document RAG searches every chunk for what looks closest to the query. contextctl decides the scope first—only Cards a person approved—and searches inside it. Less context is delivered as a result.
 
-We measured five public demo documents and a sealed 25-question holdout against a global
-BM25 + Dense + RRF baseline that reads the exact chunks and vectors the same run published
-to Qdrant.
+We measured five public demo documents and a sealed 25-question holdout against a global BM25 + Dense + RRF baseline that reads the exact chunks and vectors the same run published to Qdrant.
 
 | Metric | Baseline | contextctl |
 | --- | ---: | ---: |
@@ -47,9 +45,7 @@ to Qdrant.
 | Retrieval p95 | 63.34ms | 128.71ms |
 
 Delivered context fell 82.26% and all five unanswerable queries were closed. The cost was two of twenty answerable queries losing their evidence, and higher retrieval latency.
-No generation API was connected, so this counts source characters rather than tokens, and it is not a claim that contextctl always beats general RAG.
-
-[Method, full metrics, limitations, and reproduction](docs/benchmark.md) (Korean)
+No generation API was connected, so this counts source characters rather than tokens, and it is not a claim that contextctl always beats general RAG. [Method and full metrics](docs/benchmark.md) (Korean)
 
 ## What it will not do
 
