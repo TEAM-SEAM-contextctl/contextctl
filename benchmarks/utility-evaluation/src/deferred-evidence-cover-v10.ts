@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -21,7 +22,7 @@ import {
   DEFERRED_EVIDENCE_COVER_CONFIGURATION,
   DEFERRED_EVIDENCE_COVER_POLICY_DIGEST,
   DEFERRED_EVIDENCE_COVER_POLICY_VERSION,
-} from "./deferred-evidence-cover-v9-policy.js";
+} from "./deferred-evidence-cover-v10-policy.js";
 import { readConfiguration } from "./config.js";
 import { corpusDigest, readEvaluationDataset } from "./dataset.js";
 import { createEvaluationEmbedders } from "./embedding.js";
@@ -81,7 +82,7 @@ async function main(): Promise<void> {
       evidenceRole: "development_only" as const,
     })),
   );
-  const diagnosticFixture = process.env["CONTEXTCTL_DEFERRED_V9_DIAGNOSTIC_FIXTURE"];
+  const diagnosticFixture = process.env["CONTEXTCTL_DEFERRED_V10_DIAGNOSTIC_FIXTURE"];
   if (diagnosticFixture !== undefined) {
     datasets.push({
       split: "shadow",
@@ -283,7 +284,7 @@ async function main(): Promise<void> {
           audit: candidate.audit,
         });
         process.stdout.write(
-          `[v9 ${split} ${String(index + 1)}/${String(dataset.queries.length)}] ${fixture.id}\n`,
+          `[v10 ${split} ${String(index + 1)}/${String(dataset.queries.length)}] ${fixture.id}\n`,
         );
       }
       const answerable = queries.filter((query) => query.expectedAnswerable);
@@ -406,18 +407,38 @@ async function main(): Promise<void> {
   const result = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
-    experiment: "selection-deferred-evidence-cover-candidate-v9",
+    experiment: "selection-deferred-evidence-cover-candidate-v10",
     commit: await gitCommit(configuration.repositoryRoot),
+    contextctlVersion: product.version,
+    environment: {
+      node: process.version,
+      platform: process.platform,
+      architecture: process.arch,
+      qdrantVersion: corpus.version,
+    },
     policy: {
       version: DEFERRED_EVIDENCE_COVER_POLICY_VERSION,
       digest: DEFERRED_EVIDENCE_COVER_POLICY_DIGEST,
+      sourceSha256: await sha256File(
+        join(
+          configuration.benchmarkDirectory,
+          "src",
+          "deferred-evidence-cover-v10-policy.ts",
+        ),
+      ),
       configuration: {
         ...DEFERRED_EVIDENCE_COVER_CONFIGURATION,
       },
     },
     profiles: {
-      document: embedders.document.profileId,
-      card: embedders.card.profileId,
+      document: {
+        id: embedders.document.profileId,
+        version: embedders.document.profileVersion,
+      },
+      card: {
+        id: embedders.card.profileId,
+        version: embedders.card.profileVersion,
+      },
     },
     corpus: {
       sha256: expectedCorpus.sha256,
@@ -433,7 +454,7 @@ async function main(): Promise<void> {
   };
   await mkdir(configuration.resultsDirectory, { recursive: false });
   await writeFile(
-    join(configuration.resultsDirectory, "deferred-evidence-cover-v9-result.json"),
+    join(configuration.resultsDirectory, "deferred-evidence-cover-v10-result.json"),
     `${JSON.stringify(result, undefined, 2)}\n`,
   );
   process.stdout.write(
@@ -719,6 +740,10 @@ async function gitCommit(root: string): Promise<string> {
     cwd: root,
   });
   return stdout.trim();
+}
+
+async function sha256File(path: string): Promise<string> {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

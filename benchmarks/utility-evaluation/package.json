@@ -12,7 +12,7 @@
     "test": "../../node_modules/.bin/vitest run test",
     "validate": "npm run build && npm test && node --enable-source-maps dist/run.js --validate-only",
     "evaluate": "npm run build && node --enable-source-maps dist/run.js",
-    "evaluate:deferred-v9": "npm run build && node --enable-source-maps dist/deferred-evidence-cover-v9.js"
+    "evaluate:deferred-v10": "npm run build && node --enable-source-maps dist/deferred-evidence-cover-v10.js"
   },
   "dependencies": {
     "@contextctl/ingestion-indexing": "1.1.3",

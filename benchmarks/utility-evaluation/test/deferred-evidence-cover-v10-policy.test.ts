@@ -7,9 +7,9 @@ import {
   planDeferredEvidenceCover,
   type ProbedCardInput,
   type ScopeProbeCandidate,
-} from "../src/deferred-evidence-cover-v9-policy.js";
+} from "../src/deferred-evidence-cover-v10-policy.js";
 
-describe("deferred evidence cover candidate v9", () => {
+describe("deferred evidence cover candidate v10", () => {
   it("forms a deterministic bounded union from both Card signals", () => {
     const inputs = [
       signal(card("lexical"), 1, 0.2),
@@ -62,6 +62,25 @@ describe("deferred evidence cover candidate v9", () => {
       "anchor",
       "complement",
     ]);
+  });
+
+  it("defers instead of executing a set that cannot preserve coverage", () => {
+    const values = ["alpha", "beta", "gamma", "delta", "epsilon"].map(
+      (word, index) =>
+        probed(candidate(card(`card-${String(index)}`), 1, 0.9), [
+          chunk(`chunk-${String(index)}`, 0.9, word),
+        ]),
+    );
+
+    const result = planDeferredEvidenceCover({
+      query: "alpha beta gamma delta epsilon",
+      cards: values,
+    });
+
+    expect(result.disposition).toBe("defer");
+    expect(result.executable).toBe(false);
+    expect(result.selectedCards).toEqual([]);
+    expect(result.routedCards).toHaveLength(1);
   });
 
   it("is deterministic after candidate and Chunk reversal", () => {
