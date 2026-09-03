@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "experiment": "contextctl-utility-evaluation-v1",
+  "contextctlVersion": "1.1.3",
+  "evidenceCommit": "e7da814555c192ab063e5081928524d72b7a8aec",
+  "claimBoundary": {
+    "corpus": "bundled five-document public demo",
+    "generationEnabled": false,
+    "promptTokenReductionEstablished": false,
+    "answerQualityParityEstablished": false,
+    "generalRagSuperiorityEstablished": false
+  },
+  "sharedConditions": {
+    "documents": 5,
+    "chunks": 39,
+    "vectorDimensions": 384,
+    "topK": 5,
+    "prefetchK": 20,
+    "maxContextCharacters": 8000,
+    "rrfRankConstant": 60,
+    "qdrantVersion": "1.15.5",
+    "documentEmbeddingProfileId": "document-granite-97m-multilingual-r2-fp32-v1",
+    "cardSelectionEmbeddingProfileId": "card-granite-97m-multilingual-r2-fp32-v2",
+    "selectionScoringPolicy": "selection-hybrid-v4",
+    "selectionRankingPolicy": "selection-ranking-v2",
+    "selectionPlanningPolicy": "selection-planning-v2",
+    "baselinePolicy": "global-bm25+qdrant-dense+rrf-v1"
+  },
+  "runs": [
+    {
+      "split": "development",
+      "generatedAt": "2026-09-03T01:33:30.993Z",
+      "sourceCommit": "e7da814555c192ab063e5081928524d72b7a8aec",
+      "datasetSha256": "95ed6866f1e6d5d1a6d562e47d9c5da13b99c623f7bdeda59c24c7ad6bafee8c",
+      "queryCount": 10,
+      "repetitions": 5,
+      "hybridRag": {
+        "requiredFactCoverage": 1,
+        "relevantChunkRecallAtK": 1,
+        "irrelevantContextRatio": 0.8,
+        "meanContextCharacters": 1185.1,
+        "latencyP50Ms": 16.523166,
+        "latencyP95Ms": 62.380666
+      },
+      "contextctl": {
+        "requiredFactCoverage": 1,
+        "relevantChunkRecallAtK": 1,
+        "irrelevantContextRatio": 0.05,
+        "meanContextCharacters": 305,
+        "latencyP50Ms": 120.347333,
+        "latencyP95Ms": 131.137583
+      },
+      "contextCharacterReductionRatio": 0.7426377520884313
+    },
+    {
+      "split": "holdout",
+      "generatedAt": "2026-09-03T01:32:51.785Z",
+      "sealedAt": "2026-09-02T00:00:00.000Z",
+      "sourceCommit": "e7da814555c192ab063e5081928524d72b7a8aec",
+      "datasetSha256": "a3f3ea06485b222ee4e12ac62d2ec15befcd8d07008dd00a85b729db4f5c8e0c",
+      "corpusSha256": "c3a209a76b1851ec90ef7ecab700529a07f044c40816a1cd5478c47d8f1a9688",
+      "queryCount": 25,
+      "answerableQueries": 20,
+      "unanswerableQueries": 5,
+      "repetitions": 5,
+      "hybridRag": {
+        "requiredFactCoverage": 1,
+        "relevantChunkRecallAtK": 1,
+        "meanReciprocalRank": 0.975,
+        "meanNdcgAtK": 0.9815464876785729,
+        "irrelevantContextRatio": 0.84,
+        "unanswerableRejectionRate": 0,
+        "meanContextCharacters": 1231.08,
+        "latencyP50Ms": 18.340084,
+        "latencyP95Ms": 63.344417
+      },
+      "contextctl": {
+        "requiredFactCoverage": 0.9,
+        "relevantChunkRecallAtK": 0.9,
+        "meanReciprocalRank": 0.9,
+        "meanNdcgAtK": 0.9,
+        "irrelevantContextRatio": 0.04,
+        "unanswerableRejectionRate": 1,
+        "meanContextCharacters": 218.44,
+        "latencyP50Ms": 119.605417,
+        "latencyP95Ms": 128.712208
+      },
+      "contextCharacterReductionRatio": 0.8225623030184879,
+      "missedQueryIds": [
+        "shipping-cutoff",
+        "refund-return-timeout"
+      ]
+    }
+  ]
+}

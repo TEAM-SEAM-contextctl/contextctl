@@ -29,6 +29,10 @@ npm run test:benchmark:utility
 
 세부 환경 변수와 출력 파일은 [영문 README](README.md)에 정리했다.
 
+현재 공개한 측정 조건과 요약은
+[`evidence/v1.1.3-summary.json`](evidence/v1.1.3-summary.json)에 고정했다.
+해석과 전체 지표는 [공개 벤치마크 문서](../../docs/benchmark.md)를 참고한다.
+
 ## 해석 제한
 
 - 공개 데모 문서 5개와 홀드아웃 25문항의 제품 시나리오 평가다.
