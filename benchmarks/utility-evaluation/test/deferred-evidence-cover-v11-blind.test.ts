@@ -4,6 +4,7 @@ import type { ApprovedCard } from "@contextctl/selection-delivery";
 
 import {
   applyDatasetPolicy,
+  assertDatasetCardGroundTruth,
   assertIndependentBlind,
   resolveCandidateEvaluationPlan,
 } from "../src/deferred-evidence-cover-v11-blind.js";
@@ -74,6 +75,33 @@ describe("deferred evidence cover v11 blind boundary", () => {
       application.eligible.map((value) => value.meaning.description),
     ).toEqual(["public-card"]);
     expect(application.excluded).toHaveLength(1);
+  });
+
+  it("refuses ambiguous Card descriptions and anchors outside allowed Scopes", () => {
+    const dataset = {
+      ...blindDataset(),
+      queries: [query("nearby", "close_unanswerable")],
+    } satisfies EvaluationDataset;
+    expect(() =>
+      applyDatasetPolicy([card("nearby"), card("nearby")], dataset),
+    ).toThrow(/exactly one Card/u);
+
+    expect(() =>
+      assertDatasetCardGroundTruth(
+        [card("nearby")],
+        dataset,
+        [
+          {
+            chunkId: "chunk",
+            chunkRevisionId: "chunk-v1",
+            semanticUnitId: "other-unit",
+            documentId: "other-document",
+            text: "nearby",
+            vector: [1],
+          },
+        ],
+      ),
+    ).toThrow(/outside its allowed Card Scopes/u);
   });
 });
 
@@ -167,6 +195,21 @@ function card(description: string): ApprovedCard {
       keywords: [description],
     },
     policy: { sensitive: false, allowedUsage: ["retrieval"] },
-    scopes: [],
+    scopes: [
+      {
+        kind: "managed_document",
+        reference: { scopeId: `${description}-scope`, scopeVersion: "v1" },
+        documentIndex: {
+          documentIndexId: `${description}-index`,
+          sourceId: `${description}-source`,
+          documentId: `${description}-document`,
+          indexVersion: "v1",
+        },
+        selection: {
+          kind: "semantic_units",
+          semanticUnitIds: [`${description}-unit`],
+        },
+      },
+    ],
   };
 }

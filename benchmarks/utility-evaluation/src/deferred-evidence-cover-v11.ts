@@ -25,6 +25,7 @@ import {
 } from "./deferred-evidence-cover-v11-policy.js";
 import {
   applyDatasetPolicy,
+  assertDatasetCardGroundTruth,
   assertIndependentBlind,
   resolveCandidateEvaluationPlan,
   type CandidateEvidenceRole,
@@ -149,6 +150,11 @@ async function main(): Promise<void> {
   const splits: unknown[] = [];
   try {
     for (const { split, dataset, evidenceRole } of datasets) {
+      assertDatasetCardGroundTruth(
+        product.approvedCards,
+        dataset,
+        corpus.chunks,
+      );
       const policyApplication = applyDatasetPolicy(
         product.approvedCards,
         dataset,

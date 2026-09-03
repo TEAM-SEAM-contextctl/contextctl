@@ -8,7 +8,11 @@ import {
 } from "@contextctl/selection-delivery";
 
 import type { EvaluationConfiguration } from "./config.js";
-import type { EvaluationDataset, EvaluationSplit } from "./types.js";
+import type {
+  EvaluationDataset,
+  EvaluationSplit,
+  ProductChunk,
+} from "./types.js";
 
 export type CandidateEvidenceRole = "development_only" | "independent_blind";
 
@@ -170,6 +174,10 @@ export function applyDatasetPolicy(
   );
   for (const query of dataset.queries) {
     for (const description of query.selectionExpectation
+      .allowedCardDescriptions) {
+      requireUniqueCard(cards, description, `query ${query.id} allowed Card`);
+    }
+    for (const description of query.selectionExpectation
       .forbiddenCardDescriptions) {
       if (!excludedDescriptions.has(description)) {
         throw new Error(
@@ -179,6 +187,64 @@ export function applyDatasetPolicy(
     }
   }
   return application;
+}
+
+export function assertDatasetCardGroundTruth(
+  cards: readonly ApprovedCard[],
+  dataset: EvaluationDataset,
+  chunks: readonly ProductChunk[],
+): void {
+  for (const query of dataset.queries) {
+    if (query.selectionExpectation.kind !== "close_unanswerable") continue;
+    const allowedCards = query.selectionExpectation.allowedCardDescriptions.map(
+      (description) =>
+        requireUniqueCard(cards, description, `query ${query.id} allowed Card`),
+    );
+    for (const anchor of query.relevantChunkAnchors) {
+      if (
+        !chunks.some(
+          (chunk) =>
+            chunk.text.includes(anchor) &&
+            allowedCards.some((card) => cardAllowsChunk(card, chunk)),
+        )
+      ) {
+        throw new Error(
+          `query ${query.id} anchor is outside its allowed Card Scopes: ${anchor}`,
+        );
+      }
+    }
+  }
+}
+
+function requireUniqueCard(
+  cards: readonly ApprovedCard[],
+  description: string,
+  label: string,
+): ApprovedCard {
+  const matches = cards.filter(
+    (card) => card.meaning.description === description,
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      `${label} description must identify exactly one Card: ${description}`,
+    );
+  }
+  return matches[0] as ApprovedCard;
+}
+
+function cardAllowsChunk(card: ApprovedCard, chunk: ProductChunk): boolean {
+  return card.scopes.some((scope) => {
+    if (
+      scope.kind !== "managed_document" ||
+      scope.documentIndex.documentId !== chunk.documentId
+    ) {
+      return false;
+    }
+    return (
+      scope.selection.kind === "document" ||
+      scope.selection.semanticUnitIds.includes(chunk.semanticUnitId)
+    );
+  });
 }
 
 function requireCases(
