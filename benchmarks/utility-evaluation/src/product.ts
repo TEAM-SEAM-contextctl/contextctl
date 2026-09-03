@@ -3,7 +3,10 @@ import { mkdir, readdir } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 
-import type { ContextResolution } from "@contextctl/selection-delivery";
+import type {
+  ApprovedCard,
+  ContextResolution,
+} from "@contextctl/selection-delivery";
 
 import type {
   CommandSpec,
@@ -16,6 +19,8 @@ export interface PreparedProduct {
   readonly corpusDirectory: string;
   readonly documentCount: number;
   readonly environment: NodeJS.ProcessEnv;
+  /** Approved read model used only by experimental candidate evaluations. */
+  readonly approvedCards: readonly ApprovedCard[];
 }
 
 export interface ProductResolution {
@@ -112,11 +117,24 @@ export async function prepareProduct(
     );
   }
   await runCli(configuration, ["reachability"], environment);
+  const approvedCards = parseApprovedCards(
+    (
+      await runCli(
+        configuration,
+        ["cards", "list", "--approved", "--json"],
+        environment,
+      )
+    ).stdout,
+  );
+  if (approvedCards.length !== approvals.length) {
+    throw new Error("approved Card count differs from the versions just approved");
+  }
   return {
     version,
     corpusDirectory,
     documentCount: documents.length,
     environment,
+    approvedCards,
   };
 }
 
@@ -295,6 +313,113 @@ function parsePendingCards(
     }
     return { cardId, versionId: pending[0] };
   });
+}
+
+function parseApprovedCards(raw: string): readonly ApprovedCard[] {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("cards list JSON is not an array");
+  return parsed.map((entry, index) => {
+    if (!isRecord(entry) || !isRecord(entry["card"])) {
+      throw new Error(`approved Card entry ${String(index)} is invalid`);
+    }
+    const card = entry["card"];
+    const id = card["id"];
+    const policy = card["policy"];
+    const versions = card["versions"];
+    if (
+      typeof id !== "string" ||
+      !isApprovedPolicy(policy) ||
+      !isRecord(versions) ||
+      typeof versions["currentVersionId"] !== "string" ||
+      !Array.isArray(versions["versions"])
+    ) {
+      throw new Error(`approved Card entry ${String(index)} has no current version`);
+    }
+    const current = versions["versions"].find(
+      (version) =>
+        isRecord(version) && version["id"] === versions["currentVersionId"],
+    );
+    if (
+      !isRecord(current) ||
+      !isApprovedMeaning(current["meaning"]) ||
+      !Array.isArray(current["scopes"]) ||
+      !current["scopes"].every(isApprovedScope)
+    ) {
+      throw new Error(`approved Card ${id} has an invalid current version`);
+    }
+    return {
+      cardId: id,
+      versionId: versions["currentVersionId"],
+      meaning: current["meaning"],
+      policy,
+      scopes: current["scopes"],
+    } as ApprovedCard;
+  });
+}
+
+function isApprovedMeaning(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value["description"] === "string" &&
+    isStringArray(value["representativeQuestions"]) &&
+    isStringArray(value["aliases"]) &&
+    isStringArray(value["keywords"])
+  );
+}
+
+function isApprovedPolicy(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value["sensitive"] === "boolean" &&
+    isStringArray(value["allowedUsage"])
+  );
+}
+
+function isApprovedScope(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value["reference"])) return false;
+  const reference = value["reference"];
+  if (
+    typeof reference["scopeId"] !== "string" ||
+    typeof reference["scopeVersion"] !== "string"
+  ) {
+    return false;
+  }
+  switch (value["kind"]) {
+    case "managed_document":
+      return (
+        isRecord(value["documentIndex"]) &&
+        isRecord(value["selection"]) &&
+        typeof value["documentIndex"]["documentIndexId"] === "string" &&
+        typeof value["documentIndex"]["sourceId"] === "string" &&
+        typeof value["documentIndex"]["documentId"] === "string" &&
+        typeof value["documentIndex"]["indexVersion"] === "string" &&
+        (value["selection"]["kind"] === "document" ||
+          (value["selection"]["kind"] === "semantic_units" &&
+            isStringArray(value["selection"]["semanticUnitIds"])))
+      );
+    case "sql_source":
+      return (
+        typeof value["connector"] === "string" &&
+        typeof value["schema"] === "string" &&
+        typeof value["table"] === "string" &&
+        isStringArray(value["columns"])
+      );
+    case "http_source":
+      return (
+        typeof value["connector"] === "string" &&
+        typeof value["method"] === "string" &&
+        typeof value["path"] === "string" &&
+        (value["operationId"] === undefined ||
+          typeof value["operationId"] === "string") &&
+        Array.isArray(value["parameters"])
+      );
+    default:
+      return false;
+  }
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
 function parseResolution(value: unknown, expectedQuery: string): ContextResolution {

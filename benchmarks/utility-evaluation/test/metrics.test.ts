@@ -19,8 +19,15 @@ describe("utility evaluation metrics", () => {
         expectedAnswerable: true,
         requiredFacts: ["정답 사실"],
         relevantChunkAnchors: ["기준 문구"],
+        selectionExpectation: {
+          kind: "answerable",
+          allowedCardDescriptions: [],
+        },
       },
-      chunks: [retrieved(allChunks[0] as ProductChunk), retrieved(allChunks[1] as ProductChunk)],
+      chunks: [
+        retrieved(allChunks[0] as ProductChunk),
+        retrieved(allChunks[1] as ProductChunk),
+      ],
       allChunks,
       candidateCount: 2,
       cutoff: 2,

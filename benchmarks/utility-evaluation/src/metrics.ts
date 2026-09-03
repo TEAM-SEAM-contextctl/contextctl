@@ -53,7 +53,7 @@ export function observePath(input: {
     path: input.path,
     chunks: input.chunks,
     candidateCount: input.candidateCount,
-    candidateUnit: input.path === "contextctl" ? "cards" : "chunks",
+    candidateUnit: input.path === "hybrid_rag" ? "chunks" : "cards",
     contextCharacters: input.chunks.reduce(
       (sum, chunk) => sum + chunk.text.length,
       0,
@@ -139,7 +139,7 @@ export function percentile(values: readonly number[], quantile: number): number 
   return sorted[rank] as number;
 }
 
-function summarizePath(observations: readonly PathObservation[]): PathSummary {
+export function summarizePath(observations: readonly PathObservation[]): PathSummary {
   const answerable = observations.filter(
     (observation) => observation.requiredFactCoverage !== undefined,
   );
