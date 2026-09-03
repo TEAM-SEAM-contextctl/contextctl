@@ -40,6 +40,7 @@ import type {
   EvaluationDataset,
   PathObservation,
   ProductChunk,
+  QueryFixture,
   RetrievedChunk,
   SelectionExpectation,
 } from "./types.js";
@@ -162,91 +163,32 @@ async function main(): Promise<void> {
       const eligibleCards = policyApplication.eligible;
       const queries: CandidateQueryResult[] = [];
       for (const [index, fixture] of dataset.queries.entries()) {
-        const started = performance.now();
-        const [cardQueryVector, documentQueryVector] = await Promise.all([
-          embedders.card.embed(fixture.query),
-          embedders.document.embed(fixture.query),
-        ]);
-        const lexical = scoreCardsAgainstQuery(
-          fixture.query,
-          eligibleCards,
-        );
-        const lexicalByVersionId = new Map(
-          lexical.map((entry) => [entry.versionId, entry.score]),
-        );
-        const semantic = eligibleCards
-          .map((card) => ({
-            cardId: card.cardId,
-            cardVersionId: card.versionId,
-            similarity: cosineSimilarity(
-              cardQueryVector,
-              requiredVector(cardVectors, card.versionId),
-            ),
-          }))
-          .sort(
-            (left, right) =>
-              right.similarity - left.similarity ||
-              compareText(left.cardVersionId, right.cardVersionId),
-          );
-        const semanticByVersionId = new Map(
-          semantic.map((entry) => [entry.cardVersionId, entry.similarity]),
-        );
-        const hybridByVersionId = new Map(
-          rankHybridCandidates({
-            lexical,
-            semantic: semantic.slice(0, 32),
-            lexicalTopK: 32,
-          }).map((entry) => [entry.versionId, entry.score]),
-        );
-        const candidates = buildScopeProbeCandidates(
-          eligibleCards.map((card) => ({
-            card,
-            lexical: lexicalByVersionId.get(card.versionId) ?? 0,
-            semantic: requiredSimilarity(semanticByVersionId, card.versionId),
-            hybrid: hybridByVersionId.get(card.versionId) ?? 0,
-            lexicalSignals:
-              lexical.find((entry) => entry.versionId === card.versionId)
-                ?.signals ?? [],
-          })),
-        );
-        const probed = candidates.map((candidate) =>
-          probeCandidate({
-            candidate,
-            chunks: corpus.chunks,
-            queryVector: documentQueryVector,
-            sentenceViews,
-          }),
-        );
-        const candidate = planDeferredEvidenceCover({
-          query: fixture.query,
-          cards: probed,
-        });
-        const reversed = planDeferredEvidenceCover({
-          query: fixture.query,
-          cards: [...probed]
-            .reverse()
-            .map((entry) => ({
-              ...entry,
-              scopes: [...entry.scopes]
-                .reverse()
-                .map((scope) => ({
-                  ...scope,
-                  chunks: [...scope.chunks].reverse(),
-                })),
-            })),
-        });
-        const candidateChunks = candidate.executable
-          ? finalChunks({
-              cards: candidate.selectedCards,
+        const candidateRuns = [];
+        for (
+          let repetition = 0;
+          repetition < configuration.repetitions;
+          repetition += 1
+        ) {
+          candidateRuns.push(
+            await evaluateCandidateQuery({
+              fixture,
+              eligibleCards,
+              cardVectors,
               chunks: corpus.chunks,
-              queryVector: documentQueryVector,
+              sentenceViews,
+              embedders,
               topK: configuration.topK,
               maximumCharacters: configuration.maxContextCharacters,
-            })
-          : [];
-        const candidateLatency = performance.now() - started;
+            }),
+          );
+        }
+        const representative = candidateRuns[0];
+        if (representative === undefined) {
+          throw new Error("candidate evaluation requires repetitions");
+        }
+        const { candidates, probed, candidate, candidateChunks } = representative;
         const denseRanking = await corpus.searchDense(
-          documentQueryVector,
+          representative.documentQueryVector,
           configuration.prefetchK,
         );
         const baseline = retrieveHybrid({
@@ -269,7 +211,7 @@ async function main(): Promise<void> {
           allChunks: corpus.chunks,
           candidateCount: candidates.length,
           cutoff: configuration.topK,
-          latencySamplesMs: [candidateLatency],
+          latencySamplesMs: candidateRuns.map((run) => run.latencyMs),
         });
         queries.push({
           id: fixture.id,
@@ -296,7 +238,17 @@ async function main(): Promise<void> {
           candidate: candidateObservation,
           executable: candidate.executable,
           deterministic:
-            candidate.audit.auditDigest === reversed.audit.auditDigest,
+            candidateRuns.every(
+              (run) =>
+                run.candidate.audit.auditDigest ===
+                  run.reversed.audit.auditDigest &&
+                run.candidate.audit.auditDigest ===
+                  candidate.audit.auditDigest &&
+                sameTextSequence(
+                  run.candidateChunks.map((chunk) => chunk.chunkRevisionId),
+                  candidateChunks.map((chunk) => chunk.chunkRevisionId),
+                ),
+            ),
           probedRelevantChunkRecall:
             fixture.expectedAnswerable ||
             fixture.selectionExpectation.kind === "close_unanswerable"
@@ -493,6 +445,12 @@ async function main(): Promise<void> {
         version: embedders.card.profileVersion,
       },
     },
+    evaluation: {
+      repetitions: configuration.repetitions,
+      topK: configuration.topK,
+      prefetchK: configuration.prefetchK,
+      maximumContextCharacters: configuration.maxContextCharacters,
+    },
     corpus: {
       sha256: expectedCorpus.sha256,
       cards: product.approvedCards.length,
@@ -526,6 +484,114 @@ async function main(): Promise<void> {
 interface SentenceView {
   readonly key: string;
   readonly vector: readonly number[];
+}
+
+async function evaluateCandidateQuery(input: {
+  readonly fixture: QueryFixture;
+  readonly eligibleCards: readonly ApprovedCard[];
+  readonly cardVectors: ReadonlyMap<string, readonly number[]>;
+  readonly chunks: readonly ProductChunk[];
+  readonly sentenceViews: ReadonlyMap<string, readonly SentenceView[]>;
+  readonly embedders: Awaited<ReturnType<typeof createEvaluationEmbedders>>;
+  readonly topK: number;
+  readonly maximumCharacters: number;
+}): Promise<{
+  readonly documentQueryVector: readonly number[];
+  readonly candidates: readonly ScopeProbeCandidate[];
+  readonly probed: readonly ProbedCardInput[];
+  readonly candidate: ReturnType<typeof planDeferredEvidenceCover>;
+  readonly reversed: ReturnType<typeof planDeferredEvidenceCover>;
+  readonly candidateChunks: readonly RetrievedChunk[];
+  readonly latencyMs: number;
+}> {
+  const started = performance.now();
+  const [cardQueryVector, documentQueryVector] = await Promise.all([
+    input.embedders.card.embed(input.fixture.query),
+    input.embedders.document.embed(input.fixture.query),
+  ]);
+  const lexical = scoreCardsAgainstQuery(
+    input.fixture.query,
+    input.eligibleCards,
+  );
+  const lexicalByVersionId = new Map(
+    lexical.map((entry) => [entry.versionId, entry.score]),
+  );
+  const lexicalSignalsByVersionId = new Map(
+    lexical.map((entry) => [entry.versionId, entry.signals]),
+  );
+  const semantic = input.eligibleCards
+    .map((card) => ({
+      cardId: card.cardId,
+      cardVersionId: card.versionId,
+      similarity: cosineSimilarity(
+        cardQueryVector,
+        requiredVector(input.cardVectors, card.versionId),
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        right.similarity - left.similarity ||
+        compareText(left.cardVersionId, right.cardVersionId),
+    );
+  const semanticByVersionId = new Map(
+    semantic.map((entry) => [entry.cardVersionId, entry.similarity]),
+  );
+  const hybridByVersionId = new Map(
+    rankHybridCandidates({
+      lexical,
+      semantic: semantic.slice(0, 32),
+      lexicalTopK: 32,
+    }).map((entry) => [entry.versionId, entry.score]),
+  );
+  const candidates = buildScopeProbeCandidates(
+    input.eligibleCards.map((card) => ({
+      card,
+      lexical: lexicalByVersionId.get(card.versionId) ?? 0,
+      semantic: requiredSimilarity(semanticByVersionId, card.versionId),
+      hybrid: hybridByVersionId.get(card.versionId) ?? 0,
+      lexicalSignals: lexicalSignalsByVersionId.get(card.versionId) ?? [],
+    })),
+  );
+  const probed = candidates.map((candidate) =>
+    probeCandidate({
+      candidate,
+      chunks: input.chunks,
+      queryVector: documentQueryVector,
+      sentenceViews: input.sentenceViews,
+    }),
+  );
+  const candidate = planDeferredEvidenceCover({
+    query: input.fixture.query,
+    cards: probed,
+  });
+  const reversed = planDeferredEvidenceCover({
+    query: input.fixture.query,
+    cards: [...probed].reverse().map((entry) => ({
+      ...entry,
+      scopes: [...entry.scopes].reverse().map((scope) => ({
+        ...scope,
+        chunks: [...scope.chunks].reverse(),
+      })),
+    })),
+  });
+  const candidateChunks = candidate.executable
+    ? finalChunks({
+        cards: candidate.selectedCards,
+        chunks: input.chunks,
+        queryVector: documentQueryVector,
+        topK: input.topK,
+        maximumCharacters: input.maximumCharacters,
+      })
+    : [];
+  return {
+    documentQueryVector,
+    candidates,
+    probed,
+    candidate,
+    reversed,
+    candidateChunks,
+    latencyMs: performance.now() - started,
+  };
 }
 
 function probeCandidate(input: {
@@ -753,6 +819,16 @@ function passesForbiddenExclusion(query: CandidateQueryResult): boolean {
   );
   return [...query.candidateCards, ...query.routedCards, ...query.selectedCards]
     .every((card) => !forbidden.has(card.description));
+}
+
+function sameTextSequence(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function booleanGate(name: string, actual: boolean) {
