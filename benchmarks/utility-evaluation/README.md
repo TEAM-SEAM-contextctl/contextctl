@@ -76,6 +76,11 @@ Each run writes an immutable timestamped directory under `results/`:
 Generated results are ignored by Git. A result must be reviewed before a
 specific evidence bundle is intentionally committed.
 
+The reviewed conditions and summary for the public v1.1.3 run are committed as
+[`evidence/v1.1.3-summary.json`](evidence/v1.1.3-summary.json). The Korean
+[benchmark report](../../docs/benchmark.md) explains the interpretation and
+limitations.
+
 ## Claim boundary
 
 The bundled corpus is the five-document public demo and the held-out fixture has

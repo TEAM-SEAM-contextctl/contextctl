@@ -30,6 +30,27 @@ and every query stays inside that approved scope. It also runs as an MCP server.
 | **Select** | Picks the knowledge areas and retrieval scopes that fit a question. The answer is not a ranked list: it returns the selected Cards and aggregate **admit / defer / reject counts**. Rejected Card identities and individual reasons are not part of the public response |
 | **Deliver** | For managed Markdown it assembles supporting text in the same request. Database and API guide shapes exist in the contracts for future adapters; this release neither captures nor executes those systems |
 
+## What is different
+
+Document RAG searches every chunk for what looks closest to the query. contextctl decides the scope first—only Cards a person approved—and searches inside it. Less context is delivered as a result.
+
+We measured five public demo documents and a sealed 25-question holdout against a global
+BM25 + Dense + RRF baseline that reads the exact chunks and vectors the same run published
+to Qdrant.
+
+| Metric | Baseline | contextctl |
+| --- | ---: | ---: |
+| Average delivered source characters | 1,231 | 218 |
+| Irrelevant chunk ratio | 84% | 4% |
+| Unanswerable queries refused | 0% | 100% |
+| Required facts covered | 100% | 90% |
+| Retrieval p95 | 63.34ms | 128.71ms |
+
+Delivered context fell 82.26% and all five unanswerable queries were closed. The cost was two of twenty answerable queries losing their evidence, and higher retrieval latency.
+No generation API was connected, so this counts source characters rather than tokens, and it is not a claim that contextctl always beats general RAG.
+
+[Method, full metrics, limitations, and reproduction](docs/benchmark.md) (Korean)
+
 ## What it will not do
 
 Keeping the responsibility narrow is the design, not a missing feature.
@@ -166,6 +187,7 @@ The reference is in Korean because it quotes CLI output extensively.
 | [CLI 레퍼런스](docs/cli.md) | Every command, flag and exit code |
 | [설정](docs/configuration.md) | Environment variables, state identity, HTTP surface, embedding, meaning generator |
 | [운영](docs/operations.md) | Troubleshooting, status checks, backup and restore, index rebuild, uninstall |
+| [효용성 벤치마크](docs/benchmark.md) | Hybrid RAG comparison, results, limitations and reproduction |
 | [CONTRIBUTING](CONTRIBUTING.md) | Development setup, branch and review rules |
 | [Security](SECURITY.md) | Supported versions and private vulnerability reporting |
 | [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards and confidential conduct reporting |
