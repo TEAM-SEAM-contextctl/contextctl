@@ -61,9 +61,11 @@ Optional variables:
 | `CONTEXTCTL_UTILITY_EVAL_GENERATION_MODEL` | Answer model identifier |
 | `CONTEXTCTL_UTILITY_EVAL_GENERATION_API_KEY` | Bearer token for the answer model |
 
-All three generation variables are required together. Without them, retrieval
-and context metrics are produced but prompt-token and blinded answer-quality
-evidence remains incomplete.
+All three generation variables are required together. Retrieval-output quality
+is measured without them through fact coverage, relevant-chunk recall, ranking,
+and irrelevant context. Because contextctl does not generate the final answer,
+prompt-token and blinded answer comparisons are optional, caller-model-specific
+extensions.
 
 ## Outputs
 
@@ -86,5 +88,6 @@ limitations.
 
 The bundled corpus is the five-document public demo and the held-out fixture has
 25 questions. It can detect regressions and measure this product scenario; it
-does not establish general RAG superiority. A run without the generation
-variables cannot claim LLM token reduction or answer-quality parity.
+does not establish general RAG superiority. Retrieval context is the product
+output under evaluation. A run without the optional generation variables does
+not extend the result to a caller LLM's token count or final answer.
