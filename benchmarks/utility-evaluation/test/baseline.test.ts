@@ -41,6 +41,16 @@ describe("global Hybrid RAG baseline", () => {
     ]);
     expect(first.candidateCount).toBe(3);
   });
+
+  it("uses content before generated identities to break dense ties", () => {
+    const first = chunk("later-id", "alpha", [1, 0]);
+    const second = chunk("earlier-id", "beta", [1, 0]);
+
+    expect(rankDenseExact([second, first], [1, 0], 2)).toEqual([
+      { chunkRevisionId: first.chunkRevisionId, score: 1 },
+      { chunkRevisionId: second.chunkRevisionId, score: 1 },
+    ]);
+  });
 });
 
 function chunk(

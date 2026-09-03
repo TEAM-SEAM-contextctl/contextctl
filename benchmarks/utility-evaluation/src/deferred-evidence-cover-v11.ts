@@ -12,7 +12,11 @@ import {
   type ApprovedCard,
 } from "@contextctl/selection-delivery";
 
-import { buildHybridIndex, retrieveHybrid } from "./baseline.js";
+import {
+  buildHybridIndex,
+  rankDenseExact,
+  retrieveHybrid,
+} from "./baseline.js";
 import {
   buildScopeProbeCandidates,
   type ProbedCardInput,
@@ -187,7 +191,8 @@ async function main(): Promise<void> {
           throw new Error("candidate evaluation requires repetitions");
         }
         const { candidates, probed, candidate, candidateChunks } = representative;
-        const denseRanking = await corpus.searchDense(
+        const denseRanking = rankDenseExact(
+          corpus.chunks,
           representative.documentQueryVector,
           configuration.prefetchK,
         );
