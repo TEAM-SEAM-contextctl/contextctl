@@ -1,6 +1,18 @@
 import type { ContextResolution } from "@contextctl/selection-delivery";
 
-export type EvaluationSplit = "development" | "holdout";
+export type EvaluationSplit = "development" | "holdout" | "shadow";
+
+export type SelectionExpectationKind =
+  | "answerable"
+  | "close_unanswerable"
+  | "legacy_unclassified_unanswerable"
+  | "unrelated"
+  | "forbidden";
+
+export interface SelectionExpectation {
+  readonly kind: SelectionExpectationKind;
+  readonly allowedCardDescriptions: readonly string[];
+}
 
 export interface QueryFixture {
   readonly id: string;
@@ -9,6 +21,7 @@ export interface QueryFixture {
   readonly expectedAnswerable: boolean;
   readonly requiredFacts: readonly string[];
   readonly relevantChunkAnchors: readonly string[];
+  readonly selectionExpectation: SelectionExpectation;
 }
 
 export interface EvaluationDataset {
@@ -16,6 +29,8 @@ export interface EvaluationDataset {
   readonly sealedAt?: string;
   readonly queries: readonly QueryFixture[];
   readonly sha256: string;
+  readonly frozenPolicyDigest?: string;
+  readonly frozenPolicySourceSha256?: string;
 }
 
 export interface ProductChunk {
@@ -47,7 +62,7 @@ export interface GenerationObservation {
 }
 
 export interface PathObservation {
-  readonly path: "hybrid_rag" | "contextctl";
+  readonly path: "hybrid_rag" | "contextctl" | "selection_candidate";
   readonly chunks: readonly RetrievedChunk[];
   readonly candidateCount: number;
   readonly candidateUnit: "cards" | "chunks";
@@ -110,6 +125,8 @@ export interface EvaluationResult {
     readonly sha256: string;
     readonly queryCount: number;
     readonly sealedAt?: string;
+    readonly frozenPolicyDigest?: string;
+    readonly frozenPolicySourceSha256?: string;
   };
   readonly environment: {
     readonly node: string;

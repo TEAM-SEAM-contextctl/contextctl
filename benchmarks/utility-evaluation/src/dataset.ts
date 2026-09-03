@@ -6,6 +6,7 @@ import type {
   EvaluationDataset,
   EvaluationSplit,
   QueryFixture,
+  SelectionExpectation,
 } from "./types.js";
 
 export async function readEvaluationDataset(input: {
@@ -39,10 +40,21 @@ export async function readEvaluationDataset(input: {
   }
   const sealedAt = parsed["sealedAt"];
   if (
-    input.expectedSplit === "holdout" &&
+    input.expectedSplit !== "development" &&
     (typeof sealedAt !== "string" || !Number.isFinite(Date.parse(sealedAt)))
   ) {
-    throw new Error("holdout fixture must carry a valid sealedAt timestamp");
+    throw new Error(`${input.expectedSplit} fixture must carry a valid sealedAt timestamp`);
+  }
+  const frozenPolicyDigest = parsed["frozenPolicyDigest"];
+  const frozenPolicySourceSha256 = parsed["frozenPolicySourceSha256"];
+  if (
+    input.expectedSplit === "shadow" &&
+    (!isSha256Digest(frozenPolicyDigest) ||
+      !isRawSha256(frozenPolicySourceSha256))
+  ) {
+    throw new Error(
+      "shadow fixture must identify the policy definition frozen before it was written",
+    );
   }
 
   return {
@@ -50,7 +62,19 @@ export async function readEvaluationDataset(input: {
     queries,
     sha256: createHash("sha256").update(raw).digest("hex"),
     ...(typeof sealedAt === "string" ? { sealedAt } : {}),
+    ...(typeof frozenPolicyDigest === "string" ? { frozenPolicyDigest } : {}),
+    ...(typeof frozenPolicySourceSha256 === "string"
+      ? { frozenPolicySourceSha256 }
+      : {}),
   };
+}
+
+function isSha256Digest(value: unknown): value is string {
+  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
+}
+
+function isRawSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
 }
 
 export async function corpusDigest(
@@ -98,17 +122,36 @@ function parseQuery(value: unknown, index: number): QueryFixture {
     id,
     "relevantChunkAnchors",
   );
+  const selectionExpectation = parseSelectionExpectation(
+    value["selectionExpectation"],
+    id,
+    value["expectedAnswerable"],
+  );
   if (
     value["expectedAnswerable"] &&
     (requiredFacts.length === 0 || relevantChunkAnchors.length === 0)
   ) {
     throw new Error(`answerable query ${id} needs facts and chunk anchors`);
   }
+  if (!value["expectedAnswerable"] && requiredFacts.length !== 0) {
+    throw new Error(`unanswerable query ${id} cannot carry required facts`);
+  }
   if (
-    !value["expectedAnswerable"] &&
-    (requiredFacts.length !== 0 || relevantChunkAnchors.length !== 0)
+    selectionExpectation.kind === "close_unanswerable" &&
+    relevantChunkAnchors.length === 0
   ) {
-    throw new Error(`unanswerable query ${id} cannot carry answer evidence`);
+    throw new Error(
+      `close-unanswerable query ${id} needs related Chunk anchors`,
+    );
+  }
+  if (
+    (selectionExpectation.kind === "unrelated" ||
+      selectionExpectation.kind === "forbidden") &&
+    relevantChunkAnchors.length !== 0
+  ) {
+    throw new Error(
+      `${selectionExpectation.kind} query ${id} cannot carry Chunk anchors`,
+    );
   }
   return {
     id,
@@ -117,7 +160,59 @@ function parseQuery(value: unknown, index: number): QueryFixture {
     expectedAnswerable: value["expectedAnswerable"],
     requiredFacts,
     relevantChunkAnchors,
+    selectionExpectation,
   };
+}
+
+function parseSelectionExpectation(
+  value: unknown,
+  id: string,
+  expectedAnswerable: boolean,
+): SelectionExpectation {
+  if (value === undefined) {
+    return {
+      kind: expectedAnswerable
+        ? "answerable"
+        : "legacy_unclassified_unanswerable",
+      allowedCardDescriptions: [],
+    };
+  }
+  if (!isRecord(value)) {
+    throw new Error(`query ${id} selectionExpectation must be an object`);
+  }
+  const kind = value["kind"];
+  if (
+    kind !== "answerable" &&
+    kind !== "close_unanswerable" &&
+    kind !== "unrelated" &&
+    kind !== "forbidden"
+  ) {
+    throw new Error(`query ${id} has an invalid Selection expectation kind`);
+  }
+  const allowedCardDescriptions = stringArray(
+    value["allowedCardDescriptions"],
+    id,
+    "selectionExpectation.allowedCardDescriptions",
+  );
+  if ((kind === "answerable") !== expectedAnswerable) {
+    throw new Error(
+      `query ${id} answerability disagrees with its Selection expectation`,
+    );
+  }
+  if (kind === "close_unanswerable" && allowedCardDescriptions.length === 0) {
+    throw new Error(
+      `close-unanswerable query ${id} needs allowed Card descriptions`,
+    );
+  }
+  if (
+    (kind === "unrelated" || kind === "forbidden") &&
+    allowedCardDescriptions.length !== 0
+  ) {
+    throw new Error(
+      `${kind} query ${id} cannot allow Card descriptions`,
+    );
+  }
+  return { kind, allowedCardDescriptions };
 }
 
 function validateAgainstCorpus(query: QueryFixture, corpus: string): void {
