@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, readdir } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readdir } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 
@@ -49,6 +49,7 @@ const CARD_MEANING_VARIABLES = [
 
 export async function prepareProduct(
   configuration: EvaluationConfiguration,
+  options: { readonly sourceCorpusDirectory?: string } = {},
 ): Promise<PreparedProduct> {
   const qdrantUrl = required(configuration.qdrantUrl, "Qdrant URL");
   const assetDirectory = required(
@@ -78,11 +79,17 @@ export async function prepareProduct(
   const version = (
     await runCommand(configuration.command, ["--version"], environment, 30_000)
   ).stdout.trim();
-  await runCli(configuration, ["demo", "init", corpusDirectory], environment);
+  if (options.sourceCorpusDirectory === undefined) {
+    await runCli(configuration, ["demo", "init", corpusDirectory], environment);
+  } else {
+    await stageEvaluationCorpus(options.sourceCorpusDirectory, corpusDirectory);
+  }
   const documents = (await readdir(corpusDirectory))
     .filter((name) => name.endsWith(".md"))
     .sort(compareText);
-  if (documents.length === 0) throw new Error("demo init produced no documents");
+  if (documents.length === 0) {
+    throw new Error("evaluation corpus produced no Markdown documents");
+  }
   for (const document of documents) {
     await runCli(
       configuration,
@@ -136,6 +143,34 @@ export async function prepareProduct(
     environment,
     approvedCards,
   };
+}
+
+export async function stageEvaluationCorpus(
+  sourceDirectory: string,
+  targetDirectory: string,
+): Promise<void> {
+  const entries = await readdir(sourceDirectory, { withFileTypes: true });
+  const documents = entries
+    .filter((entry) => entry.name.endsWith(".md"))
+    .sort((left, right) => compareText(left.name, right.name));
+  if (documents.length === 0) {
+    throw new Error("external evaluation corpus contains no Markdown documents");
+  }
+  for (const document of documents) {
+    const source = join(sourceDirectory, document.name);
+    if (!document.isFile() || (await lstat(source)).isSymbolicLink()) {
+      throw new Error(
+        `external evaluation corpus entry must be a regular file: ${document.name}`,
+      );
+    }
+  }
+  await mkdir(targetDirectory, { recursive: false });
+  for (const document of documents) {
+    await copyFile(
+      join(sourceDirectory, document.name),
+      join(targetDirectory, document.name),
+    );
+  }
 }
 
 export async function startProductServer(input: {
