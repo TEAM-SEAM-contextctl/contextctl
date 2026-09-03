@@ -75,13 +75,18 @@ export function retrieveHybrid(input: {
   readonly prefetchK: number;
   readonly maxContextCharacters: number;
 }): HybridRetrieval {
-  const dense = input.denseRanking.map((entry) => {
-    const chunk = input.index.chunksByRevisionId.get(entry.chunkRevisionId);
-    if (chunk === undefined) {
-      throw new Error(`dense ranking returned an unknown Chunk: ${entry.chunkRevisionId}`);
-    }
-    return { chunk, score: entry.score };
-  });
+  const dense = input.denseRanking
+    .map((entry) => {
+      const chunk = input.index.chunksByRevisionId.get(entry.chunkRevisionId);
+      if (chunk === undefined) {
+        throw new Error(
+          `dense ranking returned an unknown Chunk: ${entry.chunkRevisionId}`,
+        );
+      }
+      return { chunk, score: entry.score };
+    })
+    .sort(compareScored)
+    .slice(0, input.prefetchK);
   const terms = [...new Set(lexicalFeatures(input.query))];
   const lexical = input.chunks
     .map((chunk) => ({
@@ -133,9 +138,11 @@ export function rankDenseExact(
       score: cosineSimilarity(queryVector, chunk.vector),
       chunk,
     }))
-    .sort((left, right) =>
-      right.score - left.score ||
-      compareText(left.chunkRevisionId, right.chunkRevisionId),
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        compareText(left.chunk.text, right.chunk.text) ||
+        compareText(left.chunkRevisionId, right.chunkRevisionId),
     )
     .slice(0, prefetchK)
     .map(({ chunkRevisionId, score }) => ({ chunkRevisionId, score }));
@@ -211,6 +218,7 @@ function compareScored(
 ): number {
   return (
     right.score - left.score ||
+    compareText(left.chunk.text, right.chunk.text) ||
     compareText(left.chunk.chunkRevisionId, right.chunk.chunkRevisionId)
   );
 }
@@ -221,6 +229,7 @@ function compareRetrieved(
 ): number {
   return (
     right.score - left.score ||
+    compareText(left.text, right.text) ||
     compareText(left.chunkRevisionId, right.chunkRevisionId)
   );
 }
