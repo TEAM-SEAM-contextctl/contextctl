@@ -12,6 +12,13 @@ export type SelectionExpectationKind =
 export interface SelectionExpectation {
   readonly kind: SelectionExpectationKind;
   readonly allowedCardDescriptions: readonly string[];
+  readonly forbiddenCardDescriptions: readonly string[];
+}
+
+export interface CatalogPolicyOverride {
+  readonly cardDescription: string;
+  readonly sensitive: boolean;
+  readonly allowedUsage: readonly string[];
 }
 
 export interface QueryFixture {
@@ -31,6 +38,8 @@ export interface EvaluationDataset {
   readonly sha256: string;
   readonly frozenPolicyDigest?: string;
   readonly frozenPolicySourceSha256?: string;
+  readonly frozenCorpusSha256?: string;
+  readonly catalogPolicyOverrides: readonly CatalogPolicyOverride[];
 }
 
 export interface ProductChunk {

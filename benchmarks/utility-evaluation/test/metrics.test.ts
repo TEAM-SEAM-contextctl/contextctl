@@ -22,6 +22,7 @@ describe("utility evaluation metrics", () => {
         selectionExpectation: {
           kind: "answerable",
           allowedCardDescriptions: [],
+          forbiddenCardDescriptions: [],
         },
       },
       chunks: [

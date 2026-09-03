@@ -23,6 +23,12 @@ import {
   DEFERRED_EVIDENCE_COVER_POLICY_DIGEST,
   DEFERRED_EVIDENCE_COVER_POLICY_VERSION,
 } from "./deferred-evidence-cover-v11-policy.js";
+import {
+  applyDatasetPolicy,
+  assertIndependentBlind,
+  resolveCandidateEvaluationPlan,
+  type CandidateEvidenceRole,
+} from "./deferred-evidence-cover-v11-blind.js";
 import { readConfiguration } from "./config.js";
 import { corpusDigest, readEvaluationDataset } from "./dataset.js";
 import { createEvaluationEmbedders } from "./embedding.js";
@@ -56,6 +62,11 @@ interface CandidateQueryResult {
     readonly versionId: string;
     readonly description: string;
   }[];
+  readonly candidateCards: readonly {
+    readonly cardId: string;
+    readonly versionId: string;
+    readonly description: string;
+  }[];
   readonly routedCards: readonly {
     readonly cardId: string;
     readonly versionId: string;
@@ -67,35 +78,45 @@ interface CandidateQueryResult {
 
 async function main(): Promise<void> {
   const configuration = readConfiguration([]);
+  const evaluationPlan = resolveCandidateEvaluationPlan(configuration);
   const datasets: {
     readonly split: EvaluationDataset["split"];
     readonly dataset: EvaluationDataset;
-    readonly evidenceRole: "development_only";
+    readonly evidenceRole: CandidateEvidenceRole;
   }[] = await Promise.all(
-    (["development", "holdout"] as const).map(async (split) => ({
-      split,
+    evaluationPlan.datasets.map(async (specification) => ({
+      split: specification.split,
       dataset: await readEvaluationDataset({
-        path: join(configuration.benchmarkDirectory, "fixtures", `${split}.json`),
-        expectedSplit: split,
-        corpusDirectory: configuration.corpusDirectory,
+        path: specification.fixturePath,
+        expectedSplit: specification.split,
+        corpusDirectory: specification.corpusDirectory,
       }),
-      evidenceRole: "development_only" as const,
+      evidenceRole: specification.evidenceRole,
     })),
   );
-  const diagnosticFixture = process.env["CONTEXTCTL_DEFERRED_V11_DIAGNOSTIC_FIXTURE"];
-  if (diagnosticFixture !== undefined) {
-    datasets.push({
-      split: "shadow",
-      dataset: await readEvaluationDataset({
-        path: diagnosticFixture,
-        expectedSplit: "shadow",
-        corpusDirectory: configuration.corpusDirectory,
-      }),
-      evidenceRole: "development_only",
-    });
+  const expectedCorpus = await corpusDigest(evaluationPlan.sourceCorpusDirectory);
+  const policySourceSha256 = await sha256File(
+    join(
+      configuration.benchmarkDirectory,
+      "src",
+      "deferred-evidence-cover-v11-policy.ts",
+    ),
+  );
+  if (evaluationPlan.blind) {
+    for (const { dataset } of datasets) {
+      assertIndependentBlind({
+        dataset,
+        corpusSha256: expectedCorpus.sha256,
+        policyDigest: DEFERRED_EVIDENCE_COVER_POLICY_DIGEST,
+        policySourceSha256,
+      });
+    }
   }
-  const expectedCorpus = await corpusDigest(configuration.corpusDirectory);
-  const product = await prepareProduct(configuration);
+  const product = await prepareProduct(configuration, {
+    ...(evaluationPlan.blind
+      ? { sourceCorpusDirectory: evaluationPlan.sourceCorpusDirectory }
+      : {}),
+  });
   const actualCorpus = await corpusDigest(product.corpusDirectory);
   if (actualCorpus.sha256 !== expectedCorpus.sha256) {
     throw new Error("prepared product corpus differs from the fixture corpus");
@@ -128,6 +149,11 @@ async function main(): Promise<void> {
   const splits: unknown[] = [];
   try {
     for (const { split, dataset, evidenceRole } of datasets) {
+      const policyApplication = applyDatasetPolicy(
+        product.approvedCards,
+        dataset,
+      );
+      const eligibleCards = policyApplication.eligible;
       const queries: CandidateQueryResult[] = [];
       for (const [index, fixture] of dataset.queries.entries()) {
         const started = performance.now();
@@ -137,12 +163,12 @@ async function main(): Promise<void> {
         ]);
         const lexical = scoreCardsAgainstQuery(
           fixture.query,
-          product.approvedCards,
+          eligibleCards,
         );
         const lexicalByVersionId = new Map(
           lexical.map((entry) => [entry.versionId, entry.score]),
         );
-        const semantic = product.approvedCards
+        const semantic = eligibleCards
           .map((card) => ({
             cardId: card.cardId,
             cardVersionId: card.versionId,
@@ -167,7 +193,7 @@ async function main(): Promise<void> {
           }).map((entry) => [entry.versionId, entry.score]),
         );
         const candidates = buildScopeProbeCandidates(
-          product.approvedCards.map((card) => ({
+          eligibleCards.map((card) => ({
             card,
             lexical: lexicalByVersionId.get(card.versionId) ?? 0,
             semantic: requiredSimilarity(semanticByVersionId, card.versionId),
@@ -275,6 +301,11 @@ async function main(): Promise<void> {
             versionId: card.versionId,
             description: card.meaning.description,
           })),
+          candidateCards: candidates.map(({ card }) => ({
+            cardId: card.cardId,
+            versionId: card.versionId,
+            description: card.meaning.description,
+          })),
           routedCards: candidate.routedCards.map((card) => ({
             cardId: card.cardId,
             versionId: card.versionId,
@@ -297,6 +328,9 @@ async function main(): Promise<void> {
       const closeUnanswerable = queries.filter(
         (query) => query.selectionExpectation.kind === "close_unanswerable",
       );
+      const forbidden = queries.filter(
+        (query) => query.selectionExpectation.kind === "forbidden",
+      );
       const routable = [...answerable, ...closeUnanswerable];
       const summary = {
         hybridRag: summarizePath(queries.map((query) => query.hybridRag)),
@@ -305,6 +339,12 @@ async function main(): Promise<void> {
         ),
         candidate: summarizePath(queries.map((query) => query.candidate)),
       };
+      const answerableContextReduction = reduction(
+        summarizePath(answerable.map((query) => query.hybridRag))
+          .meanContextCharacters,
+        summarizePath(answerable.map((query) => query.candidate))
+          .meanContextCharacters,
+      );
       const gates = [
         gate(
           `${split}: first-stage relevant probe recall`,
@@ -365,11 +405,8 @@ async function main(): Promise<void> {
           "<= 10%",
         ),
         gate(
-          `${split}: Hybrid RAG context reduction`,
-          reduction(
-            summary.hybridRag.meanContextCharacters,
-            summary.candidate.meanContextCharacters,
-          ),
+          `${split}: answerable Hybrid RAG context reduction`,
+          answerableContextReduction,
           0.65,
           ">= 65%",
         ),
@@ -383,6 +420,14 @@ async function main(): Promise<void> {
           `${split}: deterministic order`,
           queries.every((query) => query.deterministic),
         ),
+        ...(forbidden.length === 0
+          ? []
+          : [
+              booleanGate(
+                `${split}: forbidden Card pre-score exclusion`,
+                forbidden.every(passesForbiddenExclusion),
+              ),
+            ]),
       ];
       splits.push({
         dataset: {
@@ -390,6 +435,7 @@ async function main(): Promise<void> {
           sha256: dataset.sha256,
           queryCount: dataset.queries.length,
           evidenceRole,
+          policyExcludedCards: policyApplication.excluded,
           ...(dataset.sealedAt === undefined
             ? {}
             : { sealedAt: dataset.sealedAt }),
@@ -399,8 +445,11 @@ async function main(): Promise<void> {
           ...(dataset.frozenPolicySourceSha256 === undefined
             ? {}
             : { frozenPolicySourceSha256: dataset.frozenPolicySourceSha256 }),
+          ...(dataset.frozenCorpusSha256 === undefined
+            ? {}
+            : { frozenCorpusSha256: dataset.frozenCorpusSha256 }),
         },
-        summary,
+        summary: { ...summary, answerableContextReduction },
         gates,
         queries,
       });
@@ -423,13 +472,7 @@ async function main(): Promise<void> {
     policy: {
       version: DEFERRED_EVIDENCE_COVER_POLICY_VERSION,
       digest: DEFERRED_EVIDENCE_COVER_POLICY_DIGEST,
-      sourceSha256: await sha256File(
-        join(
-          configuration.benchmarkDirectory,
-          "src",
-          "deferred-evidence-cover-v11-policy.ts",
-        ),
-      ),
+      sourceSha256: policySourceSha256,
       configuration: {
         ...DEFERRED_EVIDENCE_COVER_CONFIGURATION,
       },
@@ -450,11 +493,13 @@ async function main(): Promise<void> {
       chunks: corpus.chunks.length,
     },
     splits,
-    decision: splits.every((value) =>
-      isPassingSplit(value),
-    )
-      ? "development_passed_requires_policy_freeze"
-      : "candidate_requires_revision_before_freeze",
+    decision: splits.every((value) => isPassingSplit(value))
+      ? evaluationPlan.blind
+        ? "independent_blind_passed_requires_product_promotion"
+        : "development_passed_requires_policy_freeze"
+      : evaluationPlan.blind
+        ? "independent_blind_failed_candidate_rejected"
+        : "candidate_requires_revision_before_freeze",
   };
   await mkdir(configuration.resultsDirectory, { recursive: false });
   await writeFile(
@@ -464,7 +509,10 @@ async function main(): Promise<void> {
   process.stdout.write(
     `decision: ${result.decision}\nartifact: ${configuration.resultsDirectory}\n`,
   );
-  if (result.decision !== "development_passed_requires_policy_freeze") {
+  if (
+    result.decision !== "development_passed_requires_policy_freeze" &&
+    result.decision !== "independent_blind_passed_requires_product_promotion"
+  ) {
     process.exitCode = 2;
   }
 }
@@ -691,6 +739,14 @@ function passesCloseRouting(query: CandidateQueryResult): boolean {
     routed.every((card) => allowed.has(card.description)) &&
     (query.executable || query.candidate.chunks.length === 0)
   );
+}
+
+function passesForbiddenExclusion(query: CandidateQueryResult): boolean {
+  const forbidden = new Set(
+    query.selectionExpectation.forbiddenCardDescriptions,
+  );
+  return [...query.candidateCards, ...query.routedCards, ...query.selectedCards]
+    .every((card) => !forbidden.has(card.description));
 }
 
 function booleanGate(name: string, actual: boolean) {

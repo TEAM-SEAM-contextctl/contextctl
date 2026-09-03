@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
+  CatalogPolicyOverride,
   EvaluationDataset,
   EvaluationSplit,
   QueryFixture,
@@ -43,10 +44,13 @@ export async function readEvaluationDataset(input: {
     input.expectedSplit !== "development" &&
     (typeof sealedAt !== "string" || !Number.isFinite(Date.parse(sealedAt)))
   ) {
-    throw new Error(`${input.expectedSplit} fixture must carry a valid sealedAt timestamp`);
+    throw new Error(
+      `${input.expectedSplit} fixture must carry a valid sealedAt timestamp`,
+    );
   }
   const frozenPolicyDigest = parsed["frozenPolicyDigest"];
   const frozenPolicySourceSha256 = parsed["frozenPolicySourceSha256"];
+  const frozenCorpusSha256 = parsed["frozenCorpusSha256"];
   if (
     input.expectedSplit === "shadow" &&
     (!isSha256Digest(frozenPolicyDigest) ||
@@ -56,6 +60,15 @@ export async function readEvaluationDataset(input: {
       "shadow fixture must identify the policy definition frozen before it was written",
     );
   }
+  if (
+    frozenCorpusSha256 !== undefined &&
+    !isRawSha256(frozenCorpusSha256)
+  ) {
+    throw new Error("frozenCorpusSha256 must be a lowercase SHA-256 digest");
+  }
+  const catalogPolicyOverrides = parseCatalogPolicyOverrides(
+    parsed["catalogPolicyOverrides"],
+  );
 
   return {
     split: input.expectedSplit,
@@ -66,7 +79,50 @@ export async function readEvaluationDataset(input: {
     ...(typeof frozenPolicySourceSha256 === "string"
       ? { frozenPolicySourceSha256 }
       : {}),
+    ...(typeof frozenCorpusSha256 === "string" ? { frozenCorpusSha256 } : {}),
+    catalogPolicyOverrides,
   };
+}
+
+function parseCatalogPolicyOverrides(
+  value: unknown,
+): readonly CatalogPolicyOverride[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("catalogPolicyOverrides must be an array");
+  }
+  const descriptions = new Set<string>();
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw new Error(
+        `catalog policy override ${String(index)} must be an object`,
+      );
+    }
+    const cardDescription = requiredString(
+      entry["cardDescription"],
+      `catalog policy override ${String(index)} cardDescription`,
+    );
+    if (descriptions.has(cardDescription)) {
+      throw new Error(`duplicate catalog policy override: ${cardDescription}`);
+    }
+    descriptions.add(cardDescription);
+    if (typeof entry["sensitive"] !== "boolean") {
+      throw new Error(
+        `catalog policy override ${cardDescription} needs sensitive`,
+      );
+    }
+    const allowedUsage = stringArray(
+      entry["allowedUsage"],
+      cardDescription,
+      "allowedUsage",
+    );
+    if (allowedUsage.length === 0) {
+      throw new Error(
+        `catalog policy override ${cardDescription} needs allowedUsage`,
+      );
+    }
+    return { cardDescription, sensitive: entry["sensitive"], allowedUsage };
+  });
 }
 
 function isSha256Digest(value: unknown): value is string {
@@ -99,7 +155,9 @@ async function readCorpus(directory: string): Promise<string> {
     .sort(compareText);
   if (names.length === 0) throw new Error("evaluation corpus is empty");
   return (
-    await Promise.all(names.map(async (name) => await readFile(join(directory, name), "utf8")))
+    await Promise.all(
+      names.map(async (name) => await readFile(join(directory, name), "utf8")),
+    )
   ).join("\n\n");
 }
 
@@ -175,6 +233,7 @@ function parseSelectionExpectation(
         ? "answerable"
         : "legacy_unclassified_unanswerable",
       allowedCardDescriptions: [],
+      forbiddenCardDescriptions: [],
     };
   }
   if (!isRecord(value)) {
@@ -194,6 +253,11 @@ function parseSelectionExpectation(
     id,
     "selectionExpectation.allowedCardDescriptions",
   );
+  const forbiddenCardDescriptions = stringArray(
+    value["forbiddenCardDescriptions"] ?? [],
+    id,
+    "selectionExpectation.forbiddenCardDescriptions",
+  );
   if ((kind === "answerable") !== expectedAnswerable) {
     throw new Error(
       `query ${id} answerability disagrees with its Selection expectation`,
@@ -212,7 +276,15 @@ function parseSelectionExpectation(
       `${kind} query ${id} cannot allow Card descriptions`,
     );
   }
-  return { kind, allowedCardDescriptions };
+  if (kind === "forbidden" && forbiddenCardDescriptions.length === 0) {
+    throw new Error(`forbidden query ${id} needs forbidden Card descriptions`);
+  }
+  if (kind !== "forbidden" && forbiddenCardDescriptions.length !== 0) {
+    throw new Error(
+      `${kind} query ${id} cannot name forbidden Card descriptions`,
+    );
+  }
+  return { kind, allowedCardDescriptions, forbiddenCardDescriptions };
 }
 
 function validateAgainstCorpus(query: QueryFixture, corpus: string): void {
