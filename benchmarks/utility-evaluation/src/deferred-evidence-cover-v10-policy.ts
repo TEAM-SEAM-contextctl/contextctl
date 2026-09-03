@@ -13,7 +13,7 @@ export const DEFERRED_EVIDENCE_CANDIDATE_BOUNDS = Object.freeze({
 });
 
 export const DEFERRED_EVIDENCE_COVER_POLICY_VERSION =
-  "selection-deferred-evidence-cover-candidate-v9" as const;
+  "selection-deferred-evidence-cover-candidate-v10" as const;
 
 export const DEFERRED_EVIDENCE_COVER_CONFIGURATION = Object.freeze({
   candidateBounds: DEFERRED_EVIDENCE_CANDIDATE_BOUNDS,
@@ -96,7 +96,7 @@ export const DEFERRED_EVIDENCE_COVER_POLICY_DIGEST = canonicalDigest({
   version: DEFERRED_EVIDENCE_COVER_POLICY_VERSION,
   configuration: DEFERRED_EVIDENCE_COVER_CONFIGURATION,
   algorithm:
-    "bounded-card-union+continuous-reject-defer-admit+unicode-word-idf-cover+specific-scope-dominance-v9",
+    "bounded-card-union+continuous-reject-defer-admit+unicode-word-idf-cover+specific-scope-dominance-v10",
 });
 
 interface Evidence {
@@ -345,9 +345,11 @@ function selectMinimumSet(
     selected.push(chosen.entry);
     coverage = chosen.next;
   }
-  return selected.sort((left, right) =>
-    compareText(left.versionId, right.versionId),
-  );
+  return preservesTarget(coverage, target)
+    ? selected.sort((left, right) =>
+        compareText(left.versionId, right.versionId),
+      )
+    : [];
 }
 
 function words(value: string): readonly string[] {
