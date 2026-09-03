@@ -13,7 +13,7 @@ export const DEFERRED_EVIDENCE_CANDIDATE_BOUNDS = Object.freeze({
 });
 
 export const DEFERRED_EVIDENCE_COVER_POLICY_VERSION =
-  "selection-deferred-evidence-cover-candidate-v10" as const;
+  "selection-deferred-evidence-cover-candidate-v11" as const;
 
 export const DEFERRED_EVIDENCE_COVER_CONFIGURATION = Object.freeze({
   candidateBounds: DEFERRED_EVIDENCE_CANDIDATE_BOUNDS,
@@ -96,7 +96,7 @@ export const DEFERRED_EVIDENCE_COVER_POLICY_DIGEST = canonicalDigest({
   version: DEFERRED_EVIDENCE_COVER_POLICY_VERSION,
   configuration: DEFERRED_EVIDENCE_COVER_CONFIGURATION,
   algorithm:
-    "bounded-card-union+continuous-reject-defer-admit+unicode-word-idf-cover+specific-scope-dominance-v10",
+    "bounded-card-union+continuous-reject-defer-admit+unicode-word-idf-cover+specific-scope-weighted-deficit-cover-v11",
 });
 
 interface Evidence {
@@ -139,7 +139,10 @@ export function planDeferredEvidenceCover(input: {
     readonly routedVersionIds: readonly string[];
     readonly disposition: "admit" | "defer" | "reject";
     readonly targetCoverage: readonly number[];
+    readonly attemptedVersionIds: readonly string[];
+    readonly attemptedCoverage: readonly number[];
     readonly selectedCoverage: readonly number[];
+    readonly coverageDeficit: number;
     readonly evidence: readonly Evidence[];
     readonly executable: boolean;
     readonly auditDigest: string;
@@ -228,15 +231,20 @@ export function planDeferredEvidenceCover(input: {
         compareText(left.versionId, right.versionId),
     )[0];
   const targetCoverage = aggregateCoverage(specific, queryTokens.length);
-  const selectedEvidence =
+  const attempted =
     admissionLeader === undefined
-      ? []
+      ? {
+          evidence: [] as readonly Evidence[],
+          coverage: Array.from({ length: queryTokens.length }, () => 0),
+          sufficient: false,
+        }
       : selectMinimumSet(
           specific,
           targetCoverage,
           tokenWeights,
           admissionLeader,
         );
+  const selectedEvidence = attempted.sufficient ? attempted.evidence : [];
   const selectedCoverage = aggregateCoverage(
     selectedEvidence,
     queryTokens.length,
@@ -276,7 +284,16 @@ export function planDeferredEvidenceCover(input: {
     routedVersionIds: routedCards.map((card) => card.versionId).sort(compareText),
     disposition,
     targetCoverage,
+    attemptedVersionIds: attempted.evidence
+      .map((entry) => entry.versionId)
+      .sort(compareText),
+    attemptedCoverage: attempted.coverage,
     selectedCoverage,
+    coverageDeficit: weightedCoverageDeficit(
+      attempted.coverage,
+      targetCoverage,
+      tokenWeights,
+    ),
     evidence: [...evidence].sort(
       (left, right) =>
         right.wholeQuerySupport - left.wholeQuerySupport ||
@@ -310,12 +327,16 @@ function selectMinimumSet(
   target: readonly number[],
   weights: readonly number[],
   leader: Evidence,
-): readonly Evidence[] {
+): {
+  readonly evidence: readonly Evidence[];
+  readonly coverage: readonly number[];
+  readonly sufficient: boolean;
+} {
   const selected: Evidence[] = [leader];
   let coverage: readonly number[] = [...leader.tokenSupports];
   while (
     selected.length < DEFERRED_EVIDENCE_COVER_CONFIGURATION.maximumSelectedCards &&
-    !preservesTarget(coverage, target)
+    !preservesTarget(coverage, target, weights)
   ) {
     const choices = evidence
       .filter((entry) => !selected.includes(entry))
@@ -345,11 +366,13 @@ function selectMinimumSet(
     selected.push(chosen.entry);
     coverage = chosen.next;
   }
-  return preservesTarget(coverage, target)
-    ? selected.sort((left, right) =>
-        compareText(left.versionId, right.versionId),
-      )
-    : [];
+  return {
+    evidence: selected.sort((left, right) =>
+      compareText(left.versionId, right.versionId),
+    ),
+    coverage,
+    sufficient: preservesTarget(coverage, target, weights),
+  };
 }
 
 function words(value: string): readonly string[] {
@@ -437,12 +460,27 @@ function mergeCoverage(
   return left.map((value, index) => Math.max(value, right[index] ?? 0));
 }
 
-function preservesTarget(actual: readonly number[], target: readonly number[]): boolean {
-  return target.every(
-    (value, index) =>
-      (actual[index] ?? 0) +
-        DEFERRED_EVIDENCE_COVER_CONFIGURATION.coverageTolerance >=
-      value,
+function preservesTarget(
+  actual: readonly number[],
+  target: readonly number[],
+  weights: readonly number[],
+): boolean {
+  return (
+    weightedCoverageDeficit(actual, target, weights) <=
+    DEFERRED_EVIDENCE_COVER_CONFIGURATION.coverageTolerance
+  );
+}
+
+function weightedCoverageDeficit(
+  actual: readonly number[],
+  target: readonly number[],
+  weights: readonly number[],
+): number {
+  return target.reduce(
+    (sum, value, index) =>
+      sum +
+      Math.max(0, value - (actual[index] ?? 0)) * (weights[index] ?? 0),
+    0,
   );
 }
 
